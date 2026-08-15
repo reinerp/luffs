@@ -1,0 +1,11 @@
+fn first(input: &[u8]) -> Option<u8> {
+    guard input_len > 0 else None;
+    proof first_in_bounds (input_len : Nat) : 0 < input_len := by omega;
+    Some(input[0] by first_in_bounds)
+}
+
+fn main() {
+    let bytes: [u8; 1] = [42];
+    assert_eq!(first(&bytes), Some(42));
+}
+

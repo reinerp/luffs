@@ -1,0 +1,9 @@
+[package]
+name = "luffs"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "A proof-carrying Rust subset checked by Lean"
+
+[dependencies]
+

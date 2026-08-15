@@ -2,27 +2,16 @@
 // The current zch wire format starts with u64 little-endian plaintext length,
 // then a u16 block prefix. Prefix zero means a stored block.
 fn decode_zch_stored(input: &[u8], output: &mut [u8]) -> Option<usize> {
-    guard input_len >= 10 else None;
+    if input.len() < 10 { return None; }
 
-    proof input_0 (input_len : Nat) : 0 < input_len := by omega;
-    proof input_1 (input_len : Nat) : 1 < input_len := by omega;
-    proof input_2 (input_len : Nat) : 2 < input_len := by omega;
-    proof input_3 (input_len : Nat) : 3 < input_len := by omega;
-    proof input_4 (input_len : Nat) : 4 < input_len := by omega;
-    proof input_5 (input_len : Nat) : 5 < input_len := by omega;
-    proof input_6 (input_len : Nat) : 6 < input_len := by omega;
-    proof input_7 (input_len : Nat) : 7 < input_len := by omega;
-    proof input_8 (input_len : Nat) : 8 < input_len := by omega;
-    proof input_9 (input_len : Nat) : 9 < input_len := by omega;
-
-    let plen64: u64 = (input[0] by input_0 as u64)
-        | ((input[1] by input_1 as u64) << 8)
-        | ((input[2] by input_2 as u64) << 16)
-        | ((input[3] by input_3 as u64) << 24)
-        | ((input[4] by input_4 as u64) << 32)
-        | ((input[5] by input_5 as u64) << 40)
-        | ((input[6] by input_6 as u64) << 48)
-        | ((input[7] by input_7 as u64) << 56);
+    let plen64: u64 = (input[0] as u64)
+        | ((input[1] as u64) << 8)
+        | ((input[2] as u64) << 16)
+        | ((input[3] as u64) << 24)
+        | ((input[4] as u64) << 32)
+        | ((input[5] as u64) << 40)
+        | ((input[6] as u64) << 48)
+        | ((input[7] as u64) << 56);
     if plen64 > usize::MAX as u64 {
         return None;
     }
@@ -30,19 +19,17 @@ fn decode_zch_stored(input: &[u8], output: &mut [u8]) -> Option<usize> {
     if plen == 0 || plen > 32768 || (plen & 127) != 0 {
         return None;
     }
-    let prefix: u16 = (input[8] by input_8 as u16) | ((input[9] by input_9 as u16) << 8);
+    let prefix: u16 = (input[8] as u16) | ((input[9] as u16) << 8);
     if prefix != 0 {
         return None;
     }
 
-    guard 10 + plen <= input_len else None;
-    guard plen <= output_len else None;
-    proof stored_input (input_len output_len plen : Nat) : 10 + plen ≤ input_len := by omega;
-    proof stored_output (input_len output_len plen : Nat) : 0 ≤ plen ∧ plen ≤ output_len := by omega;
+    if input.len() < 10 + plen { return None; }
+    if output.len() < plen { return None; }
 
     // `..+` is a (begin, length) slice. `..<` is a (begin, end) slice.
-    let stored: &[u8] = input[10..+plen] by stored_input;
-    let dst: &mut [u8] = output![0..<plen] by stored_output;
+    let stored: &[u8] = input[10..+plen];
+    let dst: &mut [u8] = output[0..<plen];
     dst.copy_from_slice(stored);
     Some(plen)
 }

@@ -10,7 +10,7 @@ struct Proof {
     header: String,
     conclusion: String,
     body: String,
-    guards: Vec<String>,
+    facts: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -65,50 +65,91 @@ fn parse(source: &str) -> Result<Module, String> {
     let mut rust = String::new();
     let mut proofs = Vec::new();
     let mut accesses = Vec::new();
-    let mut guards = Vec::new();
+    let mut facts = Vec::new();
+    let mut nat_vars = Vec::new();
+    let mut mutable_arrays = BTreeSet::new();
+    let mut pending_if: Option<(Option<String>, bool)> = None;
+    let mut pending_while: Option<(String, usize)> = None;
+    let mut auto_proof = 0usize;
 
     for (line_no, raw) in source.lines().enumerate() {
         let trimmed = raw.trim();
-        if let Some(guard) = trimmed.strip_prefix("guard ") {
-            let guard = guard.strip_suffix(" else None;").ok_or_else(|| {
-                format!("line {}: guards must end with `else None;`", line_no + 1)
-            })?;
-            guards.push(to_lean_expr(guard));
-            let indent = &raw[..raw.len() - raw.trim_start().len()];
-            rust.push_str(&format!(
-                "{indent}if !({}) {{ return None; }}\n",
-                to_rust_expr(guard)
-            ));
-            continue;
+        if let Some((condition, old_fact_count)) = &pending_while
+            && trimmed == "}"
+            && pending_if.is_none()
+        {
+            facts.truncate(*old_fact_count);
+            facts.push(format!("¬ ({condition})"));
+            pending_while = None;
+        }
+        if trimmed.starts_with("fn ") {
+            nat_vars.clear();
+            mutable_arrays.clear();
+            facts.clear();
+            for part in trimmed.split(['(', ',', ')']) {
+                if let Some((name, ty)) = part.trim().split_once(':') {
+                    if ty.contains("&[") || ty.contains("&mut [") {
+                        nat_vars.push(format!("{}_len", name.trim()));
+                    }
+                    if ty.contains("&mut [") {
+                        mutable_arrays.insert(name.trim().to_owned());
+                    }
+                }
+            }
+        }
+        if let Some(rest) = trimmed.strip_prefix("let ") {
+            if let Some((name, ty_and_rest)) = rest.split_once(':') {
+                let ty = ty_and_rest.trim_start();
+                if ty.starts_with("usize") {
+                    nat_vars.push(name.trim().trim_start_matches("mut ").to_owned());
+                }
+            }
+        }
+        if let Some((condition, diverges)) = &mut pending_if {
+            if is_diverging_statement(trimmed) {
+                *diverges = true;
+            }
+            if trimmed == "}" {
+                if *diverges && let Some(condition) = condition {
+                    facts.push(format!("¬ ({condition})"));
+                }
+                pending_if = None;
+            }
+        } else if let Some(condition) = control_condition(trimmed, "if") {
+            if trimmed.contains("{ return ") && trimmed.ends_with('}') {
+                if fact_supported(condition, &nat_vars) {
+                    facts.push(format!("¬ ({})", to_lean_expr(condition)));
+                }
+            } else if trimmed.ends_with('{') {
+                let condition =
+                    fact_supported(condition, &nat_vars).then(|| to_lean_expr(condition));
+                pending_if = Some((condition, false));
+            }
+        } else if let Some(condition) = control_condition(trimmed, "while")
+            && trimmed.ends_with('{')
+            && fact_supported(condition, &nat_vars)
+        {
+            let condition = to_lean_expr(condition);
+            let old_fact_count = facts.len();
+            facts.push(condition.clone());
+            pending_while = Some((condition, old_fact_count));
         }
         if let Some(decl) = trimmed.strip_prefix("proof ") {
             let decl = decl.strip_suffix(';').unwrap_or(decl).trim();
             let name_end = decl
-                .find([' ', '('])
+                .find(':')
                 .ok_or_else(|| format!("line {}: malformed proof", line_no + 1))?;
-            let name = decl[..name_end].to_owned();
-            let colon = decl
-                .rfind(" : ")
-                .ok_or_else(|| format!("line {}: proof needs a conclusion", line_no + 1))?;
-            let by = decl[colon + 3..]
-                .find(" := by ")
-                .ok_or_else(|| format!("line {}: proof must use `:= by`", line_no + 1))?
-                + colon
-                + 3;
-            let conclusion = decl[colon + 3..by].trim().to_owned();
-            let header = decl[..colon].trim().to_owned();
-            if header.contains(" Prop)") {
-                return Err(format!(
-                    "line {}: proof hypotheses come only from preceding guards",
-                    line_no + 1
-                ));
-            }
+            let name = decl[..name_end].trim().to_owned();
+            let rest = decl[name_end + 1..].trim();
+            let (conclusion, body) = rest
+                .split_once(" by ")
+                .map_or((rest, "omega"), |(p, tactic)| (p.trim(), tactic.trim()));
             proofs.push(Proof {
                 name,
-                header,
-                conclusion,
-                body: decl[by + 7..].trim().to_owned(),
-                guards: guards.clone(),
+                header: proof_header(&nat_vars),
+                conclusion: to_lean_expr(conclusion),
+                body: body.to_owned(),
+                facts: facts.clone(),
             });
             continue;
         }
@@ -117,8 +158,20 @@ fn parse(source: &str) -> Result<Module, String> {
             rust.push('\n');
             continue;
         }
-        let (rewritten, found) = rewrite_accesses(raw, line_no + 1)?;
-        accesses.extend(found);
+        let (rewritten, found) =
+            rewrite_accesses(raw, line_no + 1, &mut auto_proof, &mutable_arrays)?;
+        for access in found {
+            if access.proof.starts_with("__auto_") {
+                proofs.push(Proof {
+                    name: access.proof.clone(),
+                    header: proof_header(&nat_vars),
+                    conclusion: to_lean_expr(&obligation(&access)),
+                    body: "omega".to_owned(),
+                    facts: facts.clone(),
+                });
+            }
+            accesses.push(access);
+        }
         rust.push_str(&rewritten);
         rust.push('\n');
     }
@@ -129,23 +182,60 @@ fn parse(source: &str) -> Result<Module, String> {
     })
 }
 
+fn proof_header(vars: &[String]) -> String {
+    if vars.is_empty() {
+        String::new()
+    } else {
+        format!(" ({} : Nat)", vars.join(" "))
+    }
+}
+
+fn control_condition<'a>(line: &'a str, keyword: &str) -> Option<&'a str> {
+    let rest = line.strip_prefix(&format!("{keyword} "))?;
+    let brace = rest.find('{')?;
+    Some(rest[..brace].trim())
+}
+
+fn is_diverging_statement(line: &str) -> bool {
+    ["return ", "break", "continue", "panic!(", "unreachable!("]
+        .iter()
+        .any(|prefix| line.starts_with(prefix))
+}
+
+fn fact_supported(expr: &str, nat_vars: &[String]) -> bool {
+    if expr.contains("::") || expr.contains('&') || expr.contains('|') {
+        return false;
+    }
+    let lean = to_lean_expr(expr);
+    lean.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty() && !word.bytes().all(|b| b.is_ascii_digit()))
+        .all(|word| nat_vars.iter().any(|var| var == word))
+}
+
 fn to_lean_expr(expr: &str) -> String {
-    expr.replace("input.len()", "input_len")
-        .replace("output.len()", "output_len")
+    let mut rewritten = expr.to_owned();
+    while let Some(pos) = rewritten.find(".len()") {
+        let start = rewritten[..pos]
+            .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .map_or(0, |i| i + 1);
+        let name = rewritten[start..pos].to_owned();
+        rewritten.replace_range(start..pos + 6, &format!("{name}_len"));
+    }
+    rewritten
         .replace(">=", "≥")
         .replace("<=", "≤")
+        .replace("==", "=")
+        .replace("!=", "≠")
         .replace("&&", "∧")
+        .replace("||", "∨")
 }
 
-fn to_rust_expr(expr: &str) -> String {
-    expr.replace("input_len", "input.len()")
-        .replace("output_len", "output.len()")
-        .replace('≥', ">=")
-        .replace('≤', "<=")
-        .replace('∧', "&&")
-}
-
-fn rewrite_accesses(line: &str, line_no: usize) -> Result<(String, Vec<Access>), String> {
+fn rewrite_accesses(
+    line: &str,
+    line_no: usize,
+    auto_proof: &mut usize,
+    mutable_arrays: &BTreeSet<String>,
+) -> Result<(String, Vec<Access>), String> {
     let bytes = line.as_bytes();
     let mut out = String::new();
     let mut found = Vec::new();
@@ -157,10 +247,6 @@ fn rewrite_accesses(line: &str, line_no: usize) -> Result<(String, Vec<Access>),
             continue;
         }
         let mut start = i;
-        let mutable = start > 0 && bytes[start - 1] == b'!';
-        if mutable {
-            start -= 1;
-        }
         while start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
             start -= 1;
         }
@@ -173,21 +259,22 @@ fn rewrite_accesses(line: &str, line_no: usize) -> Result<(String, Vec<Access>),
         };
         let end = i + 1 + rel_end;
         let after = &line[end + 1..];
-        let Some(rest) = after.strip_prefix(" by ") else {
-            return Err(format!(
-                "line {line_no}: every array access requires `by <proof>`"
-            ));
+        let (proof, consumed) = if let Some(rest) = after.strip_prefix(" by ") {
+            let proof_len = rest
+                .bytes()
+                .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_')
+                .count();
+            if proof_len == 0 {
+                return Err(format!("line {line_no}: missing proof name"));
+            }
+            (rest[..proof_len].to_owned(), 4 + proof_len)
+        } else {
+            let name = format!("__auto_{}", *auto_proof);
+            *auto_proof += 1;
+            (name, 0)
         };
-        let proof_len = rest
-            .bytes()
-            .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_')
-            .count();
-        if proof_len == 0 {
-            return Err(format!("line {line_no}: missing proof name"));
-        }
-        let proof = &rest[..proof_len];
-        let array_end = if mutable { i - 1 } else { i };
-        let array = &line[start..array_end];
+        let array = &line[start..i];
+        let mutable = mutable_arrays.contains(array);
         let subscript = &line[i + 1..end];
         out.push_str(&line[cursor..start]);
         let rust_subscript = if let Some((begin, len)) = subscript.split_once("..+") {
@@ -215,10 +302,10 @@ fn rewrite_accesses(line: &str, line_no: usize) -> Result<(String, Vec<Access>),
         found.push(Access {
             array: array.into(),
             subscript: subscript.into(),
-            proof: proof.into(),
+            proof,
             line: line_no,
         });
-        cursor = end + 1 + 4 + proof_len;
+        cursor = end + 1 + consumed;
         i = cursor;
     }
     out.push_str(&line[cursor..]);
@@ -274,9 +361,10 @@ fn lean(module: &Module) -> String {
     );
     for proof in &module.proofs {
         out.push_str("theorem ");
+        out.push_str(&proof.name);
         out.push_str(&proof.header);
-        for (i, guard) in proof.guards.iter().enumerate() {
-            out.push_str(&format!(" (h_guard_{i} : {guard})"));
+        for (i, fact) in proof.facts.iter().enumerate() {
+            out.push_str(&format!(" (h_fact_{i} : {fact})"));
         }
         out.push_str(" : ");
         out.push_str(&proof.conclusion);
@@ -352,17 +440,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rejects_bare_index() {
-        assert!(
-            parse("fn f(a: &[u8]) { let x = a[0]; }")
-                .unwrap_err()
-                .contains("requires")
-        );
+    fn bare_index_gets_an_omega_obligation() {
+        let m = parse(
+            "fn f(input: &[u8]) -> Option<u8> {\nif input.len() == 0 { return None; }\nSome(input[0])\n}",
+        )
+        .unwrap();
+        validate(&m).unwrap();
+        assert_eq!(m.proofs[0].body, "omega");
+        assert_eq!(m.proofs[0].conclusion, "0 < input_len");
     }
 
     #[test]
     fn emits_unchecked_access_after_matching_proof() {
-        let m = parse("guard a_len > 0 else None;\nproof p (a_len : Nat) : 0 < a_len := by omega;\nfn f(a: &[u8]) -> Option<()> { let _x = a[0] by p; Some(()) }").unwrap();
+        let m = parse("fn f(a: &[u8]) -> Option<()> {\nif a.len() == 0 { return None; }\nproof p: 0 < a.len();\nlet _x = a[0] by p;\nSome(())\n}").unwrap();
         validate(&m).unwrap();
         assert!(m.rust.contains("unsafe { *a.get_unchecked(0) }"));
     }
@@ -383,5 +473,14 @@ mod tests {
         };
         assert_eq!(obligation(&a), "b + n ≤ a_len");
         assert_eq!(obligation(&b), "b ≤ e ∧ e ≤ a_len");
+    }
+
+    #[test]
+    fn loop_condition_is_a_fact_inside_the_body() {
+        let m = parse(
+            "fn f(input: &[u8]) -> Option<()> {\nlet mut i: usize = 0;\nwhile i < input.len() {\nlet _x = input[i];\ni += 1;\n}\nSome(())\n}",
+        )
+        .unwrap();
+        assert_eq!(m.proofs[0].facts, ["i < input_len"]);
     }
 }

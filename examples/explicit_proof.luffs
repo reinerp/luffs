@@ -1,0 +1,26 @@
+fn lane(input: &[u8], block: usize, lane: usize) -> Option<&[u8]> {
+    if block > input.len() {
+        return None;
+    }
+    if lane >= 8 {
+        return None;
+    }
+    if input.len() - block < 128 {
+        return None;
+    }
+
+    let begin: usize = block + lane * 16;
+    let end: usize = block + (lane + 1) * 16;
+
+    proof lane_bounds: begin <= end && end <= input.len() by {
+        omega
+    }
+
+    Some(input[begin..<end] by lane_bounds)
+}
+
+fn main() {
+    let bytes: [u8; 128] = [0; 128];
+    assert_eq!(lane(&bytes, 0, 7).map(|x| x.len()), Some(16));
+}
+

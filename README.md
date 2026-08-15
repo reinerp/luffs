@@ -50,6 +50,27 @@ the access. Proof declarations cannot introduce arbitrary hypotheses: their
 hypotheses come from facts on the function's control-flow graph. A longer proof
 can be declared as `proof name: proposition by ...;` and attached with `by name`.
 
+## Checked arithmetic and explicit proofs
+
+Typed integer arithmetic creates a separate representability obligation. For
+example, after `if len > usize::MAX - begin { return None; }`, the binding
+`let end: usize = begin + len;` generates a Lean theorem proving
+`begin + len ≤ usize::MAX`. See
+[`examples/overflow.luffs`](examples/overflow.luffs).
+
+Named proofs can use multiline Lean tactic code while receiving integer range
+facts, bindings, and CFG facts automatically:
+
+```rust
+proof lane_bounds: begin <= end && end <= input.len() by {
+    omega
+}
+
+Some(input[begin..<end] by lane_bounds)
+```
+
+See [`examples/explicit_proof.luffs`](examples/explicit_proof.luffs).
+
 ## Use
 
 ```sh
@@ -77,9 +98,11 @@ Those pieces should be added only alongside their Lean models and safety proofs.
 ## Safety boundary and current limitations
 
 The prototype validates proof names and exact access obligations, and Lean
-checks the proof terms. Its parser is intentionally line-oriented and not yet a
-complete Rust-subset parser. Before running generated code on hostile data, the
-language needs a typed AST, lexical scopes/path-sensitive guards, integer
-overflow semantics in the Lean model, and end-to-end soundness tests. The
-checked-in example demonstrates the intended design, not a claim that this
-prototype compiler is already a production-grade safety verifier.
+checks the proof terms. Checked arithmetic currently covers typed `usize`
+bindings with one top-level `+`, `-`, or `*`; extending the same model to every
+integer type and nested expression is still required. Its parser is
+intentionally line-oriented and not yet a complete Rust-subset parser. Before
+running generated code on hostile data, the language needs a typed AST, fully
+lexical/path-sensitive CFG facts, and end-to-end soundness tests. The checked-in
+examples demonstrate the intended design, not a claim that this prototype
+compiler is already a production-grade safety verifier.

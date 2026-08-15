@@ -71,8 +71,10 @@ fn parse(source: &str) -> Result<Module, String> {
     let mut pending_if: Option<(Option<String>, bool)> = None;
     let mut pending_while: Option<(String, usize)> = None;
     let mut auto_proof = 0usize;
+    let mut overflow_proof = 0usize;
 
-    for (line_no, raw) in source.lines().enumerate() {
+    for (line_no, raw) in logical_lines(source)? {
+        let raw = raw.as_str();
         let trimmed = raw.trim();
         if let Some((condition, old_fact_count)) = &pending_while
             && trimmed == "}"
@@ -90,6 +92,8 @@ fn parse(source: &str) -> Result<Module, String> {
                 if let Some((name, ty)) = part.trim().split_once(':') {
                     if ty.contains("&[") || ty.contains("&mut [") {
                         nat_vars.push(format!("{}_len", name.trim()));
+                    } else if ty.trim().starts_with("usize") {
+                        nat_vars.push(name.trim().to_owned());
                     }
                     if ty.contains("&mut [") {
                         mutable_arrays.insert(name.trim().to_owned());
@@ -97,13 +101,25 @@ fn parse(source: &str) -> Result<Module, String> {
                 }
             }
         }
-        if let Some(rest) = trimmed.strip_prefix("let ") {
-            if let Some((name, ty_and_rest)) = rest.split_once(':') {
-                let ty = ty_and_rest.trim_start();
-                if ty.starts_with("usize") {
-                    nat_vars.push(name.trim().trim_start_matches("mut ").to_owned());
-                }
+        if let Some((name, expression)) = usize_let(trimmed) {
+            if arithmetic_expression(expression) {
+                let conclusion = overflow_obligation(expression)?;
+                proofs.push(Proof {
+                    name: format!("__overflow_{overflow_proof}"),
+                    header: proof_header(&nat_vars),
+                    conclusion,
+                    body: "omega".to_owned(),
+                    facts: proof_facts(&nat_vars, &facts),
+                });
+                overflow_proof += 1;
+                facts.push(format!(
+                    "{} = {}",
+                    lean_ident(name),
+                    to_lean_expr(expression)
+                ));
+                facts.push(overflow_obligation(expression)?);
             }
+            nat_vars.push(name.to_owned());
         }
         if let Some((condition, diverges)) = &mut pending_if {
             if is_diverging_statement(trimmed) {
@@ -138,7 +154,7 @@ fn parse(source: &str) -> Result<Module, String> {
             let decl = decl.strip_suffix(';').unwrap_or(decl).trim();
             let name_end = decl
                 .find(':')
-                .ok_or_else(|| format!("line {}: malformed proof", line_no + 1))?;
+                .ok_or_else(|| format!("line {line_no}: malformed proof"))?;
             let name = decl[..name_end].trim().to_owned();
             let rest = decl[name_end + 1..].trim();
             let (conclusion, body) = rest
@@ -149,7 +165,7 @@ fn parse(source: &str) -> Result<Module, String> {
                 header: proof_header(&nat_vars),
                 conclusion: to_lean_expr(conclusion),
                 body: body.to_owned(),
-                facts: facts.clone(),
+                facts: proof_facts(&nat_vars, &facts),
             });
             continue;
         }
@@ -158,8 +174,7 @@ fn parse(source: &str) -> Result<Module, String> {
             rust.push('\n');
             continue;
         }
-        let (rewritten, found) =
-            rewrite_accesses(raw, line_no + 1, &mut auto_proof, &mutable_arrays)?;
+        let (rewritten, found) = rewrite_accesses(raw, line_no, &mut auto_proof, &mutable_arrays)?;
         for access in found {
             if access.proof.starts_with("__auto_") {
                 proofs.push(Proof {
@@ -167,7 +182,7 @@ fn parse(source: &str) -> Result<Module, String> {
                     header: proof_header(&nat_vars),
                     conclusion: to_lean_expr(&obligation(&access)),
                     body: "omega".to_owned(),
-                    facts: facts.clone(),
+                    facts: proof_facts(&nat_vars, &facts),
                 });
             }
             accesses.push(access);
@@ -182,11 +197,81 @@ fn parse(source: &str) -> Result<Module, String> {
     })
 }
 
+fn logical_lines(source: &str) -> Result<Vec<(usize, String)>, String> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut result = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+        if trimmed.starts_with("proof ") && trimmed.contains(" by {") {
+            let start = i + 1;
+            let mut declaration = trimmed.replace(" by {", " by ");
+            i += 1;
+            let mut closed = false;
+            while i < lines.len() {
+                let body = lines[i].trim();
+                if body == "}" || body == "};" {
+                    closed = true;
+                    break;
+                }
+                declaration.push(' ');
+                declaration.push_str(body.trim_end_matches(';'));
+                i += 1;
+            }
+            if !closed {
+                return Err(format!("line {start}: unclosed proof block"));
+            }
+            declaration.push(';');
+            result.push((start, declaration));
+        } else {
+            result.push((i + 1, lines[i].to_owned()));
+        }
+        i += 1;
+    }
+    Ok(result)
+}
+
+fn usize_let(line: &str) -> Option<(&str, &str)> {
+    let rest = line.strip_prefix("let ")?;
+    let (name, rest) = rest.split_once(':')?;
+    let rest = rest.trim_start().strip_prefix("usize")?.trim_start();
+    let expression = rest.strip_prefix('=')?.trim().strip_suffix(';')?.trim();
+    Some((name.trim().trim_start_matches("mut "), expression))
+}
+
+fn arithmetic_expression(expr: &str) -> bool {
+    expr.contains('+') || expr.contains('*') || expr.contains('-')
+}
+
+fn overflow_obligation(expr: &str) -> Result<String, String> {
+    let lean = to_lean_expr(expr);
+    if let Some((lhs, rhs)) = lean.split_once('-') {
+        Ok(format!("{} ≤ {}", rhs.trim(), lhs.trim()))
+    } else if lean.contains('+') || lean.contains('*') {
+        Ok(format!("({lean}) ≤ usize_max"))
+    } else {
+        Err(format!("unsupported arithmetic expression `{expr}`"))
+    }
+}
+
+fn proof_facts(vars: &[String], cfg_facts: &[String]) -> Vec<String> {
+    vars.iter()
+        .map(|var| format!("{} ≤ usize_max", lean_ident(var)))
+        .chain(cfg_facts.iter().cloned())
+        .collect()
+}
+
 fn proof_header(vars: &[String]) -> String {
     if vars.is_empty() {
-        String::new()
+        " (usize_max : Nat)".to_owned()
     } else {
-        format!(" ({} : Nat)", vars.join(" "))
+        format!(
+            " (usize_max {} : Nat)",
+            vars.iter()
+                .map(|var| lean_ident(var))
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
     }
 }
 
@@ -203,17 +288,18 @@ fn is_diverging_statement(line: &str) -> bool {
 }
 
 fn fact_supported(expr: &str, nat_vars: &[String]) -> bool {
+    let expr = expr.replace("usize::MAX", "usize_max");
     if expr.contains("::") || expr.contains('&') || expr.contains('|') {
         return false;
     }
-    let lean = to_lean_expr(expr);
+    let lean = to_lean_expr(&expr);
     lean.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .filter(|word| !word.is_empty() && !word.bytes().all(|b| b.is_ascii_digit()))
-        .all(|word| nat_vars.iter().any(|var| var == word))
+        .all(|word| word == "usize_max" || nat_vars.iter().any(|var| lean_ident(var) == word))
 }
 
 fn to_lean_expr(expr: &str) -> String {
-    let mut rewritten = expr.to_owned();
+    let mut rewritten = expr.replace("usize::MAX", "usize_max");
     while let Some(pos) = rewritten.find(".len()") {
         let start = rewritten[..pos]
             .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
@@ -221,13 +307,40 @@ fn to_lean_expr(expr: &str) -> String {
         let name = rewritten[start..pos].to_owned();
         rewritten.replace_range(start..pos + 6, &format!("{name}_len"));
     }
-    rewritten
+    let rewritten = rewritten
         .replace(">=", "≥")
         .replace("<=", "≤")
         .replace("==", "=")
         .replace("!=", "≠")
         .replace("&&", "∧")
-        .replace("||", "∨")
+        .replace("||", "∨");
+    rewrite_lean_identifiers(&rewritten)
+}
+
+fn lean_ident(name: &str) -> String {
+    match name {
+        "end" | "match" | "theorem" | "namespace" => format!("{name}_"),
+        _ => name.to_owned(),
+    }
+}
+
+fn rewrite_lean_identifiers(expr: &str) -> String {
+    let mut out = String::new();
+    let mut token = String::new();
+    for ch in expr.chars().chain(std::iter::once(' ')) {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            token.push(ch);
+        } else {
+            if !token.is_empty() {
+                out.push_str(&lean_ident(&token));
+                token.clear();
+            }
+            if ch != ' ' || !expr.ends_with(' ') || out.len() < expr.len() {
+                out.push(ch);
+            }
+        }
+    }
+    out.trim_end().to_owned()
 }
 
 fn rewrite_accesses(
@@ -339,7 +452,7 @@ fn validate(module: &Module) -> Result<(), String> {
         let p = proofs
             .get(a.proof.as_str())
             .ok_or_else(|| format!("line {}: unknown proof `{}`", a.line, a.proof))?;
-        let expected = obligation(a);
+        let expected = to_lean_expr(&obligation(a));
         if normalize(&p.conclusion) != normalize(&expected) {
             return Err(format!(
                 "line {}: proof `{}` concludes `{}`, expected `{expected}`",
@@ -357,7 +470,7 @@ fn validate(module: &Module) -> Result<(), String> {
 
 fn lean(module: &Module) -> String {
     let mut out = String::from(
-        "import Init.Omega\n\nset_option autoImplicit false\n\nnamespace LuffsGenerated\n\n",
+        "import Init.Omega\n\nset_option autoImplicit false\nset_option linter.unusedVariables false\n\nnamespace LuffsGenerated\n\n",
     );
     for proof in &module.proofs {
         out.push_str("theorem ");
@@ -481,6 +594,31 @@ mod tests {
             "fn f(input: &[u8]) -> Option<()> {\nlet mut i: usize = 0;\nwhile i < input.len() {\nlet _x = input[i];\ni += 1;\n}\nSome(())\n}",
         )
         .unwrap();
-        assert_eq!(m.proofs[0].facts, ["i < input_len"]);
+        assert!(m.proofs[0].facts.iter().any(|fact| fact == "i < input_len"));
+    }
+
+    #[test]
+    fn usize_addition_creates_an_overflow_obligation() {
+        let m = parse(
+            "fn f(a: usize, b: usize) -> Option<usize> {\nif b > usize::MAX - a { return None; }\nlet c: usize = a + b;\nSome(c)\n}",
+        )
+        .unwrap();
+        assert_eq!(m.proofs[0].conclusion, "(a + b) ≤ usize_max");
+        assert!(
+            m.proofs[0]
+                .facts
+                .iter()
+                .any(|fact| fact == "¬ (b > usize_max - a)")
+        );
+    }
+
+    #[test]
+    fn multiline_explicit_proof_is_collected() {
+        let m = parse(
+            "fn f(input: &[u8]) -> Option<u8> {\nif input.len() == 0 { return None; }\nproof p: 0 < input.len() by {\nomega\n}\nSome(input[0] by p)\n}",
+        )
+        .unwrap();
+        assert_eq!(m.proofs[0].name, "p");
+        assert_eq!(m.proofs[0].body, "omega");
     }
 }

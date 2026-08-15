@@ -1,0 +1,18 @@
+fn payload(input: &[u8], begin: usize, len: usize) -> Option<&[u8]> {
+    if len > usize::MAX - begin {
+        return None;
+    }
+
+    // This addition is accepted only after Lean proves it fits in usize.
+    let end: usize = begin + len;
+    if end > input.len() {
+        return None;
+    }
+
+    Some(input[begin..<end])
+}
+
+fn main() {
+    let bytes: [u8; 4] = [1, 2, 3, 4];
+    assert_eq!(payload(&bytes, 1, 2).map(|x| x.len()), Some(2));
+}

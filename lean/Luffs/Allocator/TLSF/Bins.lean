@@ -170,6 +170,12 @@ def State.removeFront (state : State) (cls : SizeClass) : Option (Block × State
   | none => none
   | some (removed, rest) => some (removed, state.replaceChain cls rest)
 
+def State.removeOffset (state : State) (cls : SizeClass) (offset : Nat) :
+    Option (Block × State) :=
+  match FreeList.removeOffset (state.chains cls) offset with
+  | none => none
+  | some (removed, rest) => some (removed, state.replaceChain cls rest)
+
 theorem removeFront_result {state : State} {cls : SizeClass}
     {removed : Block} {rest : List Block}
     (hremove : FreeList.removeFront (state.chains cls) = some (removed, rest)) :
@@ -295,6 +301,22 @@ theorem samePhysical_free {left right : Block}
     (hsame : SamePhysical left right) : left.free = right.free :=
   hsame.2.2
 
+theorem removeOffset_result {state : State} {cls : SizeClass} {offset : Nat}
+    {removed : Block} {rest : List Block}
+    (hremove : FreeList.removeOffset (state.chains cls) offset =
+      some (removed, rest)) :
+    state.removeOffset cls offset =
+      some (removed, state.replaceChain cls rest) := by
+  simp [State.removeOffset, hremove]
+
+theorem removeOffset_detached {state : State} {cls : SizeClass} {offset : Nat}
+    {removed : Block} {rest : List Block}
+    (hremove : FreeList.removeOffset (state.chains cls) offset =
+      some (removed, rest)) :
+    removed.free = true ∧ removed.prevFreeLink = none ∧
+      removed.nextFreeLink = none :=
+  FreeList.removeOffset_detaches hremove
+
 /-- Relates the cached bin projection to the authoritative physical block
 sequence. Every cached header represents a physical header, and every free
 physical header has a cached representative. -/
@@ -331,6 +353,44 @@ theorem member_free {state : State} (hvalid : Valid state) {cls : SizeClass}
 theorem member_belongs {state : State} (hvalid : Valid state)
     {cls : SizeClass} {b : Block} (hmem : b ∈ state.chains cls) :
     Belongs cls b := hvalid.2.1 cls b hmem
+
+theorem removeOffset_valid {state : State} (hvalid : Valid state)
+    {cls : SizeClass} {offset : Nat} {removed : Block} {rest : List Block}
+    (hremove : FreeList.removeOffset (state.chains cls) offset =
+      some (removed, rest)) :
+    Valid (state.replaceChain cls rest) := by
+  have hrestValid := FreeList.removeOffset_valid (hvalid.1 cls) hremove
+  unfold FreeList.removeOffset at hremove
+  cases hfind : FreeList.findOffset? (state.chains cls) offset with
+  | none => simp [hfind] at hremove
+  | some found =>
+      simp [hfind] at hremove
+      rcases hremove with ⟨rfl, rfl⟩
+      apply fromChains_valid
+      constructor
+      · intro query
+        by_cases hquery : query = cls
+        · subst query
+          simpa [Chains.replace] using hrestValid
+        · simp only [Chains.replace, hquery, ↓reduceIte]
+          exact hvalid.1 query
+      · intro query kept hmem
+        by_cases hquery : query = cls
+        · subst query
+          simp only [Chains.replace, ↓reduceIte] at hmem
+          have herasedFree :
+              ∀ b ∈ FreeList.eraseOffset (state.chains cls) offset,
+                b.free = true := by
+            intro b hb
+            exact member_free hvalid (FreeList.eraseOffset_member hb)
+          obtain ⟨old, holdErased, hsame⟩ :=
+            FreeList.relink_member_origin herasedFree hmem
+          have hold : old ∈ state.chains cls :=
+            FreeList.eraseOffset_member holdErased
+          exact (samePhysical_belongs_iff hsame cls).2
+            (member_belongs hvalid hold)
+        · simp only [Chains.replace, hquery, ↓reduceIte] at hmem
+          exact member_belongs hvalid hmem
 
 theorem member_physical {physical : List Block} {state : State}
     (hagrees : PhysicalAgreement physical state) {cls : SizeClass} {b : Block}

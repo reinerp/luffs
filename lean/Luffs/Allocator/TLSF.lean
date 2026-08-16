@@ -380,8 +380,205 @@ theorem ownsBytes_splitBlock {PROP : Type} [BI PROP] [ByteRegionLogic PROP]
       (split_preserves_bytes b wanted h).symm)
 
 /-- Coalescing adjacent blocks preserves byte count. -/
+def coalesceBlocks (left right : Block) : Block :=
+  { left with bytes := left.bytes + right.bytes, free := true }
+
+def canCoalesce (left right : Block) : Prop :=
+  left.free = true ∧ right.free = true ∧
+    right.offset = left.offset + left.bytes
+
+/-- Coalesce blocks at indices `i` and `i+1`. Verified callers establish both
+lookups and adjacency; invalid indices leave the list unchanged. -/
+def coalesceAt : List Block -> Nat -> List Block
+  | left :: right :: rest, 0 => coalesceBlocks left right :: rest
+  | head :: rest, i + 1 => head :: coalesceAt rest i
+  | blocks, _ => blocks
+
 theorem coalesce_preserves_bytes (left right : Block) :
-    left.bytes + right.bytes = ({ left with bytes := left.bytes + right.bytes }).bytes := by
+    left.bytes + right.bytes = (coalesceBlocks left right).bytes := by
   rfl
+
+theorem coalesceBlocks_aligned {left right : Block}
+    (hleft : left.aligned) (hright : right.aligned) :
+    (coalesceBlocks left right).aligned := by
+  exact ⟨hleft.1, Nat.dvd_add hleft.2 hright.2⟩
+
+theorem contiguousFrom_coalesce_head (cursor : Nat) (left right : Block)
+    (rest : List Block)
+    (hcontig : contiguousFrom cursor (left :: right :: rest)) :
+    contiguousFrom cursor (coalesceBlocks left right :: rest) := by
+  simp only [contiguousFrom] at hcontig ⊢
+  rcases hcontig with ⟨hleft, hright, hrest⟩
+  constructor
+  · exact hleft
+  · simp only [coalesceBlocks]
+    simpa only [Nat.add_assoc] using hrest
+
+theorem partitions_coalesce_head (pool : Region) (left right : Block)
+    (rest : List Block) (hparts : partitions pool (left :: right :: rest)) :
+    partitions pool (coalesceBlocks left right :: rest) := by
+  rcases hparts with ⟨hcontig, hcover⟩
+  constructor
+  · exact contiguousFrom_coalesce_head 0 left right rest hcontig
+  · unfold covers at hcover ⊢
+    simp only [List.map_cons, List.sum_cons, coalesceBlocks] at hcover ⊢
+    omega
+
+theorem contiguousFrom_coalesceAt {blocks : List Block} {i : Nat}
+    {left right : Block} (cursor : Nat)
+    (hleft : blocks[i]? = some left) (hright : blocks[i + 1]? = some right)
+    (hcontig : contiguousFrom cursor blocks) :
+    contiguousFrom cursor (coalesceAt blocks i) := by
+  induction blocks generalizing i left right cursor with
+  | nil => simp at hleft
+  | cons head rest ih =>
+      cases i with
+      | zero =>
+          cases rest with
+          | nil => simp at hright
+          | cons next tail =>
+              simp only [List.getElem?_cons_zero, Option.some.injEq] at hleft
+              simp only [Nat.zero_add, List.getElem?_cons_succ,
+                List.getElem?_cons_zero, Option.some.injEq] at hright
+              subst hleft
+              subst hright
+              exact contiguousFrom_coalesce_head cursor head next tail hcontig
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at hleft
+          have hright' : rest[j + 1]? = some right := by
+            change rest[j + 1]? = some right at hright
+            exact hright
+          simp only [coalesceAt, contiguousFrom] at hcontig ⊢
+          exact ⟨hcontig.1, ih (cursor := cursor + head.bytes)
+            hleft hright' hcontig.2⟩
+
+theorem covers_coalesceAt {pool : Region} {blocks : List Block} {i : Nat}
+    {left right : Block} (hleft : blocks[i]? = some left)
+    (hright : blocks[i + 1]? = some right) (hcover : covers pool blocks) :
+    covers pool (coalesceAt blocks i) := by
+  unfold covers at hcover ⊢
+  induction blocks generalizing i left right pool with
+  | nil => simp at hleft
+  | cons head rest ih =>
+      cases i with
+      | zero =>
+          cases rest with
+          | nil => simp at hright
+          | cons next tail =>
+              simp only [List.getElem?_cons_zero, Option.some.injEq] at hleft
+              simp only [Nat.zero_add, List.getElem?_cons_succ,
+                List.getElem?_cons_zero, Option.some.injEq] at hright
+              subst hleft
+              subst hright
+              simp only [coalesceAt, List.map_cons, List.sum_cons, coalesceBlocks]
+              simpa [Nat.add_assoc] using hcover
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at hleft
+          have hright' : rest[j + 1]? = some right := by
+            change rest[j + 1]? = some right at hright
+            exact hright
+          simp only [coalesceAt, List.map_cons, List.sum_cons] at hcover ⊢
+          have htail : (rest.map (fun b => b.bytes)).sum =
+              pool.bytes - head.bytes := by omega
+          have ih' := ih (pool := { pool with bytes := pool.bytes - head.bytes })
+            hleft hright' htail
+          change (coalesceAt rest j |>.map (fun b => b.bytes)).sum =
+            pool.bytes - head.bytes at ih'
+          omega
+
+theorem partitions_coalesceAt {pool : Region} {blocks : List Block} {i : Nat}
+    {left right : Block} (hleft : blocks[i]? = some left)
+    (hright : blocks[i + 1]? = some right) (hparts : partitions pool blocks) :
+    partitions pool (coalesceAt blocks i) :=
+  ⟨contiguousFrom_coalesceAt 0 hleft hright hparts.1,
+    covers_coalesceAt hleft hright hparts.2⟩
+
+/-- Adjacent ownership fragments recombine into ownership of the merged block. -/
+theorem ownsBytes_coalesceBlocks {PROP : Type} [BI PROP] [ByteRegionLogic PROP]
+    (pool : Region) (left right : Block)
+    (hadjacent : right.offset = left.offset + left.bytes) :
+    OwnsBytes (PROP := PROP) (left.region pool) ∗ OwnsBytes (right.region pool) ⊣⊢
+      OwnsBytes ((coalesceBlocks left right).region pool) := by
+  unfold OwnsBytes Block.region coalesceBlocks
+  rw [hadjacent]
+  simpa only [Nat.add_assoc] using
+    (ByteRegionLogic.split (PROP := PROP)
+      (r := { base := pool.base + left.offset, bytes := left.bytes + right.bytes })
+      (left := left.bytes) (right := right.bytes) rfl).symm
+
+/-- Change only allocation state; physical layout is untouched. -/
+def markFreeAt : List Block -> Nat -> List Block
+  | [], _ => []
+  | b :: rest, 0 => { b with free := true } :: rest
+  | b :: rest, i + 1 => b :: markFreeAt rest i
+
+def deallocateAt (pool : Region) (blocks : List Block) (i : Nat)
+    (returned : Region) : Option (List Block) :=
+  match blocks[i]? with
+  | none => none
+  | some b =>
+      if b.free = false ∧ returned = b.region pool then
+        some (markFreeAt blocks i)
+      else none
+
+theorem deallocateAt_success_iff {pool : Region} {blocks : List Block} {i : Nat}
+    {b : Block} {returned : Region} (hget : blocks[i]? = some b) :
+    deallocateAt pool blocks i returned = some (markFreeAt blocks i) ↔
+      b.free = false ∧ returned = b.region pool := by
+  simp [deallocateAt, hget]
+
+theorem deallocateAt_rejects_double_free {pool : Region} {blocks : List Block}
+    {i : Nat} {b : Block} {returned : Region} (hget : blocks[i]? = some b)
+    (hfree : b.free = true) : deallocateAt pool blocks i returned = none := by
+  simp [deallocateAt, hget, hfree]
+
+theorem deallocateAt_rejects_wrong_region {pool : Region} {blocks : List Block}
+    {i : Nat} {b : Block} {returned : Region} (hget : blocks[i]? = some b)
+    (hregion : returned ≠ b.region pool) :
+    deallocateAt pool blocks i returned = none := by
+  simp [deallocateAt, hget, hregion]
+
+theorem contiguousFrom_markFreeAt (blocks : List Block) (cursor i : Nat)
+    (h : contiguousFrom cursor blocks) :
+    contiguousFrom cursor (markFreeAt blocks i) := by
+  induction blocks generalizing cursor i with
+  | nil => trivial
+  | cons b rest ih =>
+      cases i with
+      | zero =>
+          simp only [contiguousFrom, markFreeAt] at h ⊢
+          exact h
+      | succ j =>
+          simp only [contiguousFrom, markFreeAt] at h ⊢
+          exact ⟨h.1, ih (cursor + b.bytes) j h.2⟩
+
+theorem covers_markFreeAt (pool : Region) (blocks : List Block) (i : Nat)
+    (h : covers pool blocks) : covers pool (markFreeAt blocks i) := by
+  unfold covers at h ⊢
+  induction blocks generalizing i pool with
+  | nil => exact h
+  | cons b rest ih =>
+      cases i with
+      | zero => exact h
+      | succ j =>
+          simp only [markFreeAt, List.map_cons, List.sum_cons] at h ⊢
+          have htail : (rest.map (fun b => b.bytes)).sum = pool.bytes - b.bytes := by
+            omega
+          have ih' := ih (pool := { pool with bytes := pool.bytes - b.bytes }) j htail
+          change (markFreeAt rest j |>.map (fun b => b.bytes)).sum =
+            pool.bytes - b.bytes at ih'
+          omega
+
+theorem partitions_markFreeAt (pool : Region) (blocks : List Block) (i : Nat)
+    (h : partitions pool blocks) : partitions pool (markFreeAt blocks i) :=
+  ⟨contiguousFrom_markFreeAt blocks 0 i h.1, covers_markFreeAt pool blocks i h.2⟩
+
+theorem deallocateAt_preserves_partitions {pool : Region} {blocks : List Block}
+    {i : Nat} {b : Block} {returned : Region} (hget : blocks[i]? = some b)
+    (hparts : partitions pool blocks)
+    (hsuccess : deallocateAt pool blocks i returned = some (markFreeAt blocks i)) :
+    partitions pool (markFreeAt blocks i) := by
+  have _hpre := (deallocateAt_success_iff hget).1 hsuccess
+  exact partitions_markFreeAt pool blocks i hparts
 
 end Luffs.Allocator.TLSF

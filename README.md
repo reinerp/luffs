@@ -53,6 +53,9 @@ The checked-in foundation currently contains:
   at arbitrary list positions that preserves the physical partition,
   alignment, nonemptiness, and Iris byte ownership; the first executable
   allocation transition is proved to return an exact-size allocated block.
+- executable deallocation checks that reject wrong regions and double frees,
+  plus arbitrary-position coalescing proofs preserving the pool partition,
+  alignment, and exact Iris ownership.
 
 It does **not** yet constitute a verified TLSF, `Box`, or `Vec`. The remaining
 proof must instantiate `OwnsBytes` with Iris authoritative heap resources,

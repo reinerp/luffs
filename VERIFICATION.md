@@ -62,6 +62,10 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   and the whole-pool Iris invariant remain.
 - [ ] Prove `dealloc`: consuming exactly a live allocation restores it to the
   allocator without leaks, overlap, or double-free.
+  The executable deallocation transition now requires the exact returned
+  region, rejects already-free blocks, preserves the physical partition, and
+  has proved arbitrary-position coalescing with exact Iris ownership
+  recombination. Neighbor selection and bin reinsertion remain.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 
 The first target is sequential TLSF with fixed-size pools obtained from `mmap`.

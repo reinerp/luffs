@@ -6,9 +6,6 @@ namespace Luffs.Memory
 
 open Iris Iris.BI
 
-/-- A byte in the language semantics. `Fin 256` makes the range intrinsic. -/
-abbrev Byte := Fin 256
-
 /-- Extensional machine memory. Unmapped addresses contain no byte. -/
 abbrev Memory := Addr -> Option Byte
 

@@ -158,6 +158,18 @@ concurrency are later extensions and are not prerequisites for `Box` and
 
 - [ ] `Box<T>`: allocation/layout, initialization before exposure, unique
   ownership, dereference rules, and exactly-once drop/deallocation.
+  A verified generic codec interface now fixes size, alignment, encoding,
+  decoding, encoded length, and decode/encode round trips. Iris-Lean has a
+  separate authoritative byte-content map with exact initialized-byte
+  fragments, append and lookup laws, and frame-preserving initialization and
+  deinitialization updates. The first Box core rounds payload sizes to TLSF
+  alignment, proves allocation safety/completeness and payload fit, finds its
+  live block for drop, and proves drop completeness. `Box::Owns` combines the
+  exclusive allocation with exact encoded contents; duplicate ownership is
+  impossible, initialization creates it, and drop consumes both initialized
+  contents and the allocation while restoring TLSF ownership. Concrete integer
+  codecs, operational store/load refinement, dereference, and Luffs lowering
+  remain before this item is complete.
 - [ ] `Vec<T>`: invariant `len <= capacity`, initialized prefix ownership,
   spare-capacity ownership, checked layout arithmetic, growth without loss or
   double-drop, `push`, `pop`, indexing, shared/mutable slices, and drop.

@@ -7,6 +7,9 @@ namespace Luffs.Memory
 /-- Byte addresses in the Luffs abstract machine. -/
 abbrev Addr := Nat
 
+/-- A byte in the Luffs abstract machine. -/
+abbrev Byte := Fin 256
+
 /-- A half-open byte range `[base, base + bytes)`. -/
 structure Region where
   base : Addr

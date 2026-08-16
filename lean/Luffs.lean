@@ -4,6 +4,7 @@ import Luffs.Memory.ConcreteIris
 import Luffs.Memory.Semantics
 import Luffs.Memory.TypedIris
 import Luffs.Memory.Value
+import Luffs.Memory.Scalar
 import Luffs.Allocator.TLSF
 import Luffs.Allocator.TLSF.Bitmap
 import Luffs.Allocator.TLSF.FreeList
@@ -12,6 +13,7 @@ import Luffs.Allocator.TLSF.Alloc
 import Luffs.Allocator.TLSF.Ownership
 import Luffs.Allocator.TLSF.Dealloc
 import Luffs.Containers.Box
+import Luffs.Containers.Vec
 
 namespace Luffs
 

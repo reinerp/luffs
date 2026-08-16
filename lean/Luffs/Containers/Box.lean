@@ -135,6 +135,27 @@ theorem initialize_owns {GF : BundledGFunctors}
     · iassumption
     · iassumption
 
+theorem deref_byte {GF : BundledGFunctors}
+    [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
+    (codec : Codec α) {pool : Region} {block : Block} {value : α}
+    {contents : ContentsMap} {mem : Memory} (hrep : ContentsRep contents mem)
+    {i : Nat} (hi : i < codec.size) :
+    contentsInterp (G := G) contents ∗ Owns codec pool block value ⊢
+      ⌜PrimStep (.load ((block.region pool).base + i)) mem
+        (.byte ((codec.encode value).get
+          ⟨i, by simpa [codec.encode_length] using hi⟩)) mem⌝ := by
+  simp only [Owns]
+  iintro ⟨Hcontents, Hbox⟩
+  icases Hbox with ⟨_, Hpoints⟩
+  icombine Hcontents Hpoints as H
+  have hi' : i < (codec.encode value).length := by
+    simpa [codec.encode_length] using hi
+  iapply pointsToBytes_load_exact hrep hi' $$ H
+
+theorem decoded_value {α : Type} (codec : Codec α) (value : α) :
+    codec.decode (codec.encode value) = some value :=
+  codec.decode_encode value
+
 theorem drop_owns {GF : BundledGFunctors}
     [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
     (codec : Codec α) {pool : Region} {state next : Alloc.State}

@@ -30,6 +30,11 @@ def contentsInterp {GF : BundledGFunctors} [G : ByteContentsGS GF]
     (contents : ContentsMap) : IProp GF :=
   G.name ↪●MAP contents
 
+/-- The authoritative initialized-byte map agrees with concrete machine
+contents. Uninitialized but mapped bytes may be absent from `contents`. -/
+def ContentsRep (contents : ContentsMap) (mem : Memory) : Prop :=
+  ∀ p value, Std.PartialMap.get? contents p = some value → mem p = some value
+
 def deleteBytes (contents : ContentsMap) (base : Addr) : List Byte -> ContentsMap
   | [] => contents
   | _ :: rest => deleteBytes (Std.PartialMap.delete contents base) (base + 1) rest
@@ -86,6 +91,17 @@ theorem pointsToBytes_lookup {GF : BundledGFunctors} [G : ByteContentsGS GF]
           have hih := ih (base := base + 1) hj
           unfold contentsInterp at hih
           iapply hih $$ H
+
+theorem pointsToBytes_load_exact {GF : BundledGFunctors}
+    [G : ByteContentsGS GF] {contents : ContentsMap} {mem : Memory}
+    (hrep : ContentsRep contents mem) {base : Addr} {values : List Byte}
+    {i : Nat} (hi : i < values.length) :
+    contentsInterp (G := G) contents ∗ PointsToBytes base values ⊢
+      ⌜PrimStep (.load (base + i)) mem (.byte values[i]) mem⌝ := by
+  iintro H
+  ihave %hlookup := pointsToBytes_lookup (G := G) hi $$ H
+  ipureintro
+  exact .load (hrep (base + i) values[i] hlookup)
 
 theorem pointsToBytes_delete {GF : BundledGFunctors} [G : ByteContentsGS GF]
     (contents : ContentsMap) (base : Addr) (values : List Byte) :

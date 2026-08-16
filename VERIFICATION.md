@@ -168,10 +168,22 @@ concurrency are later extensions and are not prerequisites for `Box` and
   exclusive allocation with exact encoded contents; duplicate ownership is
   impossible, initialization creates it, and drop consumes both initialized
   contents and the allocation while restoring TLSF ownership. Concrete integer
-  codecs, operational store/load refinement, dereference, and Luffs lowering
+  codecs now cover 8/16/32/64/128-bit unsigned and two's-complement signed
+  values plus 64-bit `usize`/`isize`, with bit-blasted round-trip proofs.
+  Box byte dereference now produces exact operational load steps. Whole-value
+  load/store sequencing, target-width parameterization, and Luffs lowering
   remain before this item is complete.
 - [ ] `Vec<T>`: invariant `len <= capacity`, initialized prefix ownership,
   spare-capacity ownership, checked layout arithmetic, growth without loss or
   double-drop, `push`, `pop`, indexing, shared/mutable slices, and drop.
+  A first generic Vec core proves `len <= capacity` and
+  `capacity * size <= allocation bytes`, plus preservation by in-capacity push
+  and pop. Its Iris assertion exclusively owns the full allocation and exact
+  initialized prefix. Element/byte offsets are proved within the encoded
+  prefix and allocation, and indexing produces exact operational load steps.
+  Push appends initialized fragments through a frame-preserving content update;
+  pop deletes exactly the last encoding, retains the prefix, and proves the
+  new logical length. Allocation, growth, decoded element reads, slices, and
+  final drop remain.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.

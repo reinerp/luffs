@@ -120,6 +120,67 @@ theorem insert_valid {state : State} (hvalid : Valid state) (cls : SizeClass)
     · simp only [Chains.replace, hquery, ↓reduceIte] at hmem
       exact hvalid.2.1 query inserted hmem
 
+private theorem removeFront_belongs {cls : SizeClass} {blocks rest : List Block}
+    {removed : Block} (hremove : FreeList.removeFront blocks = some (removed, rest))
+    (hblocks : ∀ old ∈ blocks, Belongs cls old) :
+    ∀ kept ∈ rest, Belongs cls kept := by
+  cases blocks with
+  | nil => simp [FreeList.removeFront] at hremove
+  | cons head tail =>
+      cases tail with
+      | nil => simp [FreeList.removeFront] at hremove; simp_all
+      | cons next more =>
+          simp [FreeList.removeFront] at hremove
+          rcases hremove with ⟨rfl, rfl⟩
+          intro kept hmem
+          simp only [List.mem_cons] at hmem
+          rcases hmem with hnext | hmore
+          · subst kept
+            exact (belongs_withLinks cls next none next.nextFreeLink).2
+              (hblocks next (by simp))
+          · exact hblocks kept (by simp [hmore])
+
+def State.removeFront (state : State) (cls : SizeClass) : Option (Block × State) :=
+  match FreeList.removeFront (state.chains cls) with
+  | none => none
+  | some (removed, rest) => some (removed, state.replaceChain cls rest)
+
+theorem removeFront_result {state : State} {cls : SizeClass}
+    {removed : Block} {rest : List Block}
+    (hremove : FreeList.removeFront (state.chains cls) = some (removed, rest)) :
+    state.removeFront cls = some (removed, state.replaceChain cls rest) := by
+  simp [State.removeFront, hremove]
+
+/-- Removing a nonempty bin head and rebuilding caches preserves validity. In
+particular the relevant bitmap bits are cleared exactly when `rest` is empty. -/
+theorem removeFront_valid {state : State} (hvalid : Valid state)
+    {cls : SizeClass} {removed : Block} {rest : List Block}
+    (hremove : FreeList.removeFront (state.chains cls) = some (removed, rest)) :
+    Valid (state.replaceChain cls rest) := by
+  apply fromChains_valid
+  constructor
+  · intro query
+    by_cases hquery : query = cls
+    · subst query
+      simpa [Chains.replace] using
+        FreeList.removeFront_valid (hvalid.1 cls) hremove
+    · simp only [Chains.replace, hquery, ↓reduceIte]
+      exact hvalid.1 query
+  · intro query kept hmem
+    by_cases hquery : query = cls
+    · subst query
+      simp only [Chains.replace, ↓reduceIte] at hmem
+      exact removeFront_belongs hremove (hvalid.2.1 cls) kept hmem
+    · simp only [Chains.replace, hquery, ↓reduceIte] at hmem
+      exact hvalid.2.1 query kept hmem
+
+theorem removeFront_detached {state : State} {cls : SizeClass}
+    {removed : Block} {rest : List Block}
+    (hremove : FreeList.removeFront (state.chains cls) = some (removed, rest)) :
+    removed.free = true ∧ removed.prevFreeLink = none ∧
+      removed.nextFreeLink = none :=
+  FreeList.removeFront_detaches hremove
+
 /-- Relates the cached bin representation to the allocator's authoritative
 physical block sequence. Every cached entry is a physical block, and every
 free physical block is represented in a bin. The converse deliberately talks

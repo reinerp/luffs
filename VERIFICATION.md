@@ -60,8 +60,10 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   proved to preserve this agreement. Bitmap caches can now be rebuilt from
   chains with a proof that both levels exactly reflect chain nonemptiness;
   front insertion of a fresh, correctly classified block preserves intrusive
-  links, classification, and both rebuilt bitmap invariants. Removal and the
-  simultaneous physical-metadata update remain.
+  links, classification, and both rebuilt bitmap invariants. Front removal is
+  likewise proved to preserve those invariants, returns a detached block, and
+  rebuilds both bitmap levels (including empty-bin clearing). The simultaneous
+  physical-metadata update remains.
 - [ ] Prove physical blocks form a disjoint partition of every mapped pool.
   `partitions` now requires adjacency from offset zero plus exact byte coverage,
   closing the gap permitted by the earlier ordered/sum-only invariant.

@@ -142,9 +142,11 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   invariant preservation is now proved in both directions. The public
   deallocation path restores the returned block, conditionally merges right
   and then left, preserves the full allocator invariant, and has an end-to-end
-  Iris law consuming exactly the returned capability. Proving this public path
-  cannot fail for a valid live allocation, plus the O(1) link-update
-  refinement, are the remaining allocator obligations.
+  Iris law consuming exactly the returned capability. The public path is now
+  also proved complete: for a valid pool smaller than the supported TLSF size
+  range, returning the exact live region cannot fail at classification,
+  arbitrary unlink, or either conditional coalescing step. The O(1)
+  predecessor/successor link-update refinement and Luffs lowering remain.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 
 The first target is sequential TLSF with fixed-size pools obtained from `mmap`.

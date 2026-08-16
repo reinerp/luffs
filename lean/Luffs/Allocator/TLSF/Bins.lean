@@ -323,6 +323,14 @@ theorem removeOffset_success {state next : State} {cls : SizeClass}
       rcases hsuccess with ⟨rfl, rfl⟩
       exact ⟨rest, rfl, rfl⟩
 
+theorem removeOffset_complete {state : State} {cls : SizeClass} {cached : Block}
+    (hmem : cached ∈ state.chains cls) :
+    ∃ removed next,
+      state.removeOffset cls cached.offset = some (removed, next) := by
+  obtain ⟨removed, rest, hremove⟩ := FreeList.removeOffset_complete hmem
+  exact ⟨removed, state.replaceChain cls rest,
+    removeOffset_result hremove⟩
+
 theorem removeOffset_detached {state : State} {cls : SizeClass} {offset : Nat}
     {removed : Block} {rest : List Block}
     (hremove : FreeList.removeOffset (state.chains cls) offset =

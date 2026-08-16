@@ -234,6 +234,91 @@ theorem coalescePair_result {state next : Alloc.State} {i : Nat}
                         hremoveRight, hmergedClass, rfl, rfl⟩
           · simp [hleft, hright, hcan] at hsuccess
 
+theorem coalescePair_complete {pool : Region} {state : Alloc.State}
+    (hvalid : Alloc.Valid pool state)
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount) {i : Nat}
+    {left right : Block} (hleft : state.physical[i]? = some left)
+    (hright : state.physical[i + 1]? = some right)
+    (hcan : canCoalesce left right) :
+    ∃ next, coalescePair state i = some next := by
+  have hleftMem : left ∈ state.physical :=
+    List.mem_iff_getElem?.2 ⟨i, hleft⟩
+  have hrightMem : right ∈ state.physical :=
+    List.mem_iff_getElem?.2 ⟨i + 1, hright⟩
+  obtain ⟨rightQuery₀, rightCached₀, hrightCached₀, hrightSame₀⟩ :=
+    hvalid.2.2.2 right hrightMem hcan.2.1
+  obtain ⟨leftQuery, leftCached, hleftCached, hleftSame⟩ :=
+    hvalid.2.2.2 left hleftMem hcan.1
+  obtain ⟨hleftSize, hleftMax, _⟩ := member_belongs hvalid.2.1 hleftCached
+  have hleftSize' : 0 < left.bytes := by simpa [hleftSame.2.1] using hleftSize
+  have hleftMax' : left.bytes < 2 ^ firstLevelCount := by
+    simpa [hleftSame.2.1] using hleftMax
+  obtain ⟨leftClass, hleftClass⟩ :=
+    classifyBlock?_complete hleftSize' hleftMax'
+  have hleftQueryEq := (represented_offset_class hvalid hleftMem hleftClass
+    hleftCached hleftSame.1.symm).1
+  subst leftQuery
+  obtain ⟨removedLeft, afterLeft, hremoveLeft⟩ :=
+    removeOffset_complete hleftCached
+  obtain ⟨leftRest, hremoveLeftList, hafterLeft⟩ :=
+    removeOffset_success hremoveLeft
+  subst afterLeft
+  have hleftBinsValid := removeOffset_valid hvalid.2.1 hremoveLeftList
+  have hrightNeLeft : right.offset ≠ left.offset := by
+    rw [hcan.2.2]
+    exact Nat.ne_of_gt (Nat.lt_add_of_pos_right hleftSize')
+  have hrightNeLeftCached : right.offset ≠ leftCached.offset := by
+    rw [← hleftSame.1]
+    exact hrightNeLeft
+  have hrightRep := removeOffset_preserves_other_representation hvalid.2.1
+    hremoveLeftList
+    ⟨rightQuery₀, rightCached₀, hrightCached₀, hrightSame₀⟩
+    hrightNeLeftCached
+  obtain ⟨rightQuery, rightCached, hrightCached, hrightSame⟩ := hrightRep
+  obtain ⟨hrightSize, hrightMax, _⟩ :=
+    member_belongs hleftBinsValid hrightCached
+  have hrightSize' : 0 < right.bytes := by
+    simpa [hrightSame.2.1] using hrightSize
+  have hrightMax' : right.bytes < 2 ^ firstLevelCount := by
+    simpa [hrightSame.2.1] using hrightMax
+  obtain ⟨rightClass, hrightClass⟩ :=
+    classifyBlock?_complete hrightSize' hrightMax'
+  have hrightBelongs := classifyBlock?_result hrightClass
+  have hrightQueryBelongs : Belongs rightQuery right :=
+    (samePhysical_belongs_iff hrightSame rightQuery).2
+      (member_belongs hleftBinsValid hrightCached)
+  have hrightQueryEq : rightQuery = rightClass := by
+    obtain ⟨_, _, hq⟩ := hrightQueryBelongs
+    obtain ⟨_, _, hc⟩ := hrightBelongs
+    rw [← hq, ← hc]
+  subst rightQuery
+  obtain ⟨removedRight, afterRight, hremoveRight⟩ :=
+    removeOffset_complete hrightCached
+  have hmergedSize : 0 < (coalesceBlocks left right).bytes := by
+    simp only [coalesceBlocks]
+    omega
+  have hrightEnd := (hvalid.1.2.2.2 right hrightMem).2.1
+  have hmergedMax : (coalesceBlocks left right).bytes <
+      2 ^ firstLevelCount := by
+    simp only [coalesceBlocks]
+    rw [hcan.2.2] at hrightEnd
+    omega
+  obtain ⟨mergedClass, hmergedClass⟩ :=
+    classifyBlock?_complete hmergedSize hmergedMax
+  have hremoveLeft' : state.bins.removeOffset leftClass left.offset =
+      some (removedLeft,
+        state.bins.replaceChain leftClass leftRest) := by
+    simpa [hleftQueryEq, hleftSame.1] using hremoveLeft
+  have hremoveRight' :
+      (state.bins.replaceChain leftClass leftRest).removeOffset
+          rightClass right.offset = some (removedRight, afterRight) := by
+    simpa [hleftQueryEq, hrightQueryEq, hleftSame.1, hrightSame.1] using
+      hremoveRight
+  exact ⟨⟨coalesceAt state.physical i,
+      afterRight.insert mergedClass (coalesceBlocks left right)⟩, by
+    simp [coalescePair, hleft, hright, hcan, hleftClass, hrightClass,
+      hremoveLeft', hremoveRight', hmergedClass]⟩
+
 theorem coalescePair_physical {state next : Alloc.State} {i : Nat}
     (hsuccess : coalescePair state i = some next) :
     ∃ left right,
@@ -814,5 +899,63 @@ theorem deallocate_ownsFree {PROP : Type} [BI PROP] [ByteRegionLogic PROP]
   exact (deallocateUncoalesced_ownsFree hmarked).trans
     ((coalesceIfPossible_ownsFree pool hright).trans
       (coalesceIfPossible_ownsFree pool hleft))
+
+theorem deallocateUncoalesced_complete {pool : Region}
+    {state : Alloc.State} (hvalid : Alloc.Valid pool state)
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount) {i : Nat}
+    {selected : Block} (hget : state.physical[i]? = some selected)
+    (hallocated : selected.free = false) :
+    ∃ next, deallocateUncoalesced pool state i (selected.region pool) =
+      some next := by
+  have hmem : selected ∈ state.physical :=
+    List.mem_iff_getElem?.2 ⟨i, hget⟩
+  have hsize := (hvalid.1.2.2.2 selected hmem).1
+  have hend := (hvalid.1.2.2.2 selected hmem).2.1
+  have hmax : selected.bytes < 2 ^ firstLevelCount := by omega
+  obtain ⟨cls, hclass⟩ := classifyBlock?_complete
+    (b := freedBlock selected) (by simpa [freedBlock] using hsize)
+    (by simpa [freedBlock] using hmax)
+  exact ⟨⟨markFreeAt state.physical i,
+      state.bins.insert cls (freedBlock selected)⟩, by
+    simp [deallocateUncoalesced, hget, deallocateAt, hallocated,
+      hclass]⟩
+
+theorem coalesceIfPossible_complete {pool : Region} {state : Alloc.State}
+    (hvalid : Alloc.Valid pool state)
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount) (i : Nat) :
+    ∃ next, coalesceIfPossible state i = some next := by
+  cases hleft : state.physical[i]? with
+  | none => exact ⟨state, by simp [coalesceIfPossible, hleft]⟩
+  | some left =>
+      cases hright : state.physical[i + 1]? with
+      | none => exact ⟨state, by simp [coalesceIfPossible, hleft, hright]⟩
+      | some right =>
+          by_cases hcan : canCoalesce left right
+          · obtain ⟨next, hpair⟩ :=
+              coalescePair_complete hvalid hpoolMax hleft hright hcan
+            exact ⟨next, by
+              simp [coalesceIfPossible, hleft, hright, hcan, hpair]⟩
+          · exact ⟨state, by
+              simp [coalesceIfPossible, hleft, hright, hcan]⟩
+
+/-- A valid exact live allocation can always be returned. Thus `dealloc` is
+not merely safe on success: its checked internal searches cannot fail. -/
+theorem deallocate_complete {pool : Region} {state : Alloc.State}
+    (hvalid : Alloc.Valid pool state)
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount) {i : Nat}
+    {selected : Block} (hget : state.physical[i]? = some selected)
+    (hallocated : selected.free = false) :
+    ∃ next, deallocate pool state i (selected.region pool) = some next := by
+  obtain ⟨marked, hmarked⟩ := deallocateUncoalesced_complete
+    hvalid hpoolMax hget hallocated
+  have hmarkedValid := deallocateUncoalesced_preserves_valid hvalid hmarked
+  obtain ⟨afterRight, hright⟩ :=
+    coalesceIfPossible_complete hmarkedValid hpoolMax i
+  have hrightValid := coalesceIfPossible_preserves_valid hmarkedValid hright
+  obtain ⟨afterLeft, hleft⟩ :=
+    coalesceIfPossible_complete hrightValid hpoolMax i.pred
+  exact ⟨afterLeft, by
+    simp [deallocate, hmarked, hright]
+    simpa [Nat.pred_eq_sub_one] using hleft⟩
 
 end Luffs.Allocator.TLSF.Dealloc

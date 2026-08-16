@@ -232,6 +232,13 @@ theorem findOffset?_complete {blocks : List Block} {b : Block}
         · obtain ⟨found, hfind⟩ := ih htail
           exact ⟨found, by simp [findOffset?, heq, hfind]⟩
 
+theorem removeOffset_complete {blocks : List Block} {b : Block}
+    (hmem : b ∈ blocks) :
+    ∃ removed rest, removeOffset blocks b.offset = some (removed, rest) := by
+  obtain ⟨found, hfind⟩ := findOffset?_complete hmem
+  exact ⟨withLinks found none none, relink (eraseOffset blocks b.offset), by
+    simp [removeOffset, hfind]⟩
+
 theorem eraseOffset_offsets {blocks : List Block} {offset : Nat}
     (hmem : offset ∈ blocks.map Block.offset) :
     (eraseOffset blocks offset).map Block.offset =

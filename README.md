@@ -20,6 +20,37 @@ General structs/enums and general return types are intentionally rejected.
 SIMD operations will be admitted individually, each with a Lean model, as the
 zch decoder needs them.
 
+## Memory verification
+
+The memory-safety layer is being built on
+[Iris-Lean](https://github.com/leanprover-community/iris-lean), pinned to the
+release matching this repository's Lean toolchain. Luffs does not define a
+second separation logic. Its memory propositions are Iris propositions, and
+exclusive byte ownership is the resource from which unique mutable references
+will be derived.
+
+The intended trust boundary is deliberately narrow: successful `mmap` calls
+produce exclusive ownership of a fresh, page-aligned byte region, and `munmap`
+consumes that ownership. TLSF is above this boundary. Its free lists, bitmaps,
+block splitting, coalescing, allocation, and deallocation must preserve a
+machine-checked Iris heap invariant. `Box<T>` and `Vec<T>` will then be proved as
+clients of TLSF rather than of an assumed `malloc` specification.
+
+The checked-in foundation currently contains:
+
+- half-open byte regions and proved containment/disjointness lemmas;
+- an Iris `OwnsBytes` interface with splitting and exclusivity laws;
+- the trusted `mmap`/`munmap` contract, kept separate from TLSF;
+- the initial pure TLSF block invariant and checked split/coalesce byte-count
+  lemmas.
+
+It does **not** yet constitute a verified TLSF, `Box`, or `Vec`. The remaining
+proof must instantiate `OwnsBytes` with Iris authoritative heap resources,
+connect Luffs small-step semantics to Iris weakest preconditions, implement the
+full allocator in Luffs, and prove its operations before the container claims
+can be made. See [`VERIFICATION.md`](VERIFICATION.md) for the proof boundary and
+completion criteria.
+
 ## A complete small program
 
 ```rust

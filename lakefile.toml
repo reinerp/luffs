@@ -2,7 +2,12 @@ name = "luffs"
 version = "0.1.0"
 defaultTargets = ["Luffs"]
 
+[[require]]
+name = "iris"
+git = "https://github.com/leanprover-community/iris-lean.git"
+subDir = "Iris"
+rev = "v4.32.2"
+
 [[lean_lib]]
 name = "Luffs"
 srcDir = "lean"
-

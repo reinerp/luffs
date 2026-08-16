@@ -1,6 +1,7 @@
 import Luffs.Memory.Layout
 import Luffs.Memory.Iris
 import Luffs.Memory.ConcreteIris
+import Luffs.Memory.Semantics
 import Luffs.Allocator.TLSF
 
 namespace Luffs

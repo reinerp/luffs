@@ -24,7 +24,7 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   propositions.
 - [x] Instantiate byte ownership with an Iris authoritative finite-map
   resource; prove splitting, recombination, agreement, and exclusivity.
-- [ ] Define Luffs small-step semantics for raw loads/stores, pointer
+- [x] Define Luffs small-step semantics for raw loads/stores, pointer
   arithmetic, `mmap`, and `munmap`.
 - [ ] Prove weakest-precondition rules and adequacy: a closed proved Luffs
   program cannot get stuck on memory access.

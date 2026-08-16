@@ -42,6 +42,8 @@ The checked-in foundation currently contains:
 - an Iris `OwnsBytes` interface backed by authoritative ghost-map fragments,
   with checked splitting, recombination, heap agreement, and overlap
   exclusivity laws;
+- small-step semantics for checked pointer offsets, loads, stores, `mmap`, and
+  `munmap`, with proved stuckness criteria for offsets and memory accesses;
 - the trusted `mmap`/`munmap` contract, kept separate from TLSF;
 - the initial pure TLSF block invariant and checked split/coalesce byte-count
   lemmas.

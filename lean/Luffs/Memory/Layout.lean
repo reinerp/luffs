@@ -18,6 +18,10 @@ def Region.endAddr (r : Region) : Addr := r.base + r.bytes
 def Region.contains (r : Region) (p : Addr) : Prop :=
   r.base ≤ p ∧ p < r.endAddr
 
+instance (r : Region) (p : Addr) : Decidable (r.contains p) := by
+  unfold Region.contains Region.endAddr
+  infer_instance
+
 def Region.disjoint (a b : Region) : Prop :=
   a.endAddr ≤ b.base ∨ b.endAddr ≤ a.base
 

@@ -43,6 +43,64 @@ theorem sizeClass_indices_in_bounds (size : Nat) (hsize : 0 < size)
   exact ⟨(sizeClass size hsize hmax).fl.isLt,
     (sizeClass size hsize hmax).sl.isLt⟩
 
+private theorem sub_div_lt_of_lt_add_mul {size base step bins : Nat}
+    (hstep : 0 < step) (hbase : base ≤ size)
+    (hupper : size < base + bins * step) :
+    (size - base) / step < bins := by
+  rw [Nat.div_lt_iff_lt_mul hstep]
+  omega
+
+/-- Above the linear-size range, the second-level quotient is genuinely below
+32. Consequently the executable `% 32` in `sizeClass` never wraps. -/
+theorem high_sizeClass_quotient_lt (size : Nat) (hsize : 0 < size)
+    (hlog : 5 ≤ size.log2) :
+    (size - 2 ^ size.log2) / 2 ^ (size.log2 - 5) < secondLevelCount := by
+  have hbase : 2 ^ size.log2 ≤ size :=
+    Nat.log2_self_le (Nat.ne_of_gt hsize)
+  have hupper0 : size < 2 ^ (size.log2 + 1) := Nat.lt_log2_self
+  have hpow : 2 ^ size.log2 = secondLevelCount * 2 ^ (size.log2 - 5) := by
+    rw [show secondLevelCount = 2 ^ 5 by decide, Nat.mul_comm,
+      Nat.pow_sub_mul_pow 2 hlog]
+  apply sub_div_lt_of_lt_add_mul (Nat.pow_pos (by decide)) hbase
+  rw [← hpow]
+  simpa [Nat.pow_add, Nat.mul_two] using hupper0
+
+theorem high_sizeClass_no_wrap (size : Nat) (hsize : 0 < size)
+    (hlog : 5 ≤ size.log2) :
+    ((size - 2 ^ size.log2) / 2 ^ (size.log2 - 5)) % secondLevelCount =
+      (size - 2 ^ size.log2) / 2 ^ (size.log2 - 5) := by
+  exact Nat.mod_eq_of_lt (high_sizeClass_quotient_lt size hsize hlog)
+
+def highBinStep (size : Nat) : Nat := 2 ^ (size.log2 - 5)
+
+def highBinNumber (size : Nat) : Nat :=
+  (size - 2 ^ size.log2) / highBinStep size
+
+def highBinLower (size : Nat) : Nat :=
+  2 ^ size.log2 + highBinNumber size * highBinStep size
+
+def highBinUpper (size : Nat) : Nat := highBinLower size + highBinStep size
+
+/-- The computed high-range TLSF bin contains the requested size. -/
+theorem high_sizeClass_covers (size : Nat) (hsize : 0 < size) :
+    highBinLower size ≤ size ∧ size < highBinUpper size := by
+  have hbase : 2 ^ size.log2 ≤ size :=
+    Nat.log2_self_le (Nat.ne_of_gt hsize)
+  have hstep : 0 < highBinStep size := Nat.pow_pos (by decide)
+  have hlo := Nat.div_mul_le_self (size - 2 ^ size.log2) (highBinStep size)
+  have hhi := Nat.lt_div_mul_add (a := size - 2 ^ size.log2) hstep
+  have hdecomp : 2 ^ size.log2 + (size - 2 ^ size.log2) = size :=
+    Nat.add_sub_of_le hbase
+  simp only [highBinUpper, highBinLower, highBinNumber, highBinStep] at hlo hhi ⊢
+  constructor <;> omega
+
+theorem high_sizeClass_sl (size : Nat) (hsize : 0 < size)
+    (hmax : size < 2 ^ firstLevelCount) (hlog : 5 ≤ size.log2) :
+    (sizeClass size hsize hmax).sl.val = highBinNumber size := by
+  have hnlt : ¬size.log2 < 5 := Nat.not_lt_of_ge hlog
+  simp [sizeClass, hnlt, highBinNumber, highBinStep,
+    high_sizeClass_no_wrap size hsize hlog]
+
 /-- A compact pure view used by the executable allocator and its Iris invariant. -/
 structure Block where
   offset : Nat

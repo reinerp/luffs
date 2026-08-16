@@ -321,6 +321,52 @@ def slBitmap (state : State) (fl : Fin firstLevelCount) : List Bool :=
 
 def flBitmap (state : State) : List Bool := List.ofFn state.flSet
 
+/-- Executable two-level lookup. It first searches the request's first level
+from its mapping-up second-level index, then searches later first levels and
+starts their second-level search at zero. Raw indices are converted to `Fin`
+only after an explicit bounds check. -/
+def findCandidateIndices (state : State) (start : SizeClass) : Option (Nat × Nat) :=
+  match firstSetFrom (slBitmap state start.fl) start.sl.val with
+  | some foundSl => some (start.fl.val, foundSl)
+  | none =>
+      match firstSetFrom (flBitmap state) (start.fl.val + 1) with
+      | none => none
+      | some foundFl =>
+          if hfl : foundFl < firstLevelCount then
+            match firstSetFrom (slBitmap state ⟨foundFl, hfl⟩) 0 with
+            | none => none
+            | some foundSl => some (foundFl, foundSl)
+          else none
+
+def CandidateResult (state : State) (start : SizeClass) (fl sl : Nat) : Prop :=
+  (fl = start.fl.val ∧
+    firstSetFrom (slBitmap state start.fl) start.sl.val = some sl) ∨
+  (∃ hfl : fl < firstLevelCount,
+    firstSetFrom (flBitmap state) (start.fl.val + 1) = some fl ∧
+    firstSetFrom (slBitmap state ⟨fl, hfl⟩) 0 = some sl)
+
+theorem findCandidateIndices_result {state : State} {start : SizeClass}
+    {fl sl : Nat} (hfind : findCandidateIndices state start = some (fl, sl)) :
+    CandidateResult state start fl sl := by
+  cases hsame : firstSetFrom (slBitmap state start.fl) start.sl.val with
+  | some foundSl =>
+      simp [findCandidateIndices, hsame] at hfind
+      rcases hfind with ⟨rfl, rfl⟩
+      exact Or.inl ⟨rfl, hsame⟩
+  | none =>
+      cases hfirst : firstSetFrom (flBitmap state) (start.fl.val + 1) with
+      | none => simp [findCandidateIndices, hsame, hfirst] at hfind
+      | some foundFl =>
+          by_cases hfl : foundFl < firstLevelCount
+          · cases hsecond : firstSetFrom (slBitmap state ⟨foundFl, hfl⟩) 0 with
+            | none =>
+                simp [findCandidateIndices, hsame, hfirst, hfl, hsecond] at hfind
+            | some foundSl =>
+                simp [findCandidateIndices, hsame, hfirst, hfl, hsecond] at hfind
+                rcases hfind with ⟨rfl, rfl⟩
+                exact Or.inr ⟨hfl, hfirst, hsecond⟩
+          · simp [findCandidateIndices, hsame, hfirst, hfl] at hfind
+
 theorem slBitmap_length (state : State) (fl : Fin firstLevelCount) :
     (slBitmap state fl).length = secondLevelCount := by
   simp [slBitmap]
@@ -541,5 +587,106 @@ theorem firstLevel_search_high_suitable {pool : Region} {physical : List Block}
         hrequest hactualBytes hkeyMax hactualMax hrequestHigh hblockHigh horder
       have haligned := (hpool.1.2.2.2 actual hactual).2.2
       exact ⟨actual, hactual, hactualFree, haligned, hsuitable⟩
+
+theorem firstLevel_search_linear_suitable {pool : Region}
+    {physical : List Block} {state : State}
+    (hpool : PoolValid pool physical state)
+    (request : Nat) (hrequest : 0 < request)
+    (hrequestMax : request < 2 ^ firstLevelCount)
+    (hlinear : request ≤ linearCutoff) (found : Nat)
+    (hsearch : firstSetFrom (flBitmap state)
+      ((sizeClass request hrequest hrequestMax).fl.val + 1) = some found) :
+    ∃ actual : Block, actual ∈ physical ∧ actual.free = true ∧
+      actual.aligned ∧ request ≤ actual.bytes := by
+  obtain ⟨hfound, sl, hnonempty⟩ :=
+    firstLevel_search_nonempty hpool.2.1
+      ((sizeClass request hrequest hrequestMax).fl.val + 1) found hsearch
+  let selected : SizeClass := { fl := ⟨found, hfound⟩, sl := sl }
+  cases hchain : state.chains selected with
+  | nil => exact (hnonempty hchain).elim
+  | cons head rest =>
+      have hmem : head ∈ state.chains selected := by simp [hchain]
+      have hfree := member_free hpool.2.1 hmem
+      obtain ⟨actual, hactual, hsame⟩ := member_physical hpool.2.2 hmem
+      have hactualFree : actual.free = true := (samePhysical_free hsame).trans hfree
+      have hbelongs := (samePhysical_belongs_iff hsame selected).2
+        (member_belongs hpool.2.1 hmem)
+      obtain ⟨hactualBytes, hactualMax, hactualClass⟩ := hbelongs
+      have hfoundPositive : 0 < found := by
+        have hsound := firstSetFrom_sound hsearch
+        have hrequestFl :=
+          (linear_sizeClass_values request hrequest hrequestMax hlinear).1
+        omega
+      have hblockHigh : linearCutoff < actual.bytes := by
+        apply Nat.lt_of_not_ge
+        intro hblockLinear
+        have hzero :=
+          (linear_sizeClass_values actual.bytes hactualBytes hactualMax
+            hblockLinear).1
+        rw [hactualClass] at hzero
+        exact (Nat.ne_of_gt hfoundPositive) hzero
+      have haligned := (hpool.1.2.2.2 actual hactual).2.2
+      exact ⟨actual, hactual, hactualFree, haligned,
+        Nat.le_trans hlinear (Nat.le_of_lt hblockHigh)⟩
+
+/-- The executable two-level lookup wrapper inherits the high-range
+suitability theorem in both of its successful branches. -/
+theorem findCandidateIndices_high_suitable {pool : Region}
+    {physical : List Block} {state : State}
+    (hpool : PoolValid pool physical state)
+    (request : Nat) (hrequest : 0 < request)
+    (hrequestHigh : linearCutoff < request)
+    (hkeyMax : requestKey request < 2 ^ firstLevelCount)
+    {foundFl foundSl : Nat}
+    (hfind : findCandidateIndices state
+      (requestSizeClass request hrequest hkeyMax) = some (foundFl, foundSl)) :
+    ∃ actual : Block, actual ∈ physical ∧ actual.free = true ∧
+      actual.aligned ∧ request ≤ actual.bytes := by
+  rcases findCandidateIndices_result hfind with hsame | hlater
+  · exact secondLevel_search_high_suitable hpool request hrequest hrequestHigh
+      hkeyMax foundSl hsame.2
+  · obtain ⟨hfl, hfirst, _⟩ := hlater
+    exact firstLevel_search_high_suitable hpool request hrequest hrequestHigh
+      hkeyMax foundFl hfirst
+
+theorem findCandidateIndices_linear_suitable {pool : Region}
+    {physical : List Block} {state : State}
+    (hpool : PoolValid pool physical state)
+    (request : Nat) (hrequest : 0 < request)
+    (hrequestMax : request < 2 ^ firstLevelCount)
+    (hlinear : request ≤ linearCutoff) {foundFl foundSl : Nat}
+    (hfind : findCandidateIndices state
+      (sizeClass request hrequest hrequestMax) = some (foundFl, foundSl)) :
+    ∃ actual : Block, actual ∈ physical ∧ actual.free = true ∧
+      actual.aligned ∧ request ≤ actual.bytes := by
+  rcases findCandidateIndices_result hfind with hsame | hlater
+  · exact secondLevel_search_linear_suitable hpool request hrequest hrequestMax
+      hlinear foundSl hsame.2
+  · obtain ⟨hfl, hfirst, _⟩ := hlater
+    exact firstLevel_search_linear_suitable hpool request hrequest hrequestMax
+      hlinear foundFl hfirst
+
+/-- Unified safety contract of executable TLSF lookup. On success, regardless
+of the linear/logarithmic branch or how many empty bins were skipped, the
+candidate denotes an aligned free physical block large enough for the request. -/
+theorem findCandidateIndices_suitable {pool : Region}
+    {physical : List Block} {state : State}
+    (hpool : PoolValid pool physical state)
+    (request : Nat) (hrequest : 0 < request)
+    (hkeyMax : requestKey request < 2 ^ firstLevelCount)
+    {foundFl foundSl : Nat}
+    (hfind : findCandidateIndices state
+      (searchSizeClass request hrequest hkeyMax) = some (foundFl, foundSl)) :
+    ∃ actual : Block, actual ∈ physical ∧ actual.free = true ∧
+      actual.aligned ∧ request ≤ actual.bytes := by
+  by_cases hlinear : request ≤ linearCutoff
+  · have hrequestMax : request < 2 ^ firstLevelCount :=
+      Nat.lt_of_le_of_lt (request_le_key request hrequest) hkeyMax
+    apply findCandidateIndices_linear_suitable hpool request hrequest
+      hrequestMax hlinear
+    simpa [searchSizeClass_linear request hrequest hkeyMax hlinear] using hfind
+  · have hhigh : linearCutoff < request := Nat.lt_of_not_ge hlinear
+    apply findCandidateIndices_high_suitable hpool request hrequest hhigh hkeyMax
+    simpa [searchSizeClass_high request hrequest hkeyMax hhigh] using hfind
 
 end Luffs.Allocator.TLSF.Bins

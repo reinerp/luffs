@@ -50,8 +50,10 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   distinct from mapping-down block classification and is proved no smaller
   than the request. For both the linear and logarithmic ranges, successful
   bitmap search is proved end-to-end to identify an authoritative physical,
-  aligned, free block whose size is at least the request. An executable wrapper
-  combining the same-level and later-first-level branches remains.
+  aligned, free block whose size is at least the request. The executable lookup
+  wrapper now combines same-level and later-first-level branches, bounds-checks
+  raw bitmap indices before converting them to `Fin`, and has one unified
+  success-suitability theorem. Lookup failure/completeness remains.
 - [ ] Implement intrusive free-list insertion/removal and prove link
   consistency and ownership preservation.
   Blocks now carry intrusive previous/next offsets. Front insertion and removal

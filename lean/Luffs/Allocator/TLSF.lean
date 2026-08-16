@@ -167,6 +167,29 @@ def requestSizeClass (size : Nat) (hsize : 0 < size)
     (hkeymax : requestKey size < 2 ^ firstLevelCount) : SizeClass :=
   sizeClass (requestKey size) (requestKey_positive size hsize) hkeymax
 
+/-- Starting class used by allocation lookup. Linear classes already round
+aligned blocks upward; logarithmic classes require the explicit mapping-up key. -/
+def searchSizeClass (size : Nat) (hsize : 0 < size)
+    (hkeymax : requestKey size < 2 ^ firstLevelCount) : SizeClass :=
+  if _hlinear : size ≤ linearCutoff then
+    sizeClass size hsize
+      (Nat.lt_of_le_of_lt (request_le_key size hsize) hkeymax)
+  else requestSizeClass size hsize hkeymax
+
+theorem searchSizeClass_linear (size : Nat) (hsize : 0 < size)
+    (hkeymax : requestKey size < 2 ^ firstLevelCount)
+    (hlinear : size ≤ linearCutoff) :
+    searchSizeClass size hsize hkeymax =
+      sizeClass size hsize
+        (Nat.lt_of_le_of_lt (request_le_key size hsize) hkeymax) := by
+  simp [searchSizeClass, hlinear]
+
+theorem searchSizeClass_high (size : Nat) (hsize : 0 < size)
+    (hkeymax : requestKey size < 2 ^ firstLevelCount)
+    (hhigh : linearCutoff < size) :
+    searchSizeClass size hsize hkeymax = requestSizeClass size hsize hkeymax := by
+  simp [searchSizeClass, Nat.not_le_of_gt hhigh]
+
 theorem requestSizeClass_indices_in_bounds (size : Nat) (hsize : 0 < size)
     (hkeymax : requestKey size < 2 ^ firstLevelCount) :
     (requestSizeClass size hsize hkeymax).fl.val < firstLevelCount ∧

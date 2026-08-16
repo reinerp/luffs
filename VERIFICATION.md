@@ -79,7 +79,10 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   links, classification, and both rebuilt bitmap invariants. Front removal is
   likewise proved to preserve those invariants, returns a detached block, and
   rebuilds both bitmap levels (including empty-bin clearing). The simultaneous
-  physical-metadata update remains.
+  physical-metadata update remains. Lookup and removal are now composed as an
+  executable `takeCandidate` transition: success preserves bin validity and
+  returns a detached head, while failure occurs exactly when no eligible bin
+  exists.
 - [ ] Prove physical blocks form a disjoint partition of every mapped pool.
   `partitions` now requires adjacency from offset zero plus exact byte coverage,
   closing the gap permitted by the earlier ordered/sum-only invariant.

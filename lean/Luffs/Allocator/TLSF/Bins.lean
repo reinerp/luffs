@@ -565,6 +565,68 @@ theorem findCandidate_nonempty {state : State} {start found : SizeClass}
       ⟨found.fl.val, hflBound⟩ 0 found.sl.val hsecond
     simpa using hchain
 
+def State.takeCandidate (state : State) (start : SizeClass) :
+    Option (Block × State) :=
+  match findCandidate state start with
+  | none => none
+  | some cls => state.removeFront cls
+
+theorem takeCandidate_result {state next : State} {start : SizeClass}
+    {removed : Block} (htake : state.takeCandidate start = some (removed, next)) :
+    ∃ cls rest,
+      findCandidate state start = some cls ∧
+      FreeList.removeFront (state.chains cls) = some (removed, rest) ∧
+      next = state.replaceChain cls rest := by
+  unfold State.takeCandidate at htake
+  cases hfind : findCandidate state start with
+  | none => simp [hfind] at htake
+  | some cls =>
+      cases hremove : FreeList.removeFront (state.chains cls) with
+      | none => simp [hfind, State.removeFront, hremove] at htake
+      | some result =>
+          obtain ⟨detached, rest⟩ := result
+          simp [hfind, State.removeFront, hremove] at htake
+          rcases htake with ⟨rfl, rfl⟩
+          exact ⟨cls, rest, rfl, hremove, rfl⟩
+
+theorem takeCandidate_valid {state next : State} {start : SizeClass}
+    {removed : Block} (hvalid : Valid state)
+    (htake : state.takeCandidate start = some (removed, next)) :
+    Valid next := by
+  obtain ⟨cls, rest, _, hremove, rfl⟩ := takeCandidate_result htake
+  exact removeFront_valid hvalid hremove
+
+theorem takeCandidate_detached {state next : State} {start : SizeClass}
+    {removed : Block} (htake : state.takeCandidate start = some (removed, next)) :
+    removed.free = true ∧ removed.prevFreeLink = none ∧
+      removed.nextFreeLink = none := by
+  obtain ⟨cls, rest, _, hremove, _⟩ := takeCandidate_result htake
+  exact FreeList.removeFront_detaches hremove
+
+theorem takeCandidate_complete {state : State} {start : SizeClass}
+    (hvalid : Valid state) (heligible : HasEligibleBin state start) :
+    ∃ removed next, state.takeCandidate start = some (removed, next) := by
+  cases hfind : findCandidate state start with
+  | none =>
+      exact ((findCandidate_none_iff hvalid).1 hfind heligible).elim
+  | some cls =>
+      have hnonempty := findCandidate_nonempty hvalid hfind
+      obtain ⟨removed, rest, hremove⟩ := FreeList.removeFront_exists hnonempty
+      exact ⟨removed, state.replaceChain cls rest, by
+        simp [State.takeCandidate, hfind, State.removeFront, hremove]⟩
+
+theorem takeCandidate_none_iff {state : State} {start : SizeClass}
+    (hvalid : Valid state) :
+    state.takeCandidate start = none ↔ ¬ HasEligibleBin state start := by
+  constructor
+  · intro hnone heligible
+    obtain ⟨removed, next, hsome⟩ := takeCandidate_complete hvalid heligible
+    rw [hnone] at hsome
+    contradiction
+  · intro hno
+    have hfind := (findCandidate_none_iff hvalid).2 hno
+    simp [State.takeCandidate, hfind]
+
 theorem secondLevel_search_head {state : State} (hvalid : Valid state)
     (fl : Fin firstLevelCount) (start found : Nat)
     (hsearch : firstSetFrom (slBitmap state fl) start = some found) :

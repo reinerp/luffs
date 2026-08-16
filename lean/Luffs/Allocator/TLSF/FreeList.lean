@@ -60,6 +60,21 @@ def removeFront : List Block -> Option (Block × List Block)
   | head :: next :: rest =>
       some (withLinks head none none, withLinks next none next.nextFreeLink :: rest)
 
+theorem removeFront_none_iff {blocks : List Block} :
+    removeFront blocks = none ↔ blocks = [] := by
+  cases blocks with
+  | nil => simp [removeFront]
+  | cons head rest =>
+      cases rest <;> simp [removeFront]
+
+theorem removeFront_exists {blocks : List Block} (hnonempty : blocks ≠ []) :
+    ∃ removed rest, removeFront blocks = some (removed, rest) := by
+  cases hremove : removeFront blocks with
+  | none => exact ((removeFront_none_iff.mp hremove) |> hnonempty).elim
+  | some result =>
+      obtain ⟨removed, rest⟩ := result
+      exact ⟨removed, rest, rfl⟩
+
 theorem removeFront_valid {blocks : List Block} {removed : Block} {rest : List Block}
     (hvalid : Valid blocks) (hremove : removeFront blocks = some (removed, rest)) :
     Valid rest := by

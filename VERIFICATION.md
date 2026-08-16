@@ -36,6 +36,8 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
 - [x] Define the first pure block layout predicates and prove that splitting
   and coalescing preserve byte counts.
 - [ ] Implement size-class mapping and prove every `(fl, sl)` index in range.
+  The Lean reference mapping now returns `Fin 64 × Fin 32`, making index bounds
+  intrinsic; its no-wrap/suitable-bin theorem and Luffs implementation remain.
 - [ ] Implement bitmap search and prove it returns a nonempty suitable bin.
 - [ ] Implement intrusive free-list insertion/removal and prove link
   consistency and ownership preservation.

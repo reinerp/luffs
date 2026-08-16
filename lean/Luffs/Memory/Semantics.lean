@@ -4,6 +4,8 @@ set_option autoImplicit false
 
 namespace Luffs.Memory
 
+open Iris Iris.BI
+
 /-- A byte in the language semantics. `Fin 256` makes the range intrinsic. -/
 abbrev Byte := Fin 256
 
@@ -114,5 +116,33 @@ theorem write_preserves_mapped {mem : Memory} {p q : Addr} {old value : Byte}
   · subst hqp
     simp [Memory.write, Memory.mapped, hp]
   · simp [Memory.write, Memory.mapped, hqp]
+
+/-- Connects the executable memory state to the authoritative Iris allocation
+map. Byte contents are modeled separately; this relation records liveness. -/
+def MemoryRep (allocated : ByteMap Unit) (mem : Memory) : Prop :=
+  ∀ p, Std.PartialMap.get? allocated p = some () ↔ mem.mapped p
+
+/-- Adequacy for loads: authoritative agreement plus an owned region proves
+that the operational semantics has a next step. -/
+theorem owned_load_safe {GF : BundledGFunctors} [G : ByteRegionGS GF]
+    {allocated : ByteMap Unit} {mem : Memory} {r : Region} {p : Addr}
+    (hrep : MemoryRep allocated mem) (hp : r.contains p) :
+    byteHeapInterp (G := G) allocated ∗ ghostOwnsBytes r ⊢
+      ⌜(Prim.load p).safe mem⌝ := by
+  iintro H
+  ihave %hlookup := byteHeapInterp_lookup (G := G) hp $$ H
+  ipureintro
+  exact (load_safe_iff mem p).2 ((hrep p).1 hlookup)
+
+/-- Adequacy for stores follows from the same exclusive region capability. -/
+theorem owned_store_safe {GF : BundledGFunctors} [G : ByteRegionGS GF]
+    {allocated : ByteMap Unit} {mem : Memory} {r : Region} {p : Addr}
+    (hrep : MemoryRep allocated mem) (hp : r.contains p) (value : Byte) :
+    byteHeapInterp (G := G) allocated ∗ ghostOwnsBytes r ⊢
+      ⌜(Prim.store p value).safe mem⌝ := by
+  iintro H
+  ihave %hlookup := byteHeapInterp_lookup (G := G) hp $$ H
+  ipureintro
+  exact (store_safe_iff mem p value).2 ((hrep p).1 hlookup)
 
 end Luffs.Memory

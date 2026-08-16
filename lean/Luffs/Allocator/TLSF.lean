@@ -9,6 +9,40 @@ open Luffs.Memory
 /-- Minimum block alignment. Metadata flags occupy the low alignment bits. -/
 def alignment : Nat := 8
 
+def firstLevelCount : Nat := 64
+def secondLevelCount : Nat := 32
+def linearCutoff : Nat := alignment * secondLevelCount
+
+structure SizeClass where
+  fl : Fin firstLevelCount
+  sl : Fin secondLevelCount
+deriving DecidableEq, Repr
+
+/-- Two-level size mapping. The modulo is executable totalization; the
+subsequent suitability proof must show it never wraps for admissible sizes. -/
+def sizeClass (size : Nat) (hsize : 0 < size)
+    (hmax : size < 2 ^ firstLevelCount) : SizeClass :=
+  let log := size.log2
+  let base := 2 ^ log
+  let step := if log < 5 then alignment else 2 ^ (log - 5)
+  {
+    fl := ⟨log, (Nat.log2_lt (Nat.ne_of_gt hsize)).2 hmax⟩
+    sl := ⟨((size - base) / step) % secondLevelCount,
+      Nat.mod_lt _ (by decide : 0 < secondLevelCount)⟩
+  }
+
+theorem sizeClass_fl (size : Nat) (hsize : 0 < size)
+    (hmax : size < 2 ^ firstLevelCount) :
+    (sizeClass size hsize hmax).fl.val = size.log2 := by
+  rfl
+
+theorem sizeClass_indices_in_bounds (size : Nat) (hsize : 0 < size)
+    (hmax : size < 2 ^ firstLevelCount) :
+    (sizeClass size hsize hmax).fl.val < firstLevelCount ∧
+      (sizeClass size hsize hmax).sl.val < secondLevelCount := by
+  exact ⟨(sizeClass size hsize hmax).fl.isLt,
+    (sizeClass size hsize hmax).sl.isLt⟩
+
 /-- A compact pure view used by the executable allocator and its Iris invariant. -/
 structure Block where
   offset : Nat

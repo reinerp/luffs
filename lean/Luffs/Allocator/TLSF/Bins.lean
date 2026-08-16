@@ -375,6 +375,104 @@ theorem flBitmap_length (state : State) :
     (flBitmap state).length = firstLevelCount := by
   simp [flBitmap]
 
+theorem slBitmap_get (state : State) (fl : Fin firstLevelCount)
+    (sl : Fin secondLevelCount) :
+    (slBitmap state fl)[sl.val]? = some (state.slSet fl sl) := by
+  simp [slBitmap]
+
+theorem flBitmap_get (state : State) (fl : Fin firstLevelCount) :
+    (flBitmap state)[fl.val]? = some (state.flSet fl) := by
+  simp [flBitmap]
+
+def HasEligibleBin (state : State) (start : SizeClass) : Prop :=
+  (∃ sl : Fin secondLevelCount, start.sl.val ≤ sl.val ∧
+    state.slSet start.fl sl = true) ∨
+  (∃ fl : Fin firstLevelCount, start.fl.val < fl.val ∧
+    state.flSet fl = true)
+
+/-- Lookup does not fail spuriously: if either an eligible second-level bit in
+the starting first level or any later first-level bit is set, the executable
+wrapper returns a pair of indices. -/
+theorem findCandidateIndices_complete {state : State} {start : SizeClass}
+    (hvalid : Valid state) (heligible : HasEligibleBin state start) :
+    ∃ fl sl, findCandidateIndices state start = some (fl, sl) := by
+  rcases heligible with hsame | hlater
+  · obtain ⟨sl, hstart, hbit⟩ := hsame
+    have hget : (slBitmap state start.fl)[sl.val]? = some true := by
+      rw [slBitmap_get]
+      simp [hbit]
+    obtain ⟨foundSl, hfoundSl⟩ := firstSetFrom_complete hstart hget
+    exact ⟨start.fl.val, foundSl, by
+      simp [findCandidateIndices, hfoundSl]⟩
+  · obtain ⟨fl, hstart, hbit⟩ := hlater
+    have hget : (flBitmap state)[fl.val]? = some true := by
+      rw [flBitmap_get]
+      simp [hbit]
+    obtain ⟨foundFl, hfoundFl⟩ := firstSetFrom_complete
+      (show start.fl.val + 1 ≤ fl.val by omega) hget
+    have hfoundFlBound := (firstSetFrom_sound hfoundFl).2.1
+    rw [flBitmap_length] at hfoundFlBound
+    let selectedFl : Fin firstLevelCount := ⟨foundFl, hfoundFlBound⟩
+    have hflBit : state.flSet selectedFl = true := by
+      have hselectedGet := (firstSetFrom_sound hfoundFl).2.2
+      have hview := flBitmap_get state selectedFl
+      rw [hselectedGet] at hview
+      exact (Option.some.inj hview).symm
+    obtain ⟨sl, hchain⟩ := (fl_bit_iff_nonempty hvalid selectedFl).1 hflBit
+    have hslBit := (sl_bit_iff_nonempty hvalid selectedFl sl).2 hchain
+    have hslGet : (slBitmap state selectedFl)[sl.val]? = some true := by
+      rw [slBitmap_get]
+      simp [hslBit]
+    obtain ⟨foundSl, hfoundSl⟩ := firstSetFrom_complete (Nat.zero_le _) hslGet
+    cases hsameSearch : firstSetFrom (slBitmap state start.fl) start.sl.val with
+    | some sameSl =>
+        exact ⟨start.fl.val, sameSl, by
+          simp [findCandidateIndices, hsameSearch]⟩
+    | none =>
+        exact ⟨foundFl, foundSl, by
+          simp [findCandidateIndices, hsameSearch, hfoundFl, hfoundFlBound,
+            hfoundSl, selectedFl]⟩
+
+theorem findCandidateIndices_success_eligible {state : State} {start : SizeClass}
+    {fl sl : Nat} (hfind : findCandidateIndices state start = some (fl, sl)) :
+    HasEligibleBin state start := by
+  rcases findCandidateIndices_result hfind with hsame | hlater
+  · have hsound := firstSetFrom_sound hsame.2
+    have hbound : sl < secondLevelCount := by
+      rw [slBitmap_length] at hsound
+      exact hsound.2.1
+    let selectedSl : Fin secondLevelCount := ⟨sl, hbound⟩
+    have hview := slBitmap_get state start.fl selectedSl
+    rw [hsound.2.2] at hview
+    have hbit : state.slSet start.fl selectedSl = true :=
+      (Option.some.inj hview).symm
+    exact Or.inl ⟨selectedSl, hsound.1, hbit⟩
+  · obtain ⟨hbound, hfirst, _⟩ := hlater
+    let selectedFl : Fin firstLevelCount := ⟨fl, hbound⟩
+    have hsound := firstSetFrom_sound hfirst
+    have hview := flBitmap_get state selectedFl
+    rw [hsound.2.2] at hview
+    have hbit : state.flSet selectedFl = true :=
+      (Option.some.inj hview).symm
+    exact Or.inr ⟨selectedFl, by
+      change start.fl.val < fl
+      omega, hbit⟩
+
+theorem findCandidateIndices_none_iff {state : State} {start : SizeClass}
+    (hvalid : Valid state) :
+    findCandidateIndices state start = none ↔ ¬ HasEligibleBin state start := by
+  constructor
+  · intro hnone heligible
+    obtain ⟨fl, sl, hsome⟩ := findCandidateIndices_complete hvalid heligible
+    rw [hnone] at hsome
+    contradiction
+  · intro hnone
+    cases hfind : findCandidateIndices state start with
+    | none => rfl
+    | some pair =>
+        obtain ⟨fl, sl⟩ := pair
+        exact (hnone (findCandidateIndices_success_eligible hfind)).elim
+
 /-- A successful second-level bitmap search selects a real nonempty intrusive
 chain, not merely a set bit disconnected from allocator state. -/
 theorem secondLevel_search_nonempty {state : State} (hvalid : Valid state)

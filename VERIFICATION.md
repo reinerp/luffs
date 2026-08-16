@@ -53,7 +53,9 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   aligned, free block whose size is at least the request. The executable lookup
   wrapper now combines same-level and later-first-level branches, bounds-checks
   raw bitmap indices before converting them to `Fin`, and has one unified
-  success-suitability theorem. Lookup failure/completeness remains.
+  success-suitability theorem. Bitmap search is also proved complete: it
+  succeeds whenever an eligible bit exists, and returns `none` exactly when no
+  eligible same-level or later-first-level bin exists.
 - [ ] Implement intrusive free-list insertion/removal and prove link
   consistency and ownership preservation.
   Blocks now carry intrusive previous/next offsets. Front insertion and removal

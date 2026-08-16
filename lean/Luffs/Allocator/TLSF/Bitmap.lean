@@ -32,6 +32,22 @@ theorem firstTrueIndex_lt_length {bits : List Bool} {i : Nat}
     (h : firstTrueIndex bits = some i) : i < bits.length := by
   exact (List.getElem?_eq_some_iff.mp (firstTrueIndex_sound h)).1
 
+theorem firstTrueIndex_complete {bits : List Bool} {i : Nat}
+    (hget : bits[i]? = some true) :
+    ∃ found, firstTrueIndex bits = some found := by
+  induction bits generalizing i with
+  | nil => simp at hget
+  | cons bit rest ih =>
+      cases bit with
+      | true => exact ⟨0, by simp [firstTrueIndex]⟩
+      | false =>
+          cases i with
+          | zero => simp at hget
+          | succ i =>
+              simp only [List.getElem?_cons_succ] at hget
+              obtain ⟨found, hfound⟩ := ih hget
+              exact ⟨found + 1, by simp [firstTrueIndex, hfound]⟩
+
 theorem firstTrueIndex_minimal {bits : List Bool} {i j : Nat}
     (h : firstTrueIndex bits = some i) (hj : j < i) :
     bits[j]? = some false := by
@@ -66,6 +82,16 @@ theorem firstSetFrom_sound {bits : List Bool} {start i : Nat}
   constructor
   · omega
   · simpa only [Nat.add_comm] using hget
+
+theorem firstSetFrom_complete {bits : List Bool} {start i : Nat}
+    (hstart : start ≤ i) (hget : bits[i]? = some true) :
+    ∃ found, firstSetFrom bits start = some found := by
+  obtain ⟨delta, rfl⟩ := Nat.exists_eq_add_of_le hstart
+  have hdrop : (bits.drop start)[delta]? = some true := by
+    rw [List.getElem?_drop]
+    simpa only [Nat.add_comm] using hget
+  obtain ⟨found, hfound⟩ := firstTrueIndex_complete hdrop
+  exact ⟨start + found, by simp [firstSetFrom, hfound]⟩
 
 theorem firstSetFrom_minimal {bits : List Bool} {start i j : Nat}
     (h : firstSetFrom bits start = some i) (hstart : start ≤ j) (hj : j < i) :

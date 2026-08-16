@@ -188,6 +188,47 @@ def SamePhysical (left right : Block) : Prop :=
   left.offset = right.offset ∧ left.bytes = right.bytes ∧
     left.free = right.free ∧ left.prevFree = right.prevFree
 
+instance (left right : Block) : Decidable (SamePhysical left right) := by
+  unfold SamePhysical
+  infer_instance
+
+/-- Locate the physical header represented by a detached or linked chain
+projection. The comparison intentionally ignores intrusive links. -/
+def findPhysicalIndex : List Block -> Block -> Option Nat
+  | [], _ => none
+  | head :: rest, target =>
+      if SamePhysical head target then some 0
+      else (findPhysicalIndex rest target).map Nat.succ
+
+theorem findPhysicalIndex_sound {physical : List Block} {target : Block}
+    {i : Nat} (hfind : findPhysicalIndex physical target = some i) :
+    ∃ actual, physical[i]? = some actual ∧ SamePhysical actual target := by
+  induction physical generalizing i with
+  | nil => simp [findPhysicalIndex] at hfind
+  | cons head rest ih =>
+      by_cases hsame : SamePhysical head target
+      · simp [findPhysicalIndex, hsame] at hfind
+        subst i
+        exact ⟨head, rfl, hsame⟩
+      · simp [findPhysicalIndex, hsame] at hfind
+        obtain ⟨j, hj, rfl⟩ := hfind
+        obtain ⟨actual, hget, hactual⟩ := ih hj
+        exact ⟨actual, by simpa using hget, hactual⟩
+
+theorem findPhysicalIndex_complete {physical : List Block} {target actual : Block}
+    (hmem : actual ∈ physical) (hsame : SamePhysical actual target) :
+    ∃ i, findPhysicalIndex physical target = some i := by
+  induction physical with
+  | nil => simp at hmem
+  | cons head rest ih =>
+      simp only [List.mem_cons] at hmem
+      by_cases hhead : SamePhysical head target
+      · exact ⟨0, by simp [findPhysicalIndex, hhead]⟩
+      · rcases hmem with rfl | htail
+        · exact (hhead hsame).elim
+        · obtain ⟨i, hfind⟩ := ih htail
+          exact ⟨i + 1, by simp [findPhysicalIndex, hhead, hfind]⟩
+
 theorem samePhysical_refl (b : Block) : SamePhysical b b :=
   ⟨rfl, rfl, rfl, rfl⟩
 
@@ -345,6 +386,10 @@ def CandidateResult (state : State) (start : SizeClass) (fl sl : Nat) : Prop :=
     firstSetFrom (flBitmap state) (start.fl.val + 1) = some fl ∧
     firstSetFrom (slBitmap state ⟨fl, hfl⟩) 0 = some sl)
 
+def ClassOrdered (start found : SizeClass) : Prop :=
+  start.fl.val < found.fl.val ∨
+    (start.fl.val = found.fl.val ∧ start.sl.val ≤ found.sl.val)
+
 theorem findCandidateIndices_result {state : State} {start : SizeClass}
     {fl sl : Nat} (hfind : findCandidateIndices state start = some (fl, sl)) :
     CandidateResult state start fl sl := by
@@ -403,6 +448,82 @@ theorem findCandidate_result {state : State} {start found : SizeClass}
       simp [hindices, hbounds.1, hbounds.2] at hfind
       subst found
       rfl
+
+theorem findCandidate_ordered {state : State} {start found : SizeClass}
+    (hfind : findCandidate state start = some found) :
+    ClassOrdered start found := by
+  have hindices := findCandidate_result hfind
+  rcases findCandidateIndices_result hindices with hsame | hlater
+  · right
+    constructor
+    · exact hsame.1.symm
+    · exact (firstSetFrom_sound hsame.2).1
+  · left
+    obtain ⟨_, hfirst, _⟩ := hlater
+    exact Nat.lt_of_succ_le (firstSetFrom_sound hfirst).1
+
+/-- Every aligned block classified into a returned class is suitable, not just
+the particular physical witness chosen by an existential search theorem. -/
+theorem ordered_search_class_suitable (request : Nat) (hrequest : 0 < request)
+    (hkeyMax : requestKey request < 2 ^ firstLevelCount)
+    {found : SizeClass} {block : Block}
+    (horder : ClassOrdered (searchSizeClass request hrequest hkeyMax) found)
+    (hbelongs : Belongs found block) (haligned : alignment ∣ block.bytes) :
+    request ≤ block.bytes := by
+  unfold ClassOrdered at horder
+  obtain ⟨hblock, hblockMax, hblockClass⟩ := hbelongs
+  by_cases hlinear : request ≤ linearCutoff
+  · have hrequestMax : request < 2 ^ firstLevelCount :=
+      Nat.lt_of_le_of_lt (request_le_key request hrequest) hkeyMax
+    have hstart := searchSizeClass_linear request hrequest hkeyMax hlinear
+    by_cases hblockLinear : block.bytes ≤ linearCutoff
+    · have hrequestFl :=
+        (linear_sizeClass_values request hrequest hrequestMax hlinear).1
+      have hblockFl :=
+        (linear_sizeClass_values block.bytes hblock hblockMax hblockLinear).1
+      have hsl : (sizeClass request hrequest hrequestMax).sl.val ≤
+          (sizeClass block.bytes hblock hblockMax).sl.val := by
+        rw [hblockClass]
+        rw [hstart] at horder
+        rcases horder with hfl | ⟨_, hsl⟩
+        · rw [hrequestFl, ← hblockClass, hblockFl] at hfl
+          omega
+        · exact hsl
+      exact linear_later_class_suitable request block.bytes hrequest hblock
+        hrequestMax hblockMax hlinear hblockLinear haligned hsl
+    · exact Nat.le_trans hlinear (Nat.le_of_lt (Nat.lt_of_not_ge hblockLinear))
+  · have hrequestHigh : linearCutoff < request := Nat.lt_of_not_ge hlinear
+    have hstart := searchSizeClass_high request hrequest hkeyMax hrequestHigh
+    have hstartPositive : 0 <
+        (searchSizeClass request hrequest hkeyMax).fl.val := by
+      rw [hstart, show (requestSizeClass request hrequest hkeyMax).fl.val =
+          (requestKey request).log2 by
+        exact high_sizeClass_fl (requestKey request)
+          (requestKey_positive request hrequest) hkeyMax
+          (Nat.lt_of_lt_of_le hrequestHigh (request_le_key request hrequest))]
+      exact Nat.lt_of_lt_of_le (by decide : 0 < 5)
+        (high_log_at_least_five (requestKey request)
+          (Nat.lt_of_lt_of_le hrequestHigh (request_le_key request hrequest)))
+    have hblockHigh : linearCutoff < block.bytes := by
+      apply Nat.lt_of_not_ge
+      intro hblockLinear
+      have hblockZero :=
+        (linear_sizeClass_values block.bytes hblock hblockMax hblockLinear).1
+      rw [hblockClass] at hblockZero
+      rcases horder with hfl | ⟨hfl, _⟩
+      · omega
+      · omega
+    have hclassOrder :
+        (requestSizeClass request hrequest hkeyMax).fl.val <
+            (sizeClass block.bytes hblock hblockMax).fl.val ∨
+          ((requestSizeClass request hrequest hkeyMax).fl.val =
+              (sizeClass block.bytes hblock hblockMax).fl.val ∧
+            (requestSizeClass request hrequest hkeyMax).sl.val ≤
+              (sizeClass block.bytes hblock hblockMax).sl.val) := by
+      rw [hstart] at horder
+      simpa [hblockClass] using horder
+    exact high_request_later_class_suitable request block.bytes hrequest hblock
+      hkeyMax hblockMax hrequestHigh hblockHigh hclassOrder
 
 theorem slBitmap_length (state : State) (fl : Fin firstLevelCount) :
     (slBitmap state fl).length = secondLevelCount := by
@@ -589,6 +710,26 @@ theorem takeCandidate_result {state next : State} {start : SizeClass}
           rcases htake with ⟨rfl, rfl⟩
           exact ⟨cls, rest, rfl, hremove, rfl⟩
 
+theorem removeFront_removed_represents_member {state : State}
+    (hvalid : Valid state) {cls : SizeClass} {removed : Block}
+    {rest : List Block}
+    (hremove : FreeList.removeFront (state.chains cls) = some (removed, rest)) :
+    ∃ head, head ∈ state.chains cls ∧ SamePhysical head removed := by
+  cases hchain : state.chains cls with
+  | nil => simp [hchain, FreeList.removeFront] at hremove
+  | cons head tail =>
+      have hmem : head ∈ state.chains cls := by simp [hchain]
+      have hfree := member_free hvalid hmem
+      cases tail with
+      | nil =>
+          simp [hchain, FreeList.removeFront] at hremove
+          rcases hremove with ⟨rfl, rfl⟩
+          exact ⟨head, by simp, samePhysical_withLinks head none none hfree⟩
+      | cons next more =>
+          simp [hchain, FreeList.removeFront] at hremove
+          rcases hremove with ⟨rfl, rfl⟩
+          exact ⟨head, by simp, samePhysical_withLinks head none none hfree⟩
+
 theorem takeCandidate_valid {state next : State} {start : SizeClass}
     {removed : Block} (hvalid : Valid state)
     (htake : state.takeCandidate start = some (removed, next)) :
@@ -602,6 +743,34 @@ theorem takeCandidate_detached {state next : State} {start : SizeClass}
       removed.nextFreeLink = none := by
   obtain ⟨cls, rest, _, hremove, _⟩ := takeCandidate_result htake
   exact FreeList.removeFront_detaches hremove
+
+/-- The exact detached head—not merely some witness in its class—is suitable
+and still denotes the same authoritative physical header. -/
+theorem takeCandidate_suitable {pool : Region} {physical : List Block}
+    {state next : State} (hpool : PoolValid pool physical state)
+    (request : Nat) (hrequest : 0 < request)
+    (hkeyMax : requestKey request < 2 ^ firstLevelCount)
+    {removed : Block}
+    (htake : state.takeCandidate
+      (searchSizeClass request hrequest hkeyMax) = some (removed, next)) :
+    ∃ actual, actual ∈ physical ∧ SamePhysical actual removed ∧
+      removed.free = true ∧ removed.aligned ∧ request ≤ removed.bytes := by
+  obtain ⟨cls, rest, hfind, hremove, _⟩ := takeCandidate_result htake
+  obtain ⟨head, hmem, hheadRemoved⟩ :=
+    removeFront_removed_represents_member hpool.2.1 hremove
+  obtain ⟨actual, hactual, hactualHead⟩ := member_physical hpool.2.2 hmem
+  have hactualAligned := (hpool.1.2.2.2 actual hactual).2.2
+  have hheadAligned := (samePhysical_aligned_iff hactualHead).1 hactualAligned
+  have hremovedAligned := (samePhysical_aligned_iff hheadRemoved).1 hheadAligned
+  have hremovedBelongs :=
+    (samePhysical_belongs_iff hheadRemoved cls).1
+      (member_belongs hpool.2.1 hmem)
+  have horder := findCandidate_ordered hfind
+  have hsuitable := ordered_search_class_suitable request hrequest hkeyMax
+    horder hremovedBelongs hremovedAligned.2
+  have hdetached := takeCandidate_detached htake
+  exact ⟨actual, hactual, samePhysical_trans hactualHead hheadRemoved,
+    hdetached.1, hremovedAligned, hsuitable⟩
 
 theorem takeCandidate_complete {state : State} {start : SizeClass}
     (hvalid : Valid state) (heligible : HasEligibleBin state start) :

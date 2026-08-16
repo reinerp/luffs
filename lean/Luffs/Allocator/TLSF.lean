@@ -142,12 +142,17 @@ structure Block where
   free : Bool
   /-- Cached physical-predecessor state used for O(1) backward coalescing. -/
   prevFree : Bool
+  /-- Intrusive links are block offsets within the same pool. -/
+  prevFreeLink : Option Nat
+  nextFreeLink : Option Nat
 deriving DecidableEq, Repr
 
 def splitBlock (b : Block) (wanted : Nat) : Block × Block :=
-  ({ b with bytes := wanted, free := false },
+  ({ offset := b.offset, bytes := wanted, free := false,
+     prevFree := b.prevFree, prevFreeLink := none, nextFreeLink := none },
    { offset := b.offset + wanted, bytes := b.bytes - wanted,
-     free := true, prevFree := false })
+     free := true, prevFree := false,
+     prevFreeLink := none, nextFreeLink := none })
 
 /-- Replace the selected physical block by its two split pieces. An invalid
 index is totalized to the unchanged tail; verified callers prove lookup first. -/
@@ -434,7 +439,8 @@ theorem ownsBytes_splitBlock {PROP : Type} [BI PROP] [ByteRegionLogic PROP]
 
 /-- Coalescing adjacent blocks preserves byte count. -/
 def coalesceBlocks (left right : Block) : Block :=
-  { left with bytes := left.bytes + right.bytes, free := true }
+  { offset := left.offset, bytes := left.bytes + right.bytes, free := true,
+    prevFree := left.prevFree, prevFreeLink := none, nextFreeLink := none }
 
 def canCoalesce (left right : Block) : Prop :=
   left.free = true ∧ right.free = true ∧
@@ -606,9 +612,13 @@ theorem ownsBytes_coalesceBlocks {PROP : Type} [BI PROP] [ByteRegionLogic PROP]
 /-- Change only allocation state; physical layout is untouched. -/
 def markFreeAt : List Block -> Nat -> List Block
   | [], _ => []
-  | [b], 0 => [{ b with free := true }]
+  | [b], 0 =>
+      [{ offset := b.offset, bytes := b.bytes, free := true,
+         prevFree := b.prevFree, prevFreeLink := none, nextFreeLink := none }]
   | b :: next :: rest, 0 =>
-      { b with free := true } :: { next with prevFree := true } :: rest
+      { offset := b.offset, bytes := b.bytes, free := true,
+        prevFree := b.prevFree, prevFreeLink := none, nextFreeLink := none } ::
+        { next with prevFree := true } :: rest
   | b :: rest, i + 1 => b :: markFreeAt rest i
 
 def deallocateAt (pool : Region) (blocks : List Block) (i : Nat)

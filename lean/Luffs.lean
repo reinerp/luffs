@@ -4,6 +4,7 @@ import Luffs.Memory.ConcreteIris
 import Luffs.Memory.Semantics
 import Luffs.Allocator.TLSF
 import Luffs.Allocator.TLSF.Bitmap
+import Luffs.Allocator.TLSF.FreeList
 
 namespace Luffs
 

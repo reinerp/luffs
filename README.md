@@ -58,6 +58,8 @@ The checked-in foundation currently contains:
   alignment, and exact Iris ownership.
 - predecessor-free boundary tags with checked consistency across allocation,
   deallocation, and coalescing, providing the basis for O(1) backward merging.
+- intrusive free-list links with verified front insertion/removal, link
+  consistency, unique offsets, and detached removal results.
 
 It does **not** yet constitute a verified TLSF, `Box`, or `Vec`. The remaining
 proof must instantiate `OwnsBytes` with Iris authoritative heap resources,

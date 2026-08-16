@@ -378,6 +378,216 @@ theorem removeFront_preserves_forward_agreement {physical : List Block}
   · rw [replaceChain_other state rest hquery] at hmem
     exact hagrees.1 query cached hmem
 
+theorem removeFront_removed_represents_member {state : State}
+    (hvalid : Valid state) {cls : SizeClass} {removed : Block}
+    {rest : List Block}
+    (hremove : FreeList.removeFront (state.chains cls) = some (removed, rest)) :
+    ∃ head, head ∈ state.chains cls ∧ SamePhysical head removed := by
+  cases hchain : state.chains cls with
+  | nil => simp [hchain, FreeList.removeFront] at hremove
+  | cons head tail =>
+      have hmem : head ∈ state.chains cls := by simp [hchain]
+      have hfree := member_free hvalid hmem
+      cases tail with
+      | nil =>
+          simp [hchain, FreeList.removeFront] at hremove
+          rcases hremove with ⟨rfl, rfl⟩
+          exact ⟨head, by simp, samePhysical_withLinks head none none hfree⟩
+      | cons next more =>
+          simp [hchain, FreeList.removeFront] at hremove
+          rcases hremove with ⟨rfl, rfl⟩
+          exact ⟨head, by simp, samePhysical_withLinks head none none hfree⟩
+
+theorem removeFront_removed_not_represented {state : State}
+    (hvalid : Valid state) {cls : SizeClass} {removed : Block}
+    {rest : List Block}
+    (hremove : FreeList.removeFront (state.chains cls) = some (removed, rest))
+    {query : SizeClass} {cached : Block}
+    (hcached : cached ∈ (state.replaceChain cls rest).chains query)
+    (hsame : SamePhysical removed cached) : False := by
+  obtain ⟨head, hhead, hheadRemoved⟩ :=
+    removeFront_removed_represents_member hvalid hremove
+  have hremovedBelongs : Belongs cls removed :=
+    (samePhysical_belongs_iff hheadRemoved cls).1 (member_belongs hvalid hhead)
+  have hcachedBelongs := member_belongs (removeFront_valid hvalid hremove) hcached
+  have hremovedQuery : Belongs query removed :=
+    (samePhysical_belongs_iff hsame query).2 hcachedBelongs
+  obtain ⟨_, _, hcls⟩ := hremovedBelongs
+  obtain ⟨_, _, hquery⟩ := hremovedQuery
+  have hclasses : query = cls := by rw [← hquery, ← hcls]
+  rw [hclasses] at hcached
+  rw [replaceChain_target] at hcached
+  have hremovedOffsets := FreeList.removeFront_removes_head hremove
+  have hcachedOffsetMem : cached.offset ∈ rest.map Block.offset :=
+    List.mem_map.mpr ⟨cached, hcached, rfl⟩
+  rw [hremovedOffsets.2] at hcachedOffsetMem
+  have hnodup := (hvalid.1 cls).2
+  cases hoffsets : (state.chains cls).map Block.offset with
+  | nil => simp [hoffsets] at hremovedOffsets
+  | cons first tail =>
+      simp [hoffsets] at hremovedOffsets hnodup hcachedOffsetMem
+      have hoffsetEq : removed.offset = cached.offset := hsame.1
+      exact hnodup.1 (by simpa [hremovedOffsets.1, hoffsetEq] using hcachedOffsetMem)
+
+theorem removeFront_member_survives {state : State} (hvalid : Valid state)
+    {cls : SizeClass} {removed old : Block} {rest : List Block}
+    (hremove : FreeList.removeFront (state.chains cls) = some (removed, rest))
+    (hold : old ∈ state.chains cls) (hne : ¬ SamePhysical removed old) :
+    ∃ kept ∈ rest, SamePhysical old kept := by
+  cases hchain : state.chains cls with
+  | nil => simp [hchain] at hold
+  | cons head tail =>
+      have hheadMem : head ∈ state.chains cls := by simp [hchain]
+      have hheadFree := member_free hvalid hheadMem
+      simp only [hchain, List.mem_cons] at hold
+      cases tail with
+      | nil =>
+          rcases hold with heq | hold
+          · subst old
+            simp [hchain, FreeList.removeFront] at hremove
+            rcases hremove with ⟨rfl, rfl⟩
+            exact (hne (samePhysical_symm
+              (samePhysical_withLinks head none none hheadFree))).elim
+          · simp at hold
+      | cons next more =>
+          have hnextMem : next ∈ state.chains cls := by simp [hchain]
+          have hnextFree := member_free hvalid hnextMem
+          simp [hchain, FreeList.removeFront] at hremove
+          rcases hremove with ⟨rfl, rfl⟩
+          rcases hold with heq | hold
+          · subst old
+            exact (hne (samePhysical_symm
+              (samePhysical_withLinks head none none hheadFree))).elim
+          · simp only [List.mem_cons] at hold
+            rcases hold with heq | hold
+            · subst old
+              exact ⟨FreeList.withLinks next none next.nextFreeLink, by simp,
+                samePhysical_withLinks next none next.nextFreeLink hnextFree⟩
+            · exact ⟨old, by simp [hold], samePhysical_refl old⟩
+
+theorem removeFront_preserves_other_representation {state : State}
+    (hvalid : Valid state) {cls : SizeClass} {removed : Block} {rest : List Block}
+    (hremove : FreeList.removeFront (state.chains cls) = some (removed, rest))
+    {actual : Block}
+    (hrepresented : ∃ query cached,
+      cached ∈ state.chains query ∧ SamePhysical actual cached)
+    (hne : ¬ SamePhysical removed actual) :
+    ∃ query cached,
+      cached ∈ (state.replaceChain cls rest).chains query ∧
+        SamePhysical actual cached := by
+  obtain ⟨query, cached, hcached, hactualCached⟩ := hrepresented
+  by_cases hquery : query = cls
+  · subst query
+    have hremovedCached : ¬ SamePhysical removed cached := by
+      intro hsame
+      exact hne (samePhysical_trans hsame (samePhysical_symm hactualCached))
+    obtain ⟨kept, hkept, hcachedKept⟩ :=
+      removeFront_member_survives hvalid hremove hcached hremovedCached
+    exact ⟨cls, kept, by simpa using hkept,
+      samePhysical_trans hactualCached hcachedKept⟩
+  · exact ⟨query, cached, by
+      rw [replaceChain_other state rest hquery]
+      exact hcached, hactualCached⟩
+
+theorem insert_member_origin {state : State} (hvalid : Valid state)
+    {cls : SizeClass} {inserted cached : Block} (hinsertedFree : inserted.free = true)
+    (hmem : cached ∈ (state.insert cls inserted).chains cls) :
+    SamePhysical inserted cached ∨
+      ∃ old ∈ state.chains cls, SamePhysical old cached := by
+  rw [show (state.insert cls inserted).chains cls =
+      FreeList.insertFront inserted (state.chains cls) by
+    simp [State.insert]] at hmem
+  cases hchain : state.chains cls with
+  | nil =>
+      simp [hchain, FreeList.insertFront] at hmem
+      subst cached
+      exact Or.inl (samePhysical_withLinks inserted none none hinsertedFree)
+  | cons head rest =>
+      have hheadMem : head ∈ state.chains cls := by simp [hchain]
+      have hheadFree := member_free hvalid hheadMem
+      simp only [hchain, FreeList.insertFront, List.mem_cons] at hmem
+      rcases hmem with hnew | htail
+      · subst cached
+        exact Or.inl
+          (samePhysical_withLinks inserted none (some head.offset) hinsertedFree)
+      · rcases htail with hhead | hrest
+        · subst cached
+          exact Or.inr ⟨head, by simp,
+            samePhysical_withLinks head (some inserted.offset)
+              head.nextFreeLink hheadFree⟩
+        · exact Or.inr ⟨cached, by simp [hrest], samePhysical_refl cached⟩
+
+theorem insert_preserves_forward_agreement {physical : List Block}
+    {state : State} (hvalid : Valid state)
+    (hforward : ∀ cls cached, cached ∈ state.chains cls →
+      ∃ actual ∈ physical, SamePhysical actual cached)
+    {cls : SizeClass} {inserted actualInserted : Block}
+    (hinsertedFree : inserted.free = true) (hactual : actualInserted ∈ physical)
+    (hsameInserted : SamePhysical actualInserted inserted) :
+    ∀ query cached, cached ∈ (state.insert cls inserted).chains query →
+      ∃ actual ∈ physical, SamePhysical actual cached := by
+  intro query cached hmem
+  by_cases hquery : query = cls
+  · subst query
+    rcases insert_member_origin hvalid hinsertedFree hmem with hnew | hold
+    · exact ⟨actualInserted, hactual,
+        samePhysical_trans hsameInserted hnew⟩
+    · obtain ⟨old, holdMem, holdSame⟩ := hold
+      obtain ⟨actual, hactualMem, hactualOld⟩ := hforward cls old holdMem
+      exact ⟨actual, hactualMem, samePhysical_trans hactualOld holdSame⟩
+  · have hold : cached ∈ state.chains query := by
+      rw [show (state.insert cls inserted).chains query = state.chains query by
+        exact replaceChain_other state
+          (FreeList.insertFront inserted (state.chains cls)) hquery] at hmem
+      exact hmem
+    exact hforward query cached hold
+
+theorem inserted_has_representation {state : State} {cls : SizeClass}
+    {inserted : Block} (hfree : inserted.free = true) :
+    ∃ cached, cached ∈ (state.insert cls inserted).chains cls ∧
+      SamePhysical inserted cached := by
+  cases hchain : state.chains cls with
+  | nil =>
+      exact ⟨FreeList.withLinks inserted none none, by
+        simp [State.insert, hchain, FreeList.insertFront],
+        samePhysical_withLinks inserted none none hfree⟩
+  | cons head rest =>
+      exact ⟨FreeList.withLinks inserted none (some head.offset), by
+        simp [State.insert, hchain, FreeList.insertFront],
+        samePhysical_withLinks inserted none (some head.offset) hfree⟩
+
+theorem insert_preserves_representation {state : State} (hvalid : Valid state)
+    {cls : SizeClass} {inserted actual : Block}
+    (hrepresented : ∃ query cached,
+      cached ∈ state.chains query ∧ SamePhysical actual cached) :
+    ∃ query cached, cached ∈ (state.insert cls inserted).chains query ∧
+      SamePhysical actual cached := by
+  obtain ⟨query, cached, hcached, hactualCached⟩ := hrepresented
+  by_cases hquery : query = cls
+  · subst query
+    cases hchain : state.chains cls with
+    | nil => simp [hchain] at hcached
+    | cons head rest =>
+        simp only [hchain, List.mem_cons] at hcached
+        rcases hcached with hhead | hrest
+        · subst cached
+          have hheadFree := member_free hvalid (show head ∈ state.chains cls by
+            simp [hchain])
+          exact ⟨cls, FreeList.withLinks head (some inserted.offset)
+              head.nextFreeLink, by
+            simp [State.insert, hchain, FreeList.insertFront],
+            samePhysical_trans hactualCached
+              (samePhysical_withLinks head (some inserted.offset)
+                head.nextFreeLink hheadFree)⟩
+        · exact ⟨cls, cached, by
+            simp [State.insert, hchain, FreeList.insertFront, hrest],
+            hactualCached⟩
+  · exact ⟨query, cached, by
+      rw [show (state.insert cls inserted).chains query = state.chains query by
+        exact replaceChain_other state
+          (FreeList.insertFront inserted (state.chains cls)) hquery]
+      exact hcached, hactualCached⟩
+
 theorem physical_free_member {physical : List Block} {state : State}
     (hagrees : PhysicalAgreement physical state) {b : Block}
     (hphysical : b ∈ physical) (hfree : b.free = true) :
@@ -774,26 +984,6 @@ theorem takeCandidate_result {state next : State} {start : SizeClass}
           simp [hfind, State.removeFront, hremove] at htake
           rcases htake with ⟨rfl, rfl⟩
           exact ⟨cls, rest, rfl, hremove, rfl⟩
-
-theorem removeFront_removed_represents_member {state : State}
-    (hvalid : Valid state) {cls : SizeClass} {removed : Block}
-    {rest : List Block}
-    (hremove : FreeList.removeFront (state.chains cls) = some (removed, rest)) :
-    ∃ head, head ∈ state.chains cls ∧ SamePhysical head removed := by
-  cases hchain : state.chains cls with
-  | nil => simp [hchain, FreeList.removeFront] at hremove
-  | cons head tail =>
-      have hmem : head ∈ state.chains cls := by simp [hchain]
-      have hfree := member_free hvalid hmem
-      cases tail with
-      | nil =>
-          simp [hchain, FreeList.removeFront] at hremove
-          rcases hremove with ⟨rfl, rfl⟩
-          exact ⟨head, by simp, samePhysical_withLinks head none none hfree⟩
-      | cons next more =>
-          simp [hchain, FreeList.removeFront] at hremove
-          rcases hremove with ⟨rfl, rfl⟩
-          exact ⟨head, by simp, samePhysical_withLinks head none none hfree⟩
 
 theorem takeCandidate_valid {state next : State} {start : SizeClass}
     {removed : Block} (hvalid : Valid state)

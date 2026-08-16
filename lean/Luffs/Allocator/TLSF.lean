@@ -733,6 +733,24 @@ theorem no_block_starts_inside {pool : Region} {blocks : List Block}
     have hotherPositive := (hwell.2.2.2 other hother).1
     omega
 
+theorem wellFormed_same_offset {pool : Region} {blocks : List Block}
+    (hwell : wellFormed pool blocks) {left right : Block}
+    (hleft : left ∈ blocks) (hright : right ∈ blocks)
+    (hoffset : left.offset = right.offset) : left = right := by
+  obtain ⟨i, hi, hgetLeft⟩ := List.mem_iff_getElem.mp hleft
+  obtain ⟨j, hj, hgetRight⟩ := List.mem_iff_getElem.mp hright
+  rcases Nat.lt_trichotomy i j with hij | hij | hij
+  · have hord := hwell.1 i j hi hj hij
+    rw [hgetLeft, hgetRight, ← hoffset] at hord
+    have hpositive := (hwell.2.2.2 left hleft).1
+    omega
+  · subst j
+    rw [← hgetLeft, ← hgetRight]
+  · have hord := hwell.1 j i hj hi hij
+    rw [hgetRight, hgetLeft, hoffset] at hord
+    have hpositive := (hwell.2.2.2 right hright).1
+    omega
+
 theorem block_inside {pool : Region} {blocks : List Block}
     (h : wellFormed pool blocks) {b : Block} (hb : b ∈ blocks) {i : Nat}
     (hi : i < b.bytes) : pool.contains (pool.base + b.offset + i) := by
@@ -754,6 +772,50 @@ theorem splitBlock_offsets (b : Block) (wanted : Nat) :
     (splitBlock b wanted).1.offset = b.offset ∧
       (splitBlock b wanted).2.offset = b.offset + wanted := by
   exact ⟨rfl, rfl⟩
+
+theorem splitAt_contains_remainder {blocks : List Block} {i wanted : Nat}
+    {b : Block} (hget : blocks[i]? = some b) :
+    (splitBlock b wanted).2 ∈ splitAt blocks i wanted := by
+  induction blocks generalizing i b with
+  | nil => simp at hget
+  | cons head rest ih =>
+      cases i with
+      | zero =>
+          simp only [List.getElem?_cons_zero, Option.some.injEq] at hget
+          subst b
+          simp [splitAt]
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at hget
+          simp [splitAt, ih hget]
+
+theorem splitAt_contains_allocated {blocks : List Block} {i wanted : Nat}
+    {b : Block} (hget : blocks[i]? = some b) :
+    (splitBlock b wanted).1 ∈ splitAt blocks i wanted := by
+  induction blocks generalizing i b with
+  | nil => simp at hget
+  | cons head rest ih =>
+      cases i with
+      | zero =>
+          simp only [List.getElem?_cons_zero, Option.some.injEq] at hget
+          subst b
+          simp [splitAt]
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at hget
+          simp [splitAt, ih hget]
+
+theorem markAllocatedAt_contains {blocks : List Block} {i : Nat} {b : Block}
+    (hget : blocks[i]? = some b) : markAllocated b ∈ markAllocatedAt blocks i := by
+  induction blocks generalizing i b with
+  | nil => simp at hget
+  | cons head rest ih =>
+      cases i with
+      | zero =>
+          simp only [List.getElem?_cons_zero, Option.some.injEq] at hget
+          subst b
+          cases rest <;> simp [markAllocatedAt]
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at hget
+          simp [markAllocatedAt, ih hget]
 
 theorem splitBlock_preserves_end (b : Block) (wanted : Nat) (h : wanted ≤ b.bytes) :
     (splitBlock b wanted).2.offset + (splitBlock b wanted).2.bytes =

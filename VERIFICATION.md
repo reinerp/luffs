@@ -109,8 +109,11 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   alignment, and bounds). Split remainders are proved fresh, positive, aligned,
   addressable, classifiable, and reinserted; the executable public allocation
   path is proved complete once an eligible bin exists and safe through bin
-  validity. Restoring the bidirectional physical/bin agreement and whole-pool
-  Iris ownership invariant remains.
+  validity. Both directions of the physical/bin representation relation are
+  now restored after whole-block allocation and splitting, yielding the main
+  theorem that successful aligned allocation preserves the complete pure
+  allocator invariant. Transferring the whole-pool Iris ownership invariant
+  through this composed transition remains.
 - [ ] Prove `dealloc`: consuming exactly a live allocation restores it to the
   allocator without leaks, overlap, or double-free.
   The executable deallocation transition now requires the exact returned

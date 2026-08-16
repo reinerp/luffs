@@ -45,7 +45,11 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   starting index. Cached first/second-level bits are now proved equivalent to
   nonempty intrusive chains, and a successful second-level search is proved to
   return a free head classified into that bin. The cross-bin size-suitability
-  inequality remains.
+  inequality remains for logarithmic bins. The mapping-up request key is now
+  distinct from mapping-down block classification and is proved no smaller
+  than the request. For the complete linear range, searching from the request's
+  second-level class is proved end-to-end to return an authoritative physical,
+  aligned, free block whose size is at least the request.
 - [ ] Implement intrusive free-list insertion/removal and prove link
   consistency and ownership preservation.
   Blocks now carry intrusive previous/next offsets. Front insertion and removal

@@ -384,6 +384,44 @@ theorem secondLevel_search_physical_head {pool : Region} {physical : List Block}
   exact ⟨hfound, head, actual, rest, hchain, hactual, hsame,
     hactualFree, hactualBelongs, hfree⟩
 
+/-- End-to-end suitability for the linear TLSF range: beginning bitmap search
+at the request's class returns a physical, aligned free block large enough for
+the request. -/
+theorem secondLevel_search_linear_suitable {pool : Region} {physical : List Block}
+    {state : State} (hpool : PoolValid pool physical state)
+    (request : Nat) (hrequest : 0 < request)
+    (hrequestMax : request < 2 ^ firstLevelCount)
+    (hlinear : request ≤ linearCutoff) (found : Nat)
+    (hsearch : firstSetFrom
+      (slBitmap state (sizeClass request hrequest hrequestMax).fl)
+      (sizeClass request hrequest hrequestMax).sl.val = some found) :
+    ∃ actual : Block, actual ∈ physical ∧ actual.free = true ∧
+      actual.aligned ∧ request ≤ actual.bytes := by
+  let requestClass := sizeClass request hrequest hrequestMax
+  obtain ⟨hfound, head, actual, rest, hchain, hactual, hsame,
+      hactualFree, hbelongs, _⟩ :=
+    secondLevel_search_physical_head hpool requestClass.fl
+      requestClass.sl.val found hsearch
+  obtain ⟨hblock, hblockMax, hblockClass⟩ := hbelongs
+  have hrequestValues := linear_sizeClass_values request hrequest
+    hrequestMax hlinear
+  have hactualFl :
+      (sizeClass actual.bytes hblock hblockMax).fl.val = 0 := by
+    rw [hblockClass]
+    exact hrequestValues.1
+  have hblockLinear := sizeClass_fl_zero_linear actual.bytes hblock
+    hblockMax hactualFl
+  have hsearchSound := firstSetFrom_sound hsearch
+  have hsl : (sizeClass request hrequest hrequestMax).sl.val ≤
+      (sizeClass actual.bytes hblock hblockMax).sl.val := by
+    rw [hblockClass]
+    exact hsearchSound.1
+  have haligned := (hpool.1.2.2.2 actual hactual).2.2
+  have hsuitable := linear_later_class_suitable request actual.bytes
+    hrequest hblock hrequestMax hblockMax hlinear hblockLinear
+    haligned.2 hsl
+  exact ⟨actual, hactual, hactualFree, haligned, hsuitable⟩
+
 /-- Likewise, a successful first-level search identifies a first level with at
 least one nonempty second-level chain. -/
 theorem firstLevel_search_nonempty {state : State} (hvalid : Valid state)

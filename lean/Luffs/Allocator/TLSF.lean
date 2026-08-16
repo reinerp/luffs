@@ -47,6 +47,20 @@ theorem high_sizeClass_fl (size : Nat) (hsize : 0 < size)
     (sizeClass size hsize hmax).fl.val = size.log2 := by
   simp [sizeClass, Nat.not_le_of_gt hhigh]
 
+theorem sizeClass_fl_zero_linear (size : Nat) (hsize : 0 < size)
+    (hmax : size < 2 ^ firstLevelCount)
+    (hfl : (sizeClass size hsize hmax).fl.val = 0) :
+    size ≤ linearCutoff := by
+  apply Nat.le_of_not_gt
+  intro hhigh
+  have hlog : 8 ≤ size.log2 := by
+    rw [Nat.le_log2 (Nat.ne_of_gt hsize)]
+    simp only [linearCutoff, alignment, secondLevelCount] at hhigh
+    change 256 ≤ size
+    omega
+  rw [high_sizeClass_fl size hsize hmax hhigh] at hfl
+  omega
+
 theorem sizeClass_indices_in_bounds (size : Nat) (hsize : 0 < size)
     (hmax : size < 2 ^ firstLevelCount) :
     (sizeClass size hsize hmax).fl.val < firstLevelCount ∧
@@ -127,6 +141,103 @@ theorem high_sizeClass_covers (size : Nat) (hsize : 0 < size) :
     Nat.add_sub_of_le hbase
   simp only [highBinUpper, highBinLower, highBinNumber, highBinStep] at hlo hhi ⊢
   constructor <;> omega
+
+/-- TLSF uses mapping-down when inserting a free block, but mapping-up for an
+allocation request. Linear bins end at an alignment boundary. High bins are
+half-open, so their upper boundary classifies into the next bin (including the
+carry into the next first level). -/
+def requestKey (size : Nat) : Nat :=
+  if size ≤ linearCutoff then linearBinUpper size else highBinUpper size
+
+theorem request_le_key (size : Nat) (hsize : 0 < size) :
+    size ≤ requestKey size := by
+  by_cases hlinear : size ≤ linearCutoff
+  · simp only [requestKey, hlinear, ↓reduceIte]
+    exact (linear_sizeClass_covers size hsize).2
+  · simp only [requestKey, hlinear, ↓reduceIte]
+    exact Nat.le_of_lt (high_sizeClass_covers size hsize).2
+
+theorem requestKey_positive (size : Nat) (hsize : 0 < size) :
+    0 < requestKey size :=
+  Nat.lt_of_lt_of_le hsize (request_le_key size hsize)
+
+/-- Executable request classifier. The explicit maximum premise records the
+top-bin overflow check that callers must discharge before bitmap lookup. -/
+def requestSizeClass (size : Nat) (hsize : 0 < size)
+    (hkeymax : requestKey size < 2 ^ firstLevelCount) : SizeClass :=
+  sizeClass (requestKey size) (requestKey_positive size hsize) hkeymax
+
+theorem requestSizeClass_indices_in_bounds (size : Nat) (hsize : 0 < size)
+    (hkeymax : requestKey size < 2 ^ firstLevelCount) :
+    (requestSizeClass size hsize hkeymax).fl.val < firstLevelCount ∧
+      (requestSizeClass size hsize hkeymax).sl.val < secondLevelCount := by
+  exact sizeClass_indices_in_bounds (requestKey size)
+    (requestKey_positive size hsize) hkeymax
+
+theorem linear_requestKey (size : Nat) (hlinear : size ≤ linearCutoff) :
+    requestKey size = linearBinUpper size := by
+  simp [requestKey, hlinear]
+
+theorem high_requestKey (size : Nat) (hhigh : linearCutoff < size) :
+    requestKey size = highBinUpper size := by
+  simp [requestKey, Nat.not_le_of_gt hhigh]
+
+/-- In the linear range, aligned free-block sizes are exactly the upper
+endpoints of their 8-byte bins. Thus sharing a mapping-down class with an
+arbitrary request is already sufficient for the block to fit that request. -/
+theorem linear_same_class_suitable (request block : Nat)
+    (hrequest : 0 < request) (hblock : 0 < block)
+    (hrequestMax : request < 2 ^ firstLevelCount)
+    (hblockMax : block < 2 ^ firstLevelCount)
+    (hrequestLinear : request ≤ linearCutoff)
+    (hblockLinear : block ≤ linearCutoff)
+    (haligned : alignment ∣ block)
+    (hclass : sizeClass request hrequest hrequestMax =
+      sizeClass block hblock hblockMax) :
+    request ≤ block := by
+  have hrequestValues := linear_sizeClass_values request hrequest
+    hrequestMax hrequestLinear
+  have hblockValues := linear_sizeClass_values block hblock
+    hblockMax hblockLinear
+  have hbins : linearBinNumber request = linearBinNumber block := by
+    rw [← hrequestValues.2, ← hblockValues.2, hclass]
+  have hrequestUpper := (linear_sizeClass_covers request hrequest).2
+  have hblockLower := (linear_sizeClass_covers block hblock).1
+  have hblockUpper := (linear_sizeClass_covers block hblock).2
+  obtain ⟨multiple, hmultiple⟩ := haligned
+  simp [linearBinLower, linearBinUpper, hbins, alignment, Nat.add_mul]
+    at hrequestUpper hblockLower
+  simp [linearBinUpper, alignment, Nat.add_mul] at hblockUpper
+  simp [alignment, Nat.mul_comm] at hmultiple
+  omega
+
+/-- Searching at or above a request's linear second-level index is suitable:
+every aligned block in the selected linear bin is large enough. -/
+theorem linear_later_class_suitable (request block : Nat)
+    (hrequest : 0 < request) (hblock : 0 < block)
+    (hrequestMax : request < 2 ^ firstLevelCount)
+    (hblockMax : block < 2 ^ firstLevelCount)
+    (hrequestLinear : request ≤ linearCutoff)
+    (hblockLinear : block ≤ linearCutoff)
+    (haligned : alignment ∣ block)
+    (hsl : (sizeClass request hrequest hrequestMax).sl.val ≤
+      (sizeClass block hblock hblockMax).sl.val) :
+    request ≤ block := by
+  have hrequestValues := linear_sizeClass_values request hrequest
+    hrequestMax hrequestLinear
+  have hblockValues := linear_sizeClass_values block hblock
+    hblockMax hblockLinear
+  have hbins : linearBinNumber request ≤ linearBinNumber block := by
+    rw [← hrequestValues.2, ← hblockValues.2]
+    exact hsl
+  have hrequestUpper := (linear_sizeClass_covers request hrequest).2
+  have hblockLower := (linear_sizeClass_covers block hblock).1
+  have hblockUpper := (linear_sizeClass_covers block hblock).2
+  obtain ⟨multiple, hmultiple⟩ := haligned
+  simp [linearBinLower, linearBinUpper, alignment, Nat.add_mul]
+    at hrequestUpper hblockLower hblockUpper
+  simp [alignment, Nat.mul_comm] at hmultiple
+  omega
 
 theorem high_sizeClass_sl (size : Nat) (hsize : 0 < size)
     (hmax : size < 2 ^ firstLevelCount) (hhigh : linearCutoff < size)

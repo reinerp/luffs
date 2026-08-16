@@ -42,13 +42,18 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   request through 256 bytes. The Luffs implementation remains.
 - [ ] Implement bitmap search and prove it returns a nonempty suitable bin.
   The reference search is proved in-bounds, set-bit sound, and minimal from its
-  starting index; connecting the two bitmap levels to size suitability remains.
+  starting index. Cached first/second-level bits are now proved equivalent to
+  nonempty intrusive chains, and a successful second-level search is proved to
+  return a free head classified into that bin. The cross-bin size-suitability
+  inequality remains.
 - [ ] Implement intrusive free-list insertion/removal and prove link
   consistency and ownership preservation.
   Blocks now carry intrusive previous/next offsets. Front insertion and removal
   are executable and proved to preserve bidirectional link consistency and
-  offset uniqueness; removed blocks are proved detached. Connecting bin-chain
-  block copies to the authoritative physical-block table remains.
+  offset uniqueness; removed blocks are proved detached. A joint bin invariant
+  now requires every member to be free and classified into its containing bin.
+  Connecting bin-chain block copies to the authoritative physical-block table
+  remains.
 - [ ] Prove physical blocks form a disjoint partition of every mapped pool.
   `partitions` now requires adjacency from offset zero plus exact byte coverage,
   closing the gap permitted by the earlier ordered/sum-only invariant.

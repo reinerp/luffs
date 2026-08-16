@@ -60,6 +60,8 @@ The checked-in foundation currently contains:
   deallocation, and coalescing, providing the basis for O(1) backward merging.
 - intrusive free-list links with verified front insertion/removal, link
   consistency, unique offsets, and detached removal results.
+- a two-level bin invariant tying cached bitmap bits to nonempty intrusive
+  chains and proving every selected chain head is free and correctly classified.
 
 It does **not** yet constitute a verified TLSF, `Box`, or `Vec`. The remaining
 proof must instantiate `OwnsBytes` with Iris authoritative heap resources,

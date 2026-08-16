@@ -16,17 +16,109 @@ structure State where
   slSet : Fin firstLevelCount -> Fin secondLevelCount -> Bool
   flSet : Fin firstLevelCount -> Bool
 
+/-- Recompute both bitmap levels from the chains. Mutating operations use this
+constructor after changing a chain, so stale cached bits are unrepresentable
+at their proof boundary. -/
+def State.fromChains (chains : Chains) : State :=
+  { chains := chains
+    slSet := fun fl sl => decide (chains { fl, sl } ≠ [])
+    flSet := fun fl => decide (∃ sl, chains { fl, sl } ≠ []) }
+
+def Chains.replace (chains : Chains) (target : SizeClass)
+    (blocks : List Block) : Chains :=
+  fun cls => if cls = target then blocks else chains cls
+
+def State.replaceChain (state : State) (target : SizeClass)
+    (blocks : List Block) : State :=
+  State.fromChains (state.chains.replace target blocks)
+
+@[simp] theorem replaceChain_target (state : State) (target : SizeClass)
+    (blocks : List Block) :
+    (state.replaceChain target blocks).chains target = blocks := by
+  simp [State.replaceChain, State.fromChains, Chains.replace]
+
+theorem replaceChain_other (state : State) {target cls : SizeClass}
+    (blocks : List Block) (hne : cls ≠ target) :
+    (state.replaceChain target blocks).chains cls = state.chains cls := by
+  simp [State.replaceChain, State.fromChains, Chains.replace, hne]
+
 /-- A block belongs to a class exactly when the verified classifier maps its
 positive, addressable size to that class. -/
 def Belongs (cls : SizeClass) (b : Block) : Prop :=
   ∃ (hsize : 0 < b.bytes) (hmax : b.bytes < 2 ^ firstLevelCount),
     sizeClass b.bytes hsize hmax = cls
 
+/-- The non-cached obligations on a family of intrusive chains. -/
+def ChainsValid (chains : Chains) : Prop :=
+  (∀ cls, FreeList.Valid (chains cls)) ∧
+  (∀ cls b, b ∈ chains cls → Belongs cls b)
+
 def Valid (state : State) : Prop :=
   (∀ cls, FreeList.Valid (state.chains cls)) ∧
   (∀ cls b, b ∈ state.chains cls → Belongs cls b) ∧
   (∀ fl sl, state.slSet fl sl = true ↔ state.chains { fl, sl } ≠ []) ∧
   (∀ fl, state.flSet fl = true ↔ ∃ sl, state.chains { fl, sl } ≠ [])
+
+theorem fromChains_valid {chains : Chains} (hchains : ChainsValid chains) :
+    Valid (State.fromChains chains) := by
+  refine ⟨hchains.1, hchains.2, ?_, ?_⟩
+  · intro fl sl
+    simp [State.fromChains]
+  · intro fl
+    simp [State.fromChains]
+
+theorem belongs_withLinks (cls : SizeClass) (b : Block)
+    (previous next : Option Nat) :
+    Belongs cls (FreeList.withLinks b previous next) ↔ Belongs cls b := by
+  simp [Belongs, FreeList.withLinks]
+
+private theorem insertFront_belongs {cls : SizeClass} {b : Block}
+    {blocks : List Block} (hb : Belongs cls b)
+    (hblocks : ∀ old ∈ blocks, Belongs cls old) :
+    ∀ inserted ∈ FreeList.insertFront b blocks, Belongs cls inserted := by
+  cases blocks with
+  | nil =>
+      intro inserted hmem
+      simp [FreeList.insertFront] at hmem
+      subst inserted
+      exact (belongs_withLinks cls b none none).2 hb
+  | cons head rest =>
+      intro inserted hmem
+      simp only [FreeList.insertFront, List.mem_cons] at hmem
+      rcases hmem with hnew | htail
+      · subst inserted
+        exact (belongs_withLinks cls b none (some head.offset)).2 hb
+      · rcases htail with hnewHead | hrest
+        · subst inserted
+          exact (belongs_withLinks cls head (some b.offset) head.nextFreeLink).2
+            (hblocks head (by simp))
+        · exact hblocks inserted (by simp [hrest])
+
+def State.insert (state : State) (cls : SizeClass) (b : Block) : State :=
+  state.replaceChain cls (FreeList.insertFront b (state.chains cls))
+
+/-- Inserting a freshly-offset block of the advertised class and rebuilding
+the derived bitmaps preserves all structural and classification invariants. -/
+theorem insert_valid {state : State} (hvalid : Valid state) (cls : SizeClass)
+    (b : Block) (hbelongs : Belongs cls b)
+    (hfresh : b.offset ∉ (state.chains cls).map Block.offset) :
+    Valid (state.insert cls b) := by
+  apply fromChains_valid
+  constructor
+  · intro query
+    by_cases hquery : query = cls
+    · subst query
+      simpa [State.insert, Chains.replace] using
+        FreeList.insertFront_valid b (state.chains cls) (hvalid.1 cls) hfresh
+    · simp only [Chains.replace, hquery, ↓reduceIte]
+      exact hvalid.1 query
+  · intro query inserted hmem
+    by_cases hquery : query = cls
+    · subst query
+      simp only [Chains.replace, ↓reduceIte] at hmem
+      exact insertFront_belongs hbelongs (hvalid.2.1 cls) inserted hmem
+    · simp only [Chains.replace, hquery, ↓reduceIte] at hmem
+      exact hvalid.2.1 query inserted hmem
 
 /-- Relates the cached bin representation to the allocator's authoritative
 physical block sequence. Every cached entry is a physical block, and every

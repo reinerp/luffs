@@ -51,10 +51,15 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
 - [ ] Prove split and coalesce preserve alignment, boundary tags, bin
   membership, and the pool partition.
   Head-block splitting now preserves the contiguous pool partition and
-  transfers the original Iris byte ownership exactly to the two output blocks;
-  alignment, boundary tags, arbitrary-list positions, and bins remain.
+  transfers the original Iris byte ownership exactly to the two output blocks.
+  Arbitrary-position splitting now preserves the partition; aligned requests
+  produce two aligned, nonempty blocks. Boundary tags and bins remain.
 - [ ] Prove `alloc`: failure preserves the heap; success returns a fresh,
   aligned owned region of at least the requested size.
+  The executable split-success transition now rejects non-free, undersized, or
+  unaligned requests and is proved to return an exact-size aligned allocated
+  block while preserving the physical pool partition. Bin/free-list selection
+  and the whole-pool Iris invariant remain.
 - [ ] Prove `dealloc`: consuming exactly a live allocation restores it to the
   allocator without leaks, overlap, or double-free.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.

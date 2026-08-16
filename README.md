@@ -50,7 +50,9 @@ The checked-in foundation currently contains:
   with checked linear/high-bin coverage, and a bitmap reference search with
   checked bounds, set-bit soundness, and minimality.
 - a gap-free contiguous pool-partition invariant and a proved TLSF block split
-  that preserves both the physical partition and Iris byte ownership.
+  at arbitrary list positions that preserves the physical partition,
+  alignment, nonemptiness, and Iris byte ownership; the first executable
+  allocation transition is proved to return an exact-size allocated block.
 
 It does **not** yet constitute a verified TLSF, `Box`, or `Vec`. The remaining
 proof must instantiate `OwnsBytes` with Iris authoritative heap resources,

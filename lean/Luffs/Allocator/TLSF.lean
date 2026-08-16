@@ -143,11 +143,23 @@ structure Block where
 deriving DecidableEq, Repr
 
 def splitBlock (b : Block) (wanted : Nat) : Block × Block :=
-  ({ b with bytes := wanted },
+  ({ b with bytes := wanted, free := false },
    { offset := b.offset + wanted, bytes := b.bytes - wanted, free := true })
+
+/-- Replace the selected physical block by its two split pieces. An invalid
+index is totalized to the unchanged tail; verified callers prove lookup first. -/
+def splitAt : List Block -> Nat -> Nat -> List Block
+  | [], _, _ => []
+  | b :: rest, 0, wanted =>
+      (splitBlock b wanted).1 :: (splitBlock b wanted).2 :: rest
+  | b :: rest, i + 1, wanted => b :: splitAt rest i wanted
 
 def canSplit (b : Block) (wanted : Nat) : Prop :=
   0 < wanted ∧ wanted + minimumBlockBytes ≤ b.bytes
+
+instance (b : Block) (wanted : Nat) : Decidable (canSplit b wanted) := by
+  unfold canSplit
+  infer_instance
 
 theorem canSplit_wanted_le {b : Block} {wanted : Nat} (h : canSplit b wanted) :
     wanted ≤ b.bytes := by
@@ -163,8 +175,33 @@ theorem splitBlock_nonempty {b : Block} {wanted : Nat} (h : canSplit b wanted) :
   · simp only [minimumBlockBytes] at hroom
     omega
 
+theorem splitBlock_allocation_state (b : Block) (wanted : Nat) :
+    (splitBlock b wanted).1.free = false ∧
+      (splitBlock b wanted).2.free = true := by
+  exact ⟨rfl, rfl⟩
+
+/-- Executable successful-split path of allocation. Exact-fit allocation is a
+separate path because it produces no remainder block. -/
+def allocateAt (blocks : List Block) (i wanted : Nat) : Option (Block × List Block) :=
+  match blocks[i]? with
+  | none => none
+  | some b =>
+      if b.free = true ∧ canSplit b wanted ∧ alignment ∣ wanted then
+        some ((splitBlock b wanted).1, splitAt blocks i wanted)
+      else none
+
+theorem allocateAt_success_iff {blocks : List Block} {i wanted : Nat} {b : Block}
+    (hget : blocks[i]? = some b) :
+    allocateAt blocks i wanted =
+        some ((splitBlock b wanted).1, splitAt blocks i wanted) ↔
+      b.free = true ∧ canSplit b wanted ∧ alignment ∣ wanted := by
+  simp [allocateAt, hget]
+
 def Block.region (pool : Region) (b : Block) : Region :=
   { base := pool.base + b.offset, bytes := b.bytes }
+
+def Block.aligned (b : Block) : Prop :=
+  alignment ∣ b.offset ∧ alignment ∣ b.bytes
 
 def ordered (blocks : List Block) : Prop :=
   ∀ i j (hi : i < blocks.length) (hj : j < blocks.length), i < j ->
@@ -185,13 +222,13 @@ def partitions (pool : Region) (blocks : List Block) : Prop :=
 
 def wellFormed (pool : Region) (blocks : List Block) : Prop :=
   ordered blocks ∧ partitions pool blocks ∧
-    ∀ b ∈ blocks, 0 < b.bytes ∧ b.offset + b.bytes ≤ pool.bytes
+    ∀ b ∈ blocks, 0 < b.bytes ∧ b.offset + b.bytes ≤ pool.bytes ∧ b.aligned
 
 theorem block_inside {pool : Region} {blocks : List Block}
     (h : wellFormed pool blocks) {b : Block} (hb : b ∈ blocks) {i : Nat}
     (hi : i < b.bytes) : pool.contains (pool.base + b.offset + i) := by
   rcases h with ⟨_, _, hall⟩
-  have hbound := (hall b hb).2
+  have hbound := (hall b hb).2.1
   simp only [Region.contains, Region.endAddr]
   constructor
   · exact Nat.le_trans (Nat.le_add_right _ _) (Nat.le_add_right _ _)
@@ -243,6 +280,85 @@ theorem partitions_split_head (pool : Region) (b : Block) (rest : List Block)
   · unfold covers at hcover ⊢
     simp only [List.map_cons, List.sum_cons, splitBlock] at hcover ⊢
     omega
+
+theorem contiguousFrom_splitAt {blocks : List Block} {i : Nat} {b : Block}
+    (cursor wanted : Nat) (hget : blocks[i]? = some b)
+    (hcontig : contiguousFrom cursor blocks) (hwanted : wanted ≤ b.bytes) :
+    contiguousFrom cursor (splitAt blocks i wanted) := by
+  induction blocks generalizing i b cursor with
+  | nil => simp at hget
+  | cons head rest ih =>
+      cases i with
+      | zero =>
+          simp only [List.getElem?_cons_zero, Option.some.injEq] at hget
+          subst hget
+          exact contiguousFrom_split_head cursor head rest wanted hcontig hwanted
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at hget
+          simp only [contiguousFrom] at hcontig ⊢
+          rcases hcontig with ⟨hoffset, hrest⟩
+          exact ⟨hoffset, ih (cursor := cursor + head.bytes)
+            (b := b) hget hrest hwanted⟩
+
+theorem covers_splitAt {pool : Region} {blocks : List Block} {i : Nat} {b : Block}
+    (wanted : Nat) (hget : blocks[i]? = some b) (hcover : covers pool blocks)
+    (hwanted : wanted ≤ b.bytes) : covers pool (splitAt blocks i wanted) := by
+  unfold covers at hcover ⊢
+  induction blocks generalizing i b pool with
+  | nil => simp at hget
+  | cons head rest ih =>
+      cases i with
+      | zero =>
+          simp only [List.getElem?_cons_zero, Option.some.injEq] at hget
+          subst hget
+          simp only [splitAt, List.map_cons, List.sum_cons, splitBlock] at hcover ⊢
+          omega
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at hget
+          simp only [splitAt, List.map_cons, List.sum_cons] at hcover ⊢
+          have htail : (rest.map (fun b => b.bytes)).sum =
+              pool.bytes - head.bytes := by omega
+          have ih' := ih (pool := { pool with bytes := pool.bytes - head.bytes })
+            (b := b) hget htail hwanted
+          change (splitAt rest j wanted |>.map (fun b => b.bytes)).sum =
+            pool.bytes - head.bytes at ih'
+          omega
+
+theorem partitions_splitAt {pool : Region} {blocks : List Block} {i : Nat} {b : Block}
+    (wanted : Nat) (hget : blocks[i]? = some b) (hparts : partitions pool blocks)
+    (hwanted : wanted ≤ b.bytes) : partitions pool (splitAt blocks i wanted) := by
+  exact ⟨contiguousFrom_splitAt 0 wanted hget hparts.1 hwanted,
+    covers_splitAt wanted hget hparts.2 hwanted⟩
+
+theorem allocateAt_preserves_partitions {pool : Region} {blocks : List Block}
+    {i wanted : Nat} {b : Block} (hget : blocks[i]? = some b)
+    (hparts : partitions pool blocks)
+    (hsuccess : allocateAt blocks i wanted =
+      some ((splitBlock b wanted).1, splitAt blocks i wanted)) :
+    partitions pool (splitAt blocks i wanted) := by
+  have hpre := (allocateAt_success_iff hget).1 hsuccess
+  exact partitions_splitAt wanted hget hparts (canSplit_wanted_le hpre.2.1)
+
+theorem splitBlock_aligned {b : Block} {wanted : Nat} (hb : b.aligned)
+    (hwanted : alignment ∣ wanted) :
+    (splitBlock b wanted).1.aligned ∧ (splitBlock b wanted).2.aligned := by
+  rcases hb with ⟨hoffset, hbytes⟩
+  simp only [Block.aligned, splitBlock]
+  exact ⟨⟨hoffset, hwanted⟩,
+    ⟨Nat.dvd_add hoffset hwanted, Nat.dvd_sub hbytes hwanted⟩⟩
+
+theorem allocateAt_result {blocks : List Block} {i wanted : Nat} {b : Block}
+    (hget : blocks[i]? = some b) (hb : b.aligned)
+    (hsuccess : allocateAt blocks i wanted =
+      some ((splitBlock b wanted).1, splitAt blocks i wanted)) :
+    (splitBlock b wanted).1.bytes = wanted ∧
+      (splitBlock b wanted).1.free = false ∧
+      (splitBlock b wanted).1.aligned ∧
+      0 < (splitBlock b wanted).1.bytes := by
+  have hpre := (allocateAt_success_iff hget).1 hsuccess
+  have haligned := (splitBlock_aligned hb hpre.2.2).1
+  have hnonempty := (splitBlock_nonempty hpre.2.1).1
+  exact ⟨rfl, rfl, haligned, hnonempty⟩
 
 theorem splitBlock_regions_disjoint (pool : Region) (b : Block) (wanted : Nat) :
     ((splitBlock b wanted).1.region pool).disjoint

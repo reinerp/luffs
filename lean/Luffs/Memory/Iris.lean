@@ -20,14 +20,15 @@ class ByteRegionLogic (PROP : Type) [BI PROP] where
     ownsBytes r ⊣⊢
       ownsBytes { base := r.base, bytes := left } ∗
       ownsBytes { base := r.base + left, bytes := right }
-  exclusive {r : Region} : ownsBytes r ∗ ownsBytes r ⊢ False
+  exclusive {r : Region} : 0 < r.bytes -> ownsBytes r ∗ ownsBytes r ⊢ False
 
 def OwnsBytes {PROP : Type} [BI PROP] [ByteRegionLogic PROP] (r : Region) : PROP :=
   ByteRegionLogic.ownsBytes r
 
 theorem ownsBytes_exclusive {PROP : Type} [BI PROP] [ByteRegionLogic PROP]
-    (r : Region) : OwnsBytes (PROP := PROP) r ∗ OwnsBytes r ⊢ False :=
-  ByteRegionLogic.exclusive (PROP := PROP)
+    (r : Region) (h : 0 < r.bytes) :
+    OwnsBytes (PROP := PROP) r ∗ OwnsBytes r ⊢ False :=
+  ByteRegionLogic.exclusive (PROP := PROP) h
 
 /--
 The sole trusted allocator boundary. A platform implementation must refine this

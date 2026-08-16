@@ -22,7 +22,7 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
 - [x] Define pure half-open memory regions.
 - [x] State exclusive byte ownership and the `mmap` boundary as Iris
   propositions.
-- [ ] Instantiate byte ownership with an Iris authoritative finite-map
+- [x] Instantiate byte ownership with an Iris authoritative finite-map
   resource; prove splitting, recombination, agreement, and exclusivity.
 - [ ] Define Luffs small-step semantics for raw loads/stores, pointer
   arithmetic, `mmap`, and `munmap`.

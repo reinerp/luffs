@@ -39,7 +39,9 @@ clients of TLSF rather than of an assumed `malloc` specification.
 The checked-in foundation currently contains:
 
 - half-open byte regions and proved containment/disjointness lemmas;
-- an Iris `OwnsBytes` interface with splitting and exclusivity laws;
+- an Iris `OwnsBytes` interface backed by authoritative ghost-map fragments,
+  with checked splitting, recombination, heap agreement, and overlap
+  exclusivity laws;
 - the trusted `mmap`/`munmap` contract, kept separate from TLSF;
 - the initial pure TLSF block invariant and checked split/coalesce byte-count
   lemmas.

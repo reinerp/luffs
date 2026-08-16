@@ -367,6 +367,43 @@ theorem findCandidateIndices_result {state : State} {start : SizeClass}
                 exact Or.inr ⟨hfl, hfirst, hsecond⟩
           · simp [findCandidateIndices, hsame, hfirst, hfl] at hfind
 
+theorem findCandidateIndices_bounds {state : State} {start : SizeClass}
+    {fl sl : Nat} (hfind : findCandidateIndices state start = some (fl, sl)) :
+    fl < firstLevelCount ∧ sl < secondLevelCount := by
+  rcases findCandidateIndices_result hfind with hsame | hlater
+  · rw [hsame.1]
+    have hsound := firstSetFrom_sound hsame.2
+    simp only [slBitmap, List.length_ofFn] at hsound
+    exact ⟨start.fl.isLt, hsound.2.1⟩
+  · obtain ⟨hfl, _, hsecond⟩ := hlater
+    have hsound := firstSetFrom_sound hsecond
+    simp only [slBitmap, List.length_ofFn] at hsound
+    exact ⟨hfl, hsound.2.1⟩
+
+/-- Checked class-valued facade used by allocation. -/
+def findCandidate (state : State) (start : SizeClass) : Option SizeClass :=
+  match findCandidateIndices state start with
+  | none => none
+  | some (fl, sl) =>
+      if hfl : fl < firstLevelCount then
+        if hsl : sl < secondLevelCount then
+          some { fl := ⟨fl, hfl⟩, sl := ⟨sl, hsl⟩ }
+        else none
+      else none
+
+theorem findCandidate_result {state : State} {start found : SizeClass}
+    (hfind : findCandidate state start = some found) :
+    findCandidateIndices state start = some (found.fl.val, found.sl.val) := by
+  unfold findCandidate at hfind
+  cases hindices : findCandidateIndices state start with
+  | none => simp [hindices] at hfind
+  | some pair =>
+      obtain ⟨fl, sl⟩ := pair
+      have hbounds := findCandidateIndices_bounds hindices
+      simp [hindices, hbounds.1, hbounds.2] at hfind
+      subst found
+      rfl
+
 theorem slBitmap_length (state : State) (fl : Fin firstLevelCount) :
     (slBitmap state fl).length = secondLevelCount := by
   simp [slBitmap]
@@ -473,6 +510,22 @@ theorem findCandidateIndices_none_iff {state : State} {start : SizeClass}
         obtain ⟨fl, sl⟩ := pair
         exact (hnone (findCandidateIndices_success_eligible hfind)).elim
 
+theorem findCandidate_none_iff {state : State} {start : SizeClass}
+    (hvalid : Valid state) :
+    findCandidate state start = none ↔ ¬ HasEligibleBin state start := by
+  constructor
+  · intro hcandidate
+    apply (findCandidateIndices_none_iff hvalid).1
+    cases hindices : findCandidateIndices state start with
+    | none => rfl
+    | some pair =>
+        obtain ⟨fl, sl⟩ := pair
+        have hbounds := findCandidateIndices_bounds hindices
+        simp [findCandidate, hindices, hbounds.1, hbounds.2] at hcandidate
+  · intro hnoEligible
+    have hindices := (findCandidateIndices_none_iff hvalid).2 hnoEligible
+    simp [findCandidate, hindices]
+
 /-- A successful second-level bitmap search selects a real nonempty intrusive
 chain, not merely a set bit disconnected from allocator state. -/
 theorem secondLevel_search_nonempty {state : State} (hvalid : Valid state)
@@ -490,6 +543,27 @@ theorem secondLevel_search_nonempty {state : State} (hvalid : Valid state)
   have hvalue : (slBitmap state fl)[found]'hsound.2.1 = true :=
     (List.getElem?_eq_some_iff.mp hget).2
   simpa [slBitmap] using hvalue
+
+theorem findCandidate_nonempty {state : State} {start found : SizeClass}
+    (hvalid : Valid state) (hfind : findCandidate state start = some found) :
+    state.chains found ≠ [] := by
+  have hindices := findCandidate_result hfind
+  rcases findCandidateIndices_result hindices with hsame | hlater
+  · obtain ⟨hbound, hchain⟩ := secondLevel_search_nonempty hvalid start.fl
+      start.sl.val found.sl.val hsame.2
+    have hfl : found.fl = start.fl := Fin.ext hsame.1
+    have hcls : found = { fl := start.fl, sl := found.sl } := by
+      cases found with
+      | mk fl sl =>
+          simp only at hfl ⊢
+          subst fl
+          rfl
+    rw [hcls]
+    simpa using hchain
+  · obtain ⟨hflBound, _, hsecond⟩ := hlater
+    obtain ⟨hslBound, hchain⟩ := secondLevel_search_nonempty hvalid
+      ⟨found.fl.val, hflBound⟩ 0 found.sl.val hsecond
+    simpa using hchain
 
 theorem secondLevel_search_head {state : State} (hvalid : Valid state)
     (fl : Fin firstLevelCount) (start found : Nat)
@@ -786,5 +860,17 @@ theorem findCandidateIndices_suitable {pool : Region}
   · have hhigh : linearCutoff < request := Nat.lt_of_not_ge hlinear
     apply findCandidateIndices_high_suitable hpool request hrequest hhigh hkeyMax
     simpa [searchSizeClass_high request hrequest hkeyMax hhigh] using hfind
+
+theorem findCandidate_suitable {pool : Region} {physical : List Block}
+    {state : State} (hpool : PoolValid pool physical state)
+    (request : Nat) (hrequest : 0 < request)
+    (hkeyMax : requestKey request < 2 ^ firstLevelCount)
+    {found : SizeClass}
+    (hfind : findCandidate state (searchSizeClass request hrequest hkeyMax) =
+      some found) :
+    ∃ actual : Block, actual ∈ physical ∧ actual.free = true ∧
+      actual.aligned ∧ request ≤ actual.bytes := by
+  exact findCandidateIndices_suitable hpool request hrequest hkeyMax
+    (findCandidate_result hfind)
 
 end Luffs.Allocator.TLSF.Bins

@@ -55,7 +55,10 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   raw bitmap indices before converting them to `Fin`, and has one unified
   success-suitability theorem. Bitmap search is also proved complete: it
   succeeds whenever an eligible bit exists, and returns `none` exactly when no
-  eligible same-level or later-first-level bin exists.
+  eligible same-level or later-first-level bin exists. A checked class-valued
+  facade now converts successful raw indices to `Fin` fields; success proves
+  that exact class has a nonempty chain and inherits the unified physical-block
+  suitability result.
 - [ ] Implement intrusive free-list insertion/removal and prove link
   consistency and ownership preservation.
   Blocks now carry intrusive previous/next offsets. Front insertion and removal

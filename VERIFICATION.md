@@ -124,8 +124,11 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   has proved arbitrary-position coalescing with exact Iris ownership
   recombination. The Iris return law now proves that marking the exact live
   block free consumes the client's region capability and restores it to the
-  allocator assertion, including arbitrary physical-list positions. Neighbor
-  selection and bin removal/reinsertion around coalescing remain.
+  allocator assertion, including arbitrary physical-list positions. An
+  executable uncoalesced stage now validates the return, marks the physical
+  header, classifies and inserts it, preserves physical well-formedness, and
+  is composed with that ownership law. Proving full physical/bin agreement
+  for this stage and neighbor removal/reinsertion around coalescing remain.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 
 The first target is sequential TLSF with fixed-size pools obtained from `mmap`.

@@ -8,6 +8,7 @@ import Luffs.Allocator.TLSF.FreeList
 import Luffs.Allocator.TLSF.Bins
 import Luffs.Allocator.TLSF.Alloc
 import Luffs.Allocator.TLSF.Ownership
+import Luffs.Allocator.TLSF.Dealloc
 
 namespace Luffs
 

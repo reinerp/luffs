@@ -5,6 +5,7 @@ set_option autoImplicit false
 namespace Luffs.Allocator.TLSF
 
 open Luffs.Memory
+open Iris Iris.BI
 
 /-- Minimum block alignment. Metadata flags occupy the low alignment bits. -/
 def alignment : Nat := 8
@@ -12,6 +13,7 @@ def alignment : Nat := 8
 def firstLevelCount : Nat := 64
 def secondLevelCount : Nat := 32
 def linearCutoff : Nat := alignment * secondLevelCount
+def minimumBlockBytes : Nat := 16
 
 structure SizeClass where
   fl : Fin firstLevelCount
@@ -140,6 +142,27 @@ structure Block where
   free : Bool
 deriving DecidableEq, Repr
 
+def splitBlock (b : Block) (wanted : Nat) : Block × Block :=
+  ({ b with bytes := wanted },
+   { offset := b.offset + wanted, bytes := b.bytes - wanted, free := true })
+
+def canSplit (b : Block) (wanted : Nat) : Prop :=
+  0 < wanted ∧ wanted + minimumBlockBytes ≤ b.bytes
+
+theorem canSplit_wanted_le {b : Block} {wanted : Nat} (h : canSplit b wanted) :
+    wanted ≤ b.bytes := by
+  rcases h with ⟨_, h⟩
+  exact Nat.le_trans (Nat.le_add_right _ _) h
+
+theorem splitBlock_nonempty {b : Block} {wanted : Nat} (h : canSplit b wanted) :
+    0 < (splitBlock b wanted).1.bytes ∧ 0 < (splitBlock b wanted).2.bytes := by
+  rcases h with ⟨hwanted, hroom⟩
+  simp only [splitBlock]
+  constructor
+  · exact hwanted
+  · simp only [minimumBlockBytes] at hroom
+    omega
+
 def Block.region (pool : Region) (b : Block) : Region :=
   { base := pool.base + b.offset, bytes := b.bytes }
 
@@ -150,8 +173,18 @@ def ordered (blocks : List Block) : Prop :=
 def covers (pool : Region) (blocks : List Block) : Prop :=
   (blocks.map (fun b => b.bytes)).sum = pool.bytes
 
+/-- Blocks are physically adjacent starting at `cursor`; unlike `ordered`,
+this rules out unowned gaps. -/
+def contiguousFrom : Nat -> List Block -> Prop
+  | _, [] => True
+  | cursor, b :: rest =>
+      b.offset = cursor ∧ contiguousFrom (cursor + b.bytes) rest
+
+def partitions (pool : Region) (blocks : List Block) : Prop :=
+  contiguousFrom 0 blocks ∧ covers pool blocks
+
 def wellFormed (pool : Region) (blocks : List Block) : Prop :=
-  ordered blocks ∧ covers pool blocks ∧
+  ordered blocks ∧ partitions pool blocks ∧
     ∀ b ∈ blocks, 0 < b.bytes ∧ b.offset + b.bytes ≤ pool.bytes
 
 theorem block_inside {pool : Region} {blocks : List Block}
@@ -170,6 +203,65 @@ theorem block_inside {pool : Region} {blocks : List Block}
 theorem split_preserves_bytes (b : Block) (wanted : Nat) (h : wanted ≤ b.bytes) :
     wanted + (b.bytes - wanted) = b.bytes := by
   omega
+
+theorem splitBlock_offsets (b : Block) (wanted : Nat) :
+    (splitBlock b wanted).1.offset = b.offset ∧
+      (splitBlock b wanted).2.offset = b.offset + wanted := by
+  exact ⟨rfl, rfl⟩
+
+theorem splitBlock_preserves_end (b : Block) (wanted : Nat) (h : wanted ≤ b.bytes) :
+    (splitBlock b wanted).2.offset + (splitBlock b wanted).2.bytes =
+      b.offset + b.bytes := by
+  simp only [splitBlock]
+  omega
+
+theorem contiguousFrom_split_head (cursor : Nat) (b : Block) (rest : List Block)
+    (wanted : Nat)
+    (hcontig : contiguousFrom cursor (b :: rest))
+    (hwanted : wanted ≤ b.bytes) :
+    contiguousFrom cursor
+      ((splitBlock b wanted).1 :: (splitBlock b wanted).2 :: rest) := by
+  simp only [contiguousFrom] at hcontig ⊢
+  rcases hcontig with ⟨hoffset, hrest⟩
+  constructor
+  · exact hoffset
+  constructor
+  · simp only [splitBlock]
+    omega
+  · simp only [splitBlock]
+    have heq : cursor + wanted + (b.bytes - wanted) = cursor + b.bytes := by
+      omega
+    rwa [heq]
+
+theorem partitions_split_head (pool : Region) (b : Block) (rest : List Block)
+    (wanted : Nat)
+    (hparts : partitions pool (b :: rest)) (hwanted : wanted ≤ b.bytes) :
+    partitions pool ((splitBlock b wanted).1 :: (splitBlock b wanted).2 :: rest) := by
+  rcases hparts with ⟨hcontig, hcover⟩
+  constructor
+  · exact contiguousFrom_split_head 0 b rest wanted hcontig hwanted
+  · unfold covers at hcover ⊢
+    simp only [List.map_cons, List.sum_cons, splitBlock] at hcover ⊢
+    omega
+
+theorem splitBlock_regions_disjoint (pool : Region) (b : Block) (wanted : Nat) :
+    ((splitBlock b wanted).1.region pool).disjoint
+      ((splitBlock b wanted).2.region pool) := by
+  simp [splitBlock, Block.region, Region.disjoint, Region.endAddr, Nat.add_assoc]
+
+/-- The logical ownership transfer used by the executable TLSF split: no byte
+is invented, duplicated, dropped, or left behind. -/
+theorem ownsBytes_splitBlock {PROP : Type} [BI PROP] [ByteRegionLogic PROP]
+    (pool : Region) (b : Block) (wanted : Nat) (h : wanted ≤ b.bytes) :
+    OwnsBytes (PROP := PROP) (b.region pool) ⊣⊢
+      OwnsBytes ((splitBlock b wanted).1.region pool) ∗
+      OwnsBytes ((splitBlock b wanted).2.region pool) := by
+  unfold OwnsBytes Block.region splitBlock
+  simpa only [Nat.add_assoc] using
+    (ByteRegionLogic.split (PROP := PROP)
+      (r := { base := pool.base + b.offset, bytes := b.bytes })
+      (left := wanted) (right := b.bytes - wanted)
+      (split_preserves_bytes b wanted h).symm)
 
 /-- Coalescing adjacent blocks preserves byte count. -/
 theorem coalesce_preserves_bytes (left right : Block) :

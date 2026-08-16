@@ -49,6 +49,8 @@ The checked-in foundation currently contains:
   lemmas, plus an intrinsically bounded two-level size-class reference mapping
   with checked linear/high-bin coverage, and a bitmap reference search with
   checked bounds, set-bit soundness, and minimality.
+- a gap-free contiguous pool-partition invariant and a proved TLSF block split
+  that preserves both the physical partition and Iris byte ownership.
 
 It does **not** yet constitute a verified TLSF, `Box`, or `Vec`. The remaining
 proof must instantiate `OwnsBytes` with Iris authoritative heap resources,

@@ -46,8 +46,13 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
 - [ ] Implement intrusive free-list insertion/removal and prove link
   consistency and ownership preservation.
 - [ ] Prove physical blocks form a disjoint partition of every mapped pool.
+  `partitions` now requires adjacency from offset zero plus exact byte coverage,
+  closing the gap permitted by the earlier ordered/sum-only invariant.
 - [ ] Prove split and coalesce preserve alignment, boundary tags, bin
   membership, and the pool partition.
+  Head-block splitting now preserves the contiguous pool partition and
+  transfers the original Iris byte ownership exactly to the two output blocks;
+  alignment, boundary tags, arbitrary-list positions, and bins remain.
 - [ ] Prove `alloc`: failure preserves the heap; success returns a fresh,
   aligned owned region of at least the requested size.
 - [ ] Prove `dealloc`: consuming exactly a live allocation restores it to the

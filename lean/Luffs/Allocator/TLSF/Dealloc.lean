@@ -9,6 +9,10 @@ open Luffs.Allocator.TLSF
 open Luffs.Allocator.TLSF.Bins
 open Iris Iris.BI
 
+instance (left right : Block) : Decidable (canCoalesce left right) := by
+  unfold canCoalesce
+  infer_instance
+
 def freedBlock (b : Block) : Block :=
   { offset := b.offset, bytes := b.bytes, free := true,
     prevFree := b.prevFree, prevFreeLink := none, nextFreeLink := none }
@@ -149,6 +153,117 @@ def deallocateUncoalesced (pool : Region) (state : Alloc.State) (i : Nat)
           match classifyBlock? (freedBlock selected) with
           | none => none
           | some cls => some ⟨physical, state.bins.insert cls (freedBlock selected)⟩
+
+/-- Remove two adjacent free headers from their bins, merge their physical
+regions, then insert the merged header. -/
+def coalescePair (state : Alloc.State) (i : Nat) : Option Alloc.State :=
+  match state.physical[i]?, state.physical[i + 1]? with
+  | some left, some right =>
+      if _hcan : canCoalesce left right then
+        match classifyBlock? left, classifyBlock? right with
+        | some leftClass, some rightClass =>
+            match state.bins.removeOffset leftClass left.offset with
+            | none => none
+            | some (_, afterLeft) =>
+                match afterLeft.removeOffset rightClass right.offset with
+                | none => none
+                | some (_, afterRight) =>
+                    let merged := coalesceBlocks left right
+                    match classifyBlock? merged with
+                    | none => none
+                    | some mergedClass =>
+                        some ⟨coalesceAt state.physical i,
+                          afterRight.insert mergedClass merged⟩
+        | _, _ => none
+      else none
+  | _, _ => none
+
+theorem coalescePair_physical {state next : Alloc.State} {i : Nat}
+    (hsuccess : coalescePair state i = some next) :
+    ∃ left right,
+      state.physical[i]? = some left ∧
+      state.physical[i + 1]? = some right ∧
+      canCoalesce left right ∧
+      next.physical = coalesceAt state.physical i := by
+  unfold coalescePair at hsuccess
+  cases hleft : state.physical[i]? with
+  | none => simp [hleft] at hsuccess
+  | some left =>
+      cases hright : state.physical[i + 1]? with
+      | none => simp [hleft, hright] at hsuccess
+      | some right =>
+          by_cases hcan : canCoalesce left right
+          · simp only [hleft, hright, hcan, ↓reduceDIte] at hsuccess
+            split at hsuccess <;> try contradiction
+            next leftClass hleftClass =>
+              split at hsuccess <;> try contradiction
+              next rightClass hrightClass =>
+                split at hsuccess <;> try contradiction
+                next removedLeft afterLeft hremoveLeft =>
+                  split at hsuccess <;> try contradiction
+                  next removedRight afterRight hremoveRight =>
+                    simp only [Option.some.injEq] at hsuccess
+                    subst next
+                    exact ⟨left, right, rfl, rfl, hcan, rfl⟩
+          · simp [hleft, hright, hcan] at hsuccess
+
+theorem coalescePair_ownsFree {PROP : Type} [BI PROP] [ByteRegionLogic PROP]
+    (pool : Region) {state next : Alloc.State} {i : Nat}
+    (hsuccess : coalescePair state i = some next) :
+    Ownership.OwnsFree (PROP := PROP) pool state.physical ⊣⊢
+      Ownership.OwnsFree pool next.physical := by
+  obtain ⟨left, right, hleft, hright, hcan, hphysical⟩ :=
+    coalescePair_physical hsuccess
+  rw [hphysical]
+  exact Ownership.coalesceAt_ownsFree pool hleft hright hcan
+
+theorem blocksShaped_coalesceAt {blocks : List Block} {i : Nat}
+    {left right : Block} (hleft : blocks[i]? = some left)
+    (hright : blocks[i + 1]? = some right) (hshape : blocksShaped blocks) :
+    blocksShaped (coalesceAt blocks i) := by
+  induction blocks generalizing i left right with
+  | nil => simp at hleft
+  | cons head rest ih =>
+      cases i with
+      | zero =>
+          simp only [List.getElem?_cons_zero, Option.some.injEq] at hleft
+          subst left
+          cases rest with
+          | nil => simp at hright
+          | cons next tail =>
+              simp only [List.getElem?_cons_succ, List.getElem?_cons_zero,
+                Option.some.injEq] at hright
+              subst right
+              intro b hb
+              simp only [coalesceAt, List.mem_cons] at hb
+              rcases hb with rfl | htail
+              · have hhead := hshape head (by simp)
+                have hnext := hshape next (by simp)
+                exact ⟨by simp only [coalesceBlocks]; omega,
+                  coalesceBlocks_aligned hhead.2 hnext.2⟩
+              · exact hshape b (by simp [htail])
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at hleft hright
+          intro b hb
+          simp only [coalesceAt, List.mem_cons] at hb
+          rcases hb with rfl | htail
+          · exact hshape b (by simp)
+          · have hrest : blocksShaped rest :=
+              fun b hb => hshape b (by simp [hb])
+            exact ih hleft (by simpa [Nat.add_assoc] using hright) hrest b htail
+
+theorem coalescePair_wellFormed {pool : Region} {state next : Alloc.State}
+    (hvalid : Alloc.Valid pool state) {i : Nat}
+    (hsuccess : coalescePair state i = some next) :
+    wellFormed pool next.physical := by
+  obtain ⟨left, right, hleft, hright, hcan, hphysical⟩ :=
+    coalescePair_physical hsuccess
+  rw [hphysical]
+  exact wellFormed_of_partitions_boundary
+    (partitions_coalesceAt hleft hright hvalid.1.2.1)
+    (boundaryTags_coalesceAt hleft hright hcan hvalid.1.2.2.1)
+    (blocksShaped_coalesceAt hleft hright
+      (wellFormed_blocksShaped hvalid.1))
 
 theorem deallocateUncoalesced_result {pool : Region} {state : Alloc.State}
     {i : Nat} {returned : Region} {next : Alloc.State}

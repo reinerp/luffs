@@ -172,4 +172,40 @@ theorem deallocateAt_ownsFree {PROP : Type} [BI PROP] [ByteRegionLogic PROP]
           exact sep_assoc.symm.trans ((sep_congr_left sep_comm).trans
             (sep_assoc.trans (sep_congr_right hih)))
 
+theorem coalesce_head_ownsFree {PROP : Type} [BI PROP] [ByteRegionLogic PROP]
+    (pool : Region) (left right : Block) (rest : List Block)
+    (hcan : canCoalesce left right) :
+    OwnsFree (PROP := PROP) pool (left :: right :: rest) ⊣⊢
+      OwnsFree pool (coalesceBlocks left right :: rest) := by
+  rcases hcan with ⟨hleftFree, hrightFree, hadjacent⟩
+  simp only [OwnsFree, hleftFree, hrightFree, if_pos, coalesceBlocks]
+  have hmerge := ownsBytes_coalesceBlocks (PROP := PROP)
+    pool left right hadjacent
+  exact sep_assoc.symm.trans (sep_congr_left hmerge)
+
+theorem coalesceAt_ownsFree {PROP : Type} [BI PROP] [ByteRegionLogic PROP]
+    (pool : Region) {blocks : List Block} {i : Nat} {left right : Block}
+    (hleft : blocks[i]? = some left) (hright : blocks[i + 1]? = some right)
+    (hcan : canCoalesce left right) :
+    OwnsFree (PROP := PROP) pool blocks ⊣⊢
+      OwnsFree pool (coalesceAt blocks i) := by
+  induction blocks generalizing i left right with
+  | nil => simp at hleft
+  | cons head rest ih =>
+      cases i with
+      | zero =>
+          simp only [List.getElem?_cons_zero, Option.some.injEq] at hleft
+          subst left
+          cases rest with
+          | nil => simp at hright
+          | cons next tail =>
+              simp only [List.getElem?_cons_succ, List.getElem?_cons_zero,
+                Option.some.injEq] at hright
+              subst right
+              exact coalesce_head_ownsFree pool head next tail hcan
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at hleft hright
+          simp only [OwnsFree, coalesceAt]
+          exact sep_congr_right (ih hleft (by simpa [Nat.add_assoc] using hright) hcan)
+
 end Luffs.Allocator.TLSF.Ownership

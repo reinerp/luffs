@@ -134,8 +134,12 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   coalescing remains. A checked arbitrary-offset free-list removal primitive
   now exists: it detaches the selected header, rebuilds canonical intrusive
   links and bitmap caches, and is proved to preserve chain validity and
-  size-class membership. Its whole-pool representation and O(1) link-update
-  refinement are the next coalescing obligations.
+  size-class membership. Removal is also proved to preserve forward physical
+  representation and every non-removed block's backward representation. An
+  executable adjacent-pair coalescer now removes both bin entries, merges and
+  reclassifies the physical header, and reinserts it; its Iris ownership and
+  physical well-formedness laws are checked. Completing the coalescer's bin
+  agreement and O(1) link-update refinement are the next obligations.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 
 The first target is sequential TLSF with fixed-size pools obtained from `mmap`.

@@ -135,6 +135,41 @@ theorem relink_member_origin {blocks : List Block} {updated : Block}
       updated.bytes = old.bytes ∧ updated.free = old.free :=
   relinkFrom_member_origin none hfree hmem
 
+theorem relinkFrom_represents (previous : Option Nat) {blocks : List Block}
+    {old : Block} (hfree : old.free = true) (hmem : old ∈ blocks) :
+    ∃ updated ∈ relinkFrom previous blocks,
+      old.offset = updated.offset ∧ old.bytes = updated.bytes ∧
+        old.free = updated.free := by
+  induction blocks generalizing previous with
+  | nil => simp at hmem
+  | cons head rest ih =>
+      simp only [List.mem_cons] at hmem
+      rcases hmem with rfl | htail
+      · exact ⟨withLinks old previous (rest.head?.map Block.offset), by
+          simp [relinkFrom], by simp [withLinks, hfree]⟩
+      · obtain ⟨updated, hupdated, hsame⟩ :=
+          ih (some head.offset) htail
+        exact ⟨updated, by simp [relinkFrom, hupdated], hsame⟩
+
+theorem relink_represents {blocks : List Block} {old : Block}
+    (hfree : old.free = true) (hmem : old ∈ blocks) :
+    ∃ updated ∈ relink blocks, old.offset = updated.offset ∧
+      old.bytes = updated.bytes ∧ old.free = updated.free :=
+  relinkFrom_represents none hfree hmem
+
+theorem eraseOffset_preserves {blocks : List Block} {offset : Nat} {b : Block}
+    (hmem : b ∈ blocks) (hne : b.offset ≠ offset) :
+    b ∈ eraseOffset blocks offset := by
+  induction blocks with
+  | nil => simp at hmem
+  | cons head rest ih =>
+      simp only [List.mem_cons] at hmem
+      rcases hmem with rfl | htail
+      · simp [eraseOffset, hne]
+      · by_cases hhead : head.offset = offset
+        · simp [eraseOffset, hhead, htail]
+        · simp [eraseOffset, hhead, ih htail]
+
 theorem relink_valid {blocks : List Block}
     (hnodup : (blocks.map Block.offset).Nodup) : Valid (relink blocks) := by
   exact ⟨relinkFrom_linked none blocks, by
@@ -155,6 +190,34 @@ theorem findOffset?_some_mem {blocks : List Block} {offset : Nat} {found : Block
       next =>
         have htail := ih hfind
         exact ⟨by simp [htail.1], htail.2⟩
+
+theorem linkedFrom_member_free {previous : Option Nat} {blocks : List Block}
+    (hlinked : linkedFrom previous blocks) {b : Block} (hmem : b ∈ blocks) :
+    b.free = true := by
+  induction blocks generalizing previous with
+  | nil => simp at hmem
+  | cons head rest ih =>
+      simp only [linkedFrom] at hlinked
+      simp only [List.mem_cons] at hmem
+      rcases hmem with rfl | htail
+      · exact hlinked.1
+      · exact ih hlinked.2.2.2 htail
+
+theorem removeOffset_removed_origin {blocks rest : List Block} {offset : Nat}
+    {removed : Block} (hvalid : Valid blocks)
+    (hremove : removeOffset blocks offset = some (removed, rest)) :
+    ∃ old ∈ blocks, old.offset = offset ∧
+      old.offset = removed.offset ∧ old.bytes = removed.bytes ∧
+        old.free = removed.free := by
+  unfold removeOffset at hremove
+  cases hfind : findOffset? blocks offset with
+  | none => simp [hfind] at hremove
+  | some found =>
+      simp [hfind] at hremove
+      rcases hremove with ⟨rfl, rfl⟩
+      obtain ⟨hmem, hoffset⟩ := findOffset?_some_mem hfind
+      have hfree := linkedFrom_member_free hvalid.1 hmem
+      exact ⟨found, hmem, hoffset, by simp [withLinks, hfree]⟩
 
 theorem findOffset?_complete {blocks : List Block} {b : Block}
     (hmem : b ∈ blocks) : ∃ found, findOffset? blocks b.offset = some found := by

@@ -392,6 +392,82 @@ theorem removeOffset_valid {state : State} (hvalid : Valid state)
         · simp only [Chains.replace, hquery, ↓reduceIte] at hmem
           exact member_belongs hvalid hmem
 
+theorem removeOffset_removed_origin {state : State} (hvalid : Valid state)
+    {cls : SizeClass} {offset : Nat} {removed : Block} {rest : List Block}
+    (hremove : FreeList.removeOffset (state.chains cls) offset =
+      some (removed, rest)) :
+    ∃ old ∈ state.chains cls, old.offset = offset ∧
+      SamePhysical old removed := by
+  obtain ⟨old, hold, hoffset, hsame⟩ :=
+    FreeList.removeOffset_removed_origin (hvalid.1 cls) hremove
+  exact ⟨old, hold, hoffset, hsame⟩
+
+theorem removeOffset_preserves_forward_agreement {physical : List Block}
+    {state : State} (hvalid : Valid state)
+    (hforward : ∀ query cached, cached ∈ state.chains query →
+      ∃ actual ∈ physical, SamePhysical actual cached)
+    {cls : SizeClass} {offset : Nat} {removed : Block} {rest : List Block}
+    (hremove : FreeList.removeOffset (state.chains cls) offset =
+      some (removed, rest)) :
+    ∀ query cached, cached ∈ (state.replaceChain cls rest).chains query →
+      ∃ actual ∈ physical, SamePhysical actual cached := by
+  unfold FreeList.removeOffset at hremove
+  cases hfind : FreeList.findOffset? (state.chains cls) offset with
+  | none => simp [hfind] at hremove
+  | some found =>
+      simp [hfind] at hremove
+      rcases hremove with ⟨rfl, rfl⟩
+      intro query cached hcached
+      by_cases hquery : query = cls
+      · subst query
+        simp only [replaceChain_target] at hcached
+        have herasedFree :
+            ∀ b ∈ FreeList.eraseOffset (state.chains cls) offset,
+              b.free = true := by
+          intro b hb
+          exact member_free hvalid (FreeList.eraseOffset_member hb)
+        obtain ⟨old, holdErased, hcachedOld⟩ :=
+          FreeList.relink_member_origin herasedFree hcached
+        obtain ⟨actual, hactual, hactualOld⟩ :=
+          hforward cls old (FreeList.eraseOffset_member holdErased)
+        exact ⟨actual, hactual, samePhysical_trans hactualOld
+          (samePhysical_symm hcachedOld)⟩
+      · have hold : cached ∈ state.chains query := by
+          rw [replaceChain_other state _ hquery] at hcached
+          exact hcached
+        exact hforward query cached hold
+
+theorem removeOffset_preserves_other_representation {state : State}
+    (hvalid : Valid state) {cls : SizeClass} {offset : Nat}
+    {removed : Block} {rest : List Block}
+    (hremove : FreeList.removeOffset (state.chains cls) offset =
+      some (removed, rest)) {actual : Block}
+    (hrepresented : ∃ query cached, cached ∈ state.chains query ∧
+      SamePhysical actual cached) (hne : actual.offset ≠ offset) :
+    ∃ query cached, cached ∈ (state.replaceChain cls rest).chains query ∧
+      SamePhysical actual cached := by
+  obtain ⟨query, cached, hcached, hactualCached⟩ := hrepresented
+  by_cases hquery : query = cls
+  · subst query
+    have hcachedNe : cached.offset ≠ offset := by
+      intro heq
+      exact hne (hactualCached.1.trans heq)
+    have hcachedErased := FreeList.eraseOffset_preserves hcached hcachedNe
+    have hcachedFree := member_free hvalid hcached
+    unfold FreeList.removeOffset at hremove
+    cases hfind : FreeList.findOffset? (state.chains cls) offset with
+    | none => simp [hfind] at hremove
+    | some found =>
+        simp [hfind] at hremove
+        rcases hremove with ⟨rfl, rfl⟩
+        obtain ⟨updated, hupdated, hcachedUpdated⟩ :=
+          FreeList.relink_represents hcachedFree hcachedErased
+        exact ⟨cls, updated, by simpa using hupdated,
+          samePhysical_trans hactualCached hcachedUpdated⟩
+  · exact ⟨query, cached, by
+      rw [replaceChain_other state rest hquery]
+      exact hcached, hactualCached⟩
+
 theorem member_physical {physical : List Block} {state : State}
     (hagrees : PhysicalAgreement physical state) {cls : SizeClass} {b : Block}
     (hmem : b ∈ state.chains cls) :

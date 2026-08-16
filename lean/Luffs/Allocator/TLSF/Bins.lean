@@ -309,6 +309,20 @@ theorem removeOffset_result {state : State} {cls : SizeClass} {offset : Nat}
       some (removed, state.replaceChain cls rest) := by
   simp [State.removeOffset, hremove]
 
+theorem removeOffset_success {state next : State} {cls : SizeClass}
+    {offset : Nat} {removed : Block}
+    (hsuccess : state.removeOffset cls offset = some (removed, next)) :
+    ∃ rest, FreeList.removeOffset (state.chains cls) offset =
+      some (removed, rest) ∧ next = state.replaceChain cls rest := by
+  unfold State.removeOffset at hsuccess
+  cases hremove : FreeList.removeOffset (state.chains cls) offset with
+  | none => simp [hremove] at hsuccess
+  | some result =>
+      obtain ⟨found, rest⟩ := result
+      simp [hremove] at hsuccess
+      rcases hsuccess with ⟨rfl, rfl⟩
+      exact ⟨rest, rfl, rfl⟩
+
 theorem removeOffset_detached {state : State} {cls : SizeClass} {offset : Nat}
     {removed : Block} {rest : List Block}
     (hremove : FreeList.removeOffset (state.chains cls) offset =
@@ -436,6 +450,35 @@ theorem removeOffset_preserves_forward_agreement {physical : List Block}
           rw [replaceChain_other state _ hquery] at hcached
           exact hcached
         exact hforward query cached hold
+
+theorem removeOffset_member_origin {state : State} (hvalid : Valid state)
+    {cls : SizeClass} {offset : Nat} {removed : Block} {rest : List Block}
+    (hremove : FreeList.removeOffset (state.chains cls) offset =
+      some (removed, rest)) :
+    ∀ query cached, cached ∈ (state.replaceChain cls rest).chains query →
+      ∃ old ∈ state.chains query, SamePhysical old cached := by
+  unfold FreeList.removeOffset at hremove
+  cases hfind : FreeList.findOffset? (state.chains cls) offset with
+  | none => simp [hfind] at hremove
+  | some found =>
+      simp [hfind] at hremove
+      rcases hremove with ⟨rfl, rfl⟩
+      intro query cached hcached
+      by_cases hquery : query = cls
+      · subst query
+        simp only [replaceChain_target] at hcached
+        have herasedFree :
+            ∀ b ∈ FreeList.eraseOffset (state.chains cls) offset,
+              b.free = true := by
+          intro b hb
+          exact member_free hvalid (FreeList.eraseOffset_member hb)
+        obtain ⟨old, hold, hsame⟩ :=
+          FreeList.relink_member_origin herasedFree hcached
+        exact ⟨old, FreeList.eraseOffset_member hold,
+          samePhysical_symm hsame⟩
+      · exact ⟨cached, by
+          rw [replaceChain_other state _ hquery] at hcached
+          exact hcached, samePhysical_refl cached⟩
 
 theorem removeOffset_preserves_other_representation {state : State}
     (hvalid : Valid state) {cls : SizeClass} {offset : Nat}
@@ -740,6 +783,27 @@ theorem physical_free_iff_member {physical : List Block} {state : State}
   · rintro ⟨cls, cached, hmem, hsame⟩
     have hcached := member_free hvalid hmem
     exact hsame.2.2.trans hcached
+
+theorem represented_offset_class {pool : Region} {physical : List Block}
+    {state : State} (hvalid : PoolValid pool physical state)
+    {target : Block} (htarget : target ∈ physical) {targetClass : SizeClass}
+    (htargetClass : classifyBlock? target = some targetClass)
+    {query : SizeClass} {cached : Block} (hcached : cached ∈ state.chains query)
+    (hoffset : cached.offset = target.offset) :
+    query = targetClass ∧ SamePhysical target cached := by
+  obtain ⟨actual, hactual, hactualCached⟩ := hvalid.2.2.1 query cached hcached
+  have hactualOffset : actual.offset = target.offset :=
+    hactualCached.1.trans hoffset
+  have heq := wellFormed_same_offset hvalid.1 hactual htarget hactualOffset
+  subst actual
+  have htargetBelongs := classifyBlock?_result htargetClass
+  have hcachedBelongs := member_belongs hvalid.2.1 hcached
+  have htargetQuery : Belongs query target :=
+    (samePhysical_belongs_iff hactualCached query).2 hcachedBelongs
+  exact ⟨by
+    obtain ⟨_, _, hquery⟩ := htargetQuery
+    obtain ⟨_, _, hclass⟩ := htargetBelongs
+    rw [← hquery, ← hclass], hactualCached⟩
 
 theorem allocated_not_member {state : State}
     (hvalid : Valid state) {b : Block} (hallocated : b.free = false) :

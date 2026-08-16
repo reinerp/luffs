@@ -138,8 +138,13 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   representation and every non-removed block's backward representation. An
   executable adjacent-pair coalescer now removes both bin entries, merges and
   reclassifies the physical header, and reinserts it; its Iris ownership and
-  physical well-formedness laws are checked. Completing the coalescer's bin
-  agreement and O(1) link-update refinement are the next obligations.
+  physical well-formedness laws are checked. Its complete physical/bin
+  invariant preservation is now proved in both directions. The public
+  deallocation path restores the returned block, conditionally merges right
+  and then left, preserves the full allocator invariant, and has an end-to-end
+  Iris law consuming exactly the returned capability. Proving this public path
+  cannot fail for a valid live allocation, plus the O(1) link-update
+  refinement, are the remaining allocator obligations.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 
 The first target is sequential TLSF with fixed-size pools obtained from `mmap`.

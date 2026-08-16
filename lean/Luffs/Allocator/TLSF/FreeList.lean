@@ -264,6 +264,23 @@ theorem removeOffset_valid {blocks rest : List Block} {offset : Nat}
       rw [eraseOffset_offsets hoffsetMem]
       exact hvalid.2.erase _
 
+theorem removeOffset_absent {blocks rest : List Block} {offset : Nat}
+    {removed : Block} (hvalid : Valid blocks)
+    (hremove : removeOffset blocks offset = some (removed, rest)) :
+    offset ∉ rest.map Block.offset := by
+  unfold removeOffset at hremove
+  cases hfind : findOffset? blocks offset with
+  | none => simp [hfind] at hremove
+  | some found =>
+      simp [hfind] at hremove
+      rcases hremove with ⟨rfl, rfl⟩
+      obtain ⟨hmem, hoffset⟩ := findOffset?_some_mem hfind
+      have hoffsetMem : offset ∈ blocks.map Block.offset := by
+        rw [← hoffset]
+        exact List.mem_map_of_mem hmem
+      rw [relink, relinkFrom_offsets, eraseOffset_offsets hoffsetMem]
+      exact hvalid.2.not_mem_erase
+
 theorem removeOffset_detaches {blocks rest : List Block} {offset : Nat}
     {removed : Block} (hremove : removeOffset blocks offset = some (removed, rest)) :
     removed.free = true ∧ removed.prevFreeLink = none ∧ removed.nextFreeLink = none := by

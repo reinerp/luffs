@@ -6,6 +6,7 @@ import Luffs.Allocator.TLSF
 import Luffs.Allocator.TLSF.Bitmap
 import Luffs.Allocator.TLSF.FreeList
 import Luffs.Allocator.TLSF.Bins
+import Luffs.Allocator.TLSF.Alloc
 
 namespace Luffs
 

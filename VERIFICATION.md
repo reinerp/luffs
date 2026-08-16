@@ -68,8 +68,8 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   A whole-pool agreement invariant now additionally relates every bin-chain
   entry to a header in the authoritative physical-block sequence and gives
   every free physical header a bin representative. The relation deliberately
-  equates physical metadata while allowing the chain projection to carry
-  rewritten intrusive links. Bitmap-selected heads are proved to represent
+  equates offset, size, and allocation state while the physical sequence owns
+  boundary tags and the chain projection owns intrusive links. Bitmap-selected heads are proved to represent
   physical blocks, with free state, size classification, alignment, and region
   transferred across that relation; classification functionality rules out
   two distinct classes. State-changing bin operations must still be proved to
@@ -103,7 +103,14 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   The executable split-success transition now rejects non-free, undersized, or
   unaligned requests and is proved to return an exact-size aligned allocated
   block while preserving the physical pool partition. Bin/free-list selection
-  and the whole-pool Iris invariant remain.
+  is now composed with checked physical-header lookup, exact/near-fit whole
+  allocation, and split allocation. Both branches preserve full physical
+  well-formedness (ordering, exact coverage, boundary tags, positivity,
+  alignment, and bounds). Split remainders are proved fresh, positive, aligned,
+  addressable, classifiable, and reinserted; the executable public allocation
+  path is proved complete once an eligible bin exists and safe through bin
+  validity. Restoring the bidirectional physical/bin agreement and whole-pool
+  Iris ownership invariant remains.
 - [ ] Prove `dealloc`: consuming exactly a live allocation restores it to the
   allocator without leaks, overlap, or double-free.
   The executable deallocation transition now requires the exact returned

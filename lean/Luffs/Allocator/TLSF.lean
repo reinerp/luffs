@@ -522,6 +522,84 @@ def allocateAt (blocks : List Block) (i wanted : Nat) : Option (Block × List Bl
         some ((splitBlock b wanted).1, splitAt blocks i wanted)
       else none
 
+def markAllocated (b : Block) : Block :=
+  { offset := b.offset, bytes := b.bytes, free := false,
+    prevFree := b.prevFree, prevFreeLink := none, nextFreeLink := none }
+
+/-- Allocate a whole physical block and clear the successor's cached
+predecessor-free bit. -/
+def markAllocatedAt : List Block -> Nat -> List Block
+  | [], _ => []
+  | [b], 0 => [markAllocated b]
+  | b :: next :: rest, 0 => markAllocated b :: { next with prevFree := false } :: rest
+  | b :: rest, i + 1 => b :: markAllocatedAt rest i
+
+/-- Full chosen-block transition. A splittable block returns exactly `wanted`
+bytes and a free remainder. An exact or near fit consumes the whole block,
+avoiding a remainder smaller than `minimumBlockBytes`. -/
+def allocateChosenAt (blocks : List Block) (i wanted : Nat) :
+    Option (Block × List Block) :=
+  match blocks[i]? with
+  | none => none
+  | some b =>
+      if b.free = true ∧ wanted ≤ b.bytes ∧ alignment ∣ wanted then
+        if canSplit b wanted then
+          some ((splitBlock b wanted).1, splitAt blocks i wanted)
+        else some (markAllocated b, markAllocatedAt blocks i)
+      else none
+
+def allocationRemainder (blocks : List Block) (i wanted : Nat) : Option Block :=
+  match blocks[i]? with
+  | none => none
+  | some b => if canSplit b wanted then some (splitBlock b wanted).2 else none
+
+theorem allocationRemainder_result {blocks : List Block} {i wanted : Nat}
+    {remainder : Block}
+    (hresult : allocationRemainder blocks i wanted = some remainder) :
+    ∃ b, blocks[i]? = some b ∧ canSplit b wanted ∧
+      remainder = (splitBlock b wanted).2 := by
+  unfold allocationRemainder at hresult
+  cases hget : blocks[i]? with
+  | none => simp [hget] at hresult
+  | some b =>
+      by_cases hsplit : canSplit b wanted
+      · simp [hget, hsplit] at hresult
+        exact ⟨b, rfl, hsplit, hresult.symm⟩
+      · simp [hget, hsplit] at hresult
+
+theorem allocateChosenAt_success_cases {blocks : List Block} {i wanted : Nat}
+    {b allocated : Block} {next : List Block} (hget : blocks[i]? = some b)
+    (hsuccess : allocateChosenAt blocks i wanted = some (allocated, next)) :
+    b.free = true ∧ wanted ≤ b.bytes ∧ alignment ∣ wanted ∧
+      ((canSplit b wanted ∧ allocated = (splitBlock b wanted).1 ∧
+          next = splitAt blocks i wanted) ∨
+        (¬ canSplit b wanted ∧ allocated = markAllocated b ∧
+          next = markAllocatedAt blocks i)) := by
+  simp only [allocateChosenAt, hget] at hsuccess
+  split at hsuccess
+  next hpre =>
+    split at hsuccess
+    next hsplit =>
+      simp only [Option.some.injEq, Prod.mk.injEq] at hsuccess
+      exact ⟨hpre.1, hpre.2.1, hpre.2.2, Or.inl
+        ⟨hsplit, hsuccess.1.symm, hsuccess.2.symm⟩⟩
+    next hnosplit =>
+      simp only [Option.some.injEq, Prod.mk.injEq] at hsuccess
+      exact ⟨hpre.1, hpre.2.1, hpre.2.2, Or.inr
+        ⟨hnosplit, hsuccess.1.symm, hsuccess.2.symm⟩⟩
+  next => contradiction
+
+theorem allocateChosenAt_exists {blocks : List Block} {i wanted : Nat} {b : Block}
+    (hget : blocks[i]? = some b) (hfree : b.free = true)
+    (hfits : wanted ≤ b.bytes) (haligned : alignment ∣ wanted) :
+    ∃ allocated next,
+      allocateChosenAt blocks i wanted = some (allocated, next) := by
+  by_cases hsplit : canSplit b wanted
+  · exact ⟨(splitBlock b wanted).1, splitAt blocks i wanted, by
+      simp [allocateChosenAt, hget, hfree, hfits, haligned, hsplit]⟩
+  · exact ⟨markAllocated b, markAllocatedAt blocks i, by
+      simp [allocateChosenAt, hget, hfree, hfits, haligned, hsplit]⟩
+
 theorem allocateAt_success_iff {blocks : List Block} {i wanted : Nat} {b : Block}
     (hget : blocks[i]? = some b) :
     allocateAt blocks i wanted =
@@ -564,6 +642,96 @@ def partitions (pool : Region) (blocks : List Block) : Prop :=
 def wellFormed (pool : Region) (blocks : List Block) : Prop :=
   ordered blocks ∧ partitions pool blocks ∧ boundaryTags blocks ∧
     ∀ b ∈ blocks, 0 < b.bytes ∧ b.offset + b.bytes ≤ pool.bytes ∧ b.aligned
+
+theorem contiguousFrom_get_offset_ge {blocks : List Block} {cursor i : Nat}
+    (hcontig : contiguousFrom cursor blocks) (hi : i < blocks.length) :
+    cursor ≤ (blocks[i]'hi).offset := by
+  induction blocks generalizing cursor i with
+  | nil => simp at hi
+  | cons head rest ih =>
+      simp only [contiguousFrom] at hcontig
+      cases i with
+      | zero => simpa using Nat.le_of_eq hcontig.1.symm
+      | succ j =>
+          simp only [List.length_cons, Nat.succ_lt_succ_iff] at hi
+          have htail := ih hcontig.2 hi
+          exact Nat.le_trans (by omega) htail
+
+theorem contiguousFrom_ordered {blocks : List Block} {cursor : Nat}
+    (hcontig : contiguousFrom cursor blocks) : ordered blocks := by
+  intro i j hi hj hij
+  induction blocks generalizing cursor i j with
+  | nil => simp at hi
+  | cons head rest ih =>
+      simp only [contiguousFrom] at hcontig
+      cases i with
+      | zero =>
+          cases j with
+          | zero => omega
+          | succ k =>
+              simp only [List.getElem_cons_zero, List.getElem_cons_succ]
+              have hk : k < rest.length := by simpa using hj
+              have hge := contiguousFrom_get_offset_ge hcontig.2 hk
+              rw [hcontig.1]
+              exact hge
+      | succ i =>
+          cases j with
+          | zero => omega
+          | succ j =>
+              simp only [List.length_cons, Nat.succ_lt_succ_iff] at hi hj hij
+              simp only [List.getElem_cons_succ]
+              exact ih (cursor := cursor + head.bytes) (i := i) (j := j)
+                hcontig.2 hi hj hij
+
+theorem contiguousFrom_member_end_le {blocks : List Block} {cursor : Nat}
+    (hcontig : contiguousFrom cursor blocks) {b : Block} (hmem : b ∈ blocks) :
+    b.offset + b.bytes ≤ cursor + (blocks.map Block.bytes).sum := by
+  induction blocks generalizing cursor with
+  | nil => simp at hmem
+  | cons head rest ih =>
+      simp only [contiguousFrom] at hcontig
+      simp only [List.mem_cons] at hmem
+      rcases hmem with rfl | htail
+      · rw [hcontig.1]
+        simp
+      · have hrest := ih hcontig.2 htail
+        simp only [List.map_cons, List.sum_cons]
+        omega
+
+theorem wellFormed_of_partitions_boundary {pool : Region} {blocks : List Block}
+    (hparts : partitions pool blocks) (htags : boundaryTags blocks)
+    (hshape : ∀ b ∈ blocks, 0 < b.bytes ∧ b.aligned) :
+    wellFormed pool blocks := by
+  refine ⟨contiguousFrom_ordered hparts.1, hparts, htags, ?_⟩
+  intro b hmem
+  have hend := contiguousFrom_member_end_le hparts.1 hmem
+  have hcover := hparts.2
+  unfold covers at hcover
+  rw [hcover] at hend
+  have hend' : b.offset + b.bytes ≤ pool.bytes := by
+    simpa only [Nat.zero_add] using hend
+  exact ⟨(hshape b hmem).1, hend', (hshape b hmem).2⟩
+
+theorem no_block_starts_inside {pool : Region} {blocks : List Block}
+    (hwell : wellFormed pool blocks) {container other : Block}
+    (hcontainer : container ∈ blocks) (hother : other ∈ blocks)
+    (hlower : container.offset < other.offset)
+    (hupper : other.offset < container.offset + container.bytes) : False := by
+  obtain ⟨i, hi, hgetContainer⟩ := List.mem_iff_getElem.mp hcontainer
+  obtain ⟨j, hj, hgetOther⟩ := List.mem_iff_getElem.mp hother
+  rcases Nat.lt_trichotomy i j with hij | hij | hij
+  · have hord := hwell.1 i j hi hj hij
+    rw [hgetContainer, hgetOther] at hord
+    omega
+  · subst j
+    have heq : container = other := by
+      rw [← hgetContainer, ← hgetOther]
+    have hoffset := congrArg Block.offset heq
+    omega
+  · have hord := hwell.1 j i hj hi hij
+    rw [hgetOther, hgetContainer] at hord
+    have hotherPositive := (hwell.2.2.2 other hother).1
+    omega
 
 theorem block_inside {pool : Region} {blocks : List Block}
     (h : wellFormed pool blocks) {b : Block} (hb : b ∈ blocks) {i : Nat}
@@ -703,6 +871,169 @@ theorem boundaryTags_splitAt {blocks : List Block} {i : Nat} {b : Block}
     (htags : boundaryTags blocks) : boundaryTags (splitAt blocks i wanted) :=
   boundaryTagsFrom_splitAt false wanted hget hbfree htags
 
+theorem contiguousFrom_markAllocatedAt (blocks : List Block) (cursor i : Nat)
+    (h : contiguousFrom cursor blocks) :
+    contiguousFrom cursor (markAllocatedAt blocks i) := by
+  induction blocks generalizing cursor i with
+  | nil => trivial
+  | cons b rest ih =>
+      cases i with
+      | zero =>
+          cases rest with
+          | nil => simpa [contiguousFrom, markAllocatedAt, markAllocated] using h
+          | cons next tail =>
+              simpa [contiguousFrom, markAllocatedAt, markAllocated] using h
+      | succ j =>
+          simp only [contiguousFrom, markAllocatedAt] at h ⊢
+          exact ⟨h.1, ih (cursor + b.bytes) j h.2⟩
+
+theorem covers_markAllocatedAt (pool : Region) (blocks : List Block) (i : Nat)
+    (h : covers pool blocks) : covers pool (markAllocatedAt blocks i) := by
+  unfold covers at h ⊢
+  induction blocks generalizing i pool with
+  | nil => exact h
+  | cons b rest ih =>
+      cases i with
+      | zero =>
+          cases rest with
+          | nil => simpa [markAllocatedAt, markAllocated] using h
+          | cons next tail => simpa [markAllocatedAt, markAllocated] using h
+      | succ j =>
+          simp only [markAllocatedAt, List.map_cons, List.sum_cons] at h ⊢
+          have htail : (rest.map (fun b => b.bytes)).sum = pool.bytes - b.bytes := by
+            omega
+          have ih' := ih (pool := { pool with bytes := pool.bytes - b.bytes }) j htail
+          change (markAllocatedAt rest j |>.map (fun b => b.bytes)).sum =
+            pool.bytes - b.bytes at ih'
+          omega
+
+theorem partitions_markAllocatedAt (pool : Region) (blocks : List Block) (i : Nat)
+    (h : partitions pool blocks) : partitions pool (markAllocatedAt blocks i) :=
+  ⟨contiguousFrom_markAllocatedAt blocks 0 i h.1,
+    covers_markAllocatedAt pool blocks i h.2⟩
+
+theorem boundaryTagsFrom_markAllocatedAt {blocks : List Block} {i : Nat}
+    {b : Block} (previousFree : Bool) (hget : blocks[i]? = some b)
+    (hfree : b.free = true) (htags : boundaryTagsFrom previousFree blocks) :
+    boundaryTagsFrom previousFree (markAllocatedAt blocks i) := by
+  induction blocks generalizing i b previousFree with
+  | nil => simp at hget
+  | cons head rest ih =>
+      cases i with
+      | zero =>
+          simp only [List.getElem?_cons_zero, Option.some.injEq] at hget
+          subst hget
+          cases rest with
+          | nil =>
+              simpa [boundaryTagsFrom, markAllocatedAt, markAllocated] using htags
+          | cons next tail =>
+              simp only [boundaryTagsFrom] at htags ⊢
+              rcases htags with ⟨hhead, _hnext, htail⟩
+              simp only [markAllocatedAt, markAllocated]
+              exact ⟨hhead, rfl, htail⟩
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at hget
+          simp only [boundaryTagsFrom, markAllocatedAt] at htags ⊢
+          exact ⟨htags.1, ih head.free hget hfree htags.2⟩
+
+theorem boundaryTags_markAllocatedAt {blocks : List Block} {i : Nat} {b : Block}
+    (hget : blocks[i]? = some b) (hfree : b.free = true)
+    (htags : boundaryTags blocks) : boundaryTags (markAllocatedAt blocks i) :=
+  boundaryTagsFrom_markAllocatedAt false hget hfree htags
+
+def blocksShaped (blocks : List Block) : Prop :=
+  ∀ b ∈ blocks, 0 < b.bytes ∧ b.aligned
+
+theorem wellFormed_blocksShaped {pool : Region} {blocks : List Block}
+    (hwell : wellFormed pool blocks) : blocksShaped blocks := by
+  intro b hmem
+  exact ⟨(hwell.2.2.2 b hmem).1, (hwell.2.2.2 b hmem).2.2⟩
+
+theorem blocksShaped_markAllocatedAt {blocks : List Block} {i : Nat}
+    (hshape : blocksShaped blocks) : blocksShaped (markAllocatedAt blocks i) := by
+  induction blocks generalizing i with
+  | nil =>
+      intro b hmem
+      simp [markAllocatedAt] at hmem
+  | cons head rest ih =>
+      have hhead := hshape head (by simp)
+      have hrest : blocksShaped rest := by
+        intro b hmem
+        exact hshape b (by simp [hmem])
+      cases i with
+      | zero =>
+          cases rest with
+          | nil =>
+              intro b hmem
+              simp [markAllocatedAt] at hmem
+              subst b
+              simpa [markAllocated, Block.aligned] using hhead
+          | cons next tail =>
+              intro b hmem
+              simp only [markAllocatedAt, List.mem_cons] at hmem
+              rcases hmem with hallocated | htail
+              · subst b
+                simpa [markAllocated, Block.aligned] using hhead
+              · rcases htail with hnext | htail
+                · subst b
+                  simpa [Block.aligned] using hrest next (by simp)
+                · exact hrest b (by simp [htail])
+      | succ j =>
+          intro b hmem
+          simp only [markAllocatedAt, List.mem_cons] at hmem
+          rcases hmem with rfl | hmem
+          · exact hhead
+          · exact ih hrest b hmem
+
+theorem blocksShaped_splitAt {blocks : List Block} {i wanted : Nat} {b : Block}
+    (hget : blocks[i]? = some b) (hshape : blocksShaped blocks)
+    (hcan : canSplit b wanted) (hwanted : alignment ∣ wanted) :
+    blocksShaped (splitAt blocks i wanted) := by
+  induction blocks generalizing i b with
+  | nil => simp at hget
+  | cons head rest ih =>
+      have hhead := hshape head (by simp)
+      have hrest : blocksShaped rest := by
+        intro old hmem
+        exact hshape old (by simp [hmem])
+      cases i with
+      | zero =>
+          simp only [List.getElem?_cons_zero, Option.some.injEq] at hget
+          subst b
+          have hnonempty := splitBlock_nonempty hcan
+          have haligned : (splitBlock head wanted).1.aligned ∧
+              (splitBlock head wanted).2.aligned := by
+            rcases hhead.2 with ⟨hoffset, hbytes⟩
+            simp only [Block.aligned, splitBlock]
+            exact ⟨⟨hoffset, hwanted⟩,
+              ⟨Nat.dvd_add hoffset hwanted, Nat.dvd_sub hbytes hwanted⟩⟩
+          intro current hmem
+          simp only [splitAt, List.mem_cons] at hmem
+          rcases hmem with rfl | hmem
+          · exact ⟨hnonempty.1, haligned.1⟩
+          · rcases hmem with rfl | hmem
+            · exact ⟨hnonempty.2, haligned.2⟩
+            · exact hrest current hmem
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at hget
+          intro current hmem
+          simp only [splitAt, List.mem_cons] at hmem
+          rcases hmem with rfl | hmem
+          · exact hhead
+          · exact ih (b := b) hget hrest hcan current hmem
+
+theorem allocateChosenAt_blocksShaped {blocks next : List Block}
+    {i wanted : Nat} {b allocated : Block} (hget : blocks[i]? = some b)
+    (hshape : blocksShaped blocks)
+    (hsuccess : allocateChosenAt blocks i wanted = some (allocated, next)) :
+    blocksShaped next := by
+  obtain ⟨_, _, hwanted, hsplit | hwhole⟩ :=
+    allocateChosenAt_success_cases hget hsuccess
+  · rcases hsplit with ⟨hcan, _, rfl⟩
+    exact blocksShaped_splitAt hget hshape hcan hwanted
+  · rcases hwhole with ⟨_, _, rfl⟩
+    exact blocksShaped_markAllocatedAt hshape
+
 theorem allocateAt_preserves_partitions {pool : Region} {blocks : List Block}
     {i wanted : Nat} {b : Block} (hget : blocks[i]? = some b)
     (hparts : partitions pool blocks)
@@ -720,6 +1051,40 @@ theorem allocateAt_preserves_boundaryTags {blocks : List Block}
     boundaryTags (splitAt blocks i wanted) := by
   have hpre := (allocateAt_success_iff hget).1 hsuccess
   exact boundaryTags_splitAt wanted hget hpre.1 htags
+
+theorem allocateChosenAt_preserves_partitions {pool : Region}
+    {blocks next : List Block} {i wanted : Nat} {b allocated : Block}
+    (hget : blocks[i]? = some b) (hparts : partitions pool blocks)
+    (hsuccess : allocateChosenAt blocks i wanted = some (allocated, next)) :
+    partitions pool next := by
+  obtain ⟨_, _, _, hsplit | hwhole⟩ :=
+    allocateChosenAt_success_cases hget hsuccess
+  · rcases hsplit with ⟨hcan, _, rfl⟩
+    exact partitions_splitAt wanted hget hparts (canSplit_wanted_le hcan)
+  · rcases hwhole with ⟨_, _, rfl⟩
+    exact partitions_markAllocatedAt pool blocks i hparts
+
+theorem allocateChosenAt_preserves_boundaryTags {blocks next : List Block}
+    {i wanted : Nat} {b allocated : Block} (hget : blocks[i]? = some b)
+    (htags : boundaryTags blocks)
+    (hsuccess : allocateChosenAt blocks i wanted = some (allocated, next)) :
+    boundaryTags next := by
+  obtain ⟨hfree, _, _, hsplit | hwhole⟩ :=
+    allocateChosenAt_success_cases hget hsuccess
+  · rcases hsplit with ⟨_, _, rfl⟩
+    exact boundaryTags_splitAt wanted hget hfree htags
+  · rcases hwhole with ⟨_, _, rfl⟩
+    exact boundaryTags_markAllocatedAt hget hfree htags
+
+theorem allocateChosenAt_preserves_wellFormed {pool : Region}
+    {blocks next : List Block} {i wanted : Nat} {b allocated : Block}
+    (hget : blocks[i]? = some b) (hwell : wellFormed pool blocks)
+    (hsuccess : allocateChosenAt blocks i wanted = some (allocated, next)) :
+    wellFormed pool next := by
+  apply wellFormed_of_partitions_boundary
+    (allocateChosenAt_preserves_partitions hget hwell.2.1 hsuccess)
+    (allocateChosenAt_preserves_boundaryTags hget hwell.2.2.1 hsuccess)
+  exact allocateChosenAt_blocksShaped hget (wellFormed_blocksShaped hwell) hsuccess
 
 theorem splitBlock_aligned {b : Block} {wanted : Nat} (hb : b.aligned)
     (hwanted : alignment ∣ wanted) :
@@ -741,6 +1106,25 @@ theorem allocateAt_result {blocks : List Block} {i wanted : Nat} {b : Block}
   have haligned := (splitBlock_aligned hb hpre.2.2).1
   have hnonempty := (splitBlock_nonempty hpre.2.1).1
   exact ⟨rfl, rfl, haligned, hnonempty⟩
+
+theorem markAllocated_aligned (b : Block) (haligned : b.aligned) :
+    (markAllocated b).aligned := by
+  simpa [markAllocated, Block.aligned] using haligned
+
+theorem allocateChosenAt_result {blocks next : List Block} {i wanted : Nat}
+    {b allocated : Block} (hget : blocks[i]? = some b) (hb : b.aligned)
+    (hsuccess : allocateChosenAt blocks i wanted = some (allocated, next)) :
+    allocated.free = false ∧ allocated.aligned ∧ wanted ≤ allocated.bytes ∧
+      ((canSplit b wanted ∧ allocated.bytes = wanted) ∨
+        (¬ canSplit b wanted ∧ allocated.bytes = b.bytes)) := by
+  obtain ⟨_, hwanted, halignment, hsplit | hwhole⟩ :=
+    allocateChosenAt_success_cases hget hsuccess
+  · rcases hsplit with ⟨hcan, rfl, _⟩
+    exact ⟨rfl, (splitBlock_aligned hb halignment).1,
+      Nat.le_refl _, Or.inl ⟨hcan, rfl⟩⟩
+  · rcases hwhole with ⟨hnosplit, rfl, _⟩
+    exact ⟨rfl, markAllocated_aligned b hb,
+      hwanted, Or.inr ⟨hnosplit, rfl⟩⟩
 
 theorem splitBlock_regions_disjoint (pool : Region) (b : Block) (wanted : Nat) :
     ((splitBlock b wanted).1.region pool).disjoint

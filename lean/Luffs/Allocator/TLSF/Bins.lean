@@ -48,6 +48,31 @@ def Belongs (cls : SizeClass) (b : Block) : Prop :=
   ∃ (hsize : 0 < b.bytes) (hmax : b.bytes < 2 ^ firstLevelCount),
     sizeClass b.bytes hsize hmax = cls
 
+def classifyBlock? (b : Block) : Option SizeClass :=
+  if hsize : 0 < b.bytes then
+    if hmax : b.bytes < 2 ^ firstLevelCount then
+      some (sizeClass b.bytes hsize hmax)
+    else none
+  else none
+
+theorem classifyBlock?_result {b : Block} {cls : SizeClass}
+    (hclass : classifyBlock? b = some cls) : Belongs cls b := by
+  unfold classifyBlock? at hclass
+  split at hclass
+  next hsize =>
+    split at hclass
+    next hmax =>
+      simp only [Option.some.injEq] at hclass
+      exact ⟨hsize, hmax, hclass⟩
+    next => contradiction
+  next => contradiction
+
+theorem classifyBlock?_complete {b : Block} (hsize : 0 < b.bytes)
+    (hmax : b.bytes < 2 ^ firstLevelCount) :
+    ∃ cls, classifyBlock? b = some cls := by
+  exact ⟨sizeClass b.bytes hsize hmax, by
+    simp [classifyBlock?, hsize, hmax]⟩
+
 /-- The non-cached obligations on a family of intrusive chains. -/
 def ChainsValid (chains : Chains) : Prop :=
   (∀ cls, FreeList.Valid (chains cls)) ∧
@@ -182,11 +207,11 @@ theorem removeFront_detached {state : State} {cls : SizeClass}
   FreeList.removeFront_detaches hremove
 
 /-- Equality of the fields shared by the physical-layout and intrusive-chain
-views of a header. Links live in the chain projection; offset, size, allocation
-state, and the boundary tag live in both. -/
+views of a header. Links live in the chain projection; boundary tags live in
+the physical projection; offset, size, and allocation state live in both. -/
 def SamePhysical (left right : Block) : Prop :=
   left.offset = right.offset ∧ left.bytes = right.bytes ∧
-    left.free = right.free ∧ left.prevFree = right.prevFree
+    left.free = right.free
 
 instance (left right : Block) : Decidable (SamePhysical left right) := by
   unfold SamePhysical
@@ -230,19 +255,19 @@ theorem findPhysicalIndex_complete {physical : List Block} {target actual : Bloc
           exact ⟨i + 1, by simp [findPhysicalIndex, hhead, hfind]⟩
 
 theorem samePhysical_refl (b : Block) : SamePhysical b b :=
-  ⟨rfl, rfl, rfl, rfl⟩
+  ⟨rfl, rfl, rfl⟩
 
 theorem samePhysical_symm {left right : Block}
     (h : SamePhysical left right) : SamePhysical right left := by
-  rcases h with ⟨h₁, h₂, h₃, h₄⟩
-  exact ⟨h₁.symm, h₂.symm, h₃.symm, h₄.symm⟩
+  rcases h with ⟨h₁, h₂, h₃⟩
+  exact ⟨h₁.symm, h₂.symm, h₃.symm⟩
 
 theorem samePhysical_trans {left middle right : Block}
     (hleft : SamePhysical left middle) (hright : SamePhysical middle right) :
     SamePhysical left right := by
-  rcases hleft with ⟨h₁, h₂, h₃, h₄⟩
-  rcases hright with ⟨h₁', h₂', h₃', h₄'⟩
-  exact ⟨h₁.trans h₁', h₂.trans h₂', h₃.trans h₃', h₄.trans h₄'⟩
+  rcases hleft with ⟨h₁, h₂, h₃⟩
+  rcases hright with ⟨h₁', h₂', h₃'⟩
+  exact ⟨h₁.trans h₁', h₂.trans h₂', h₃.trans h₃'⟩
 
 theorem samePhysical_withLinks (b : Block) (previous next : Option Nat)
     (hfree : b.free = true) :
@@ -252,23 +277,23 @@ theorem samePhysical_withLinks (b : Block) (previous next : Option Nat)
 theorem samePhysical_belongs_iff {left right : Block}
     (hsame : SamePhysical left right) (cls : SizeClass) :
     Belongs cls left ↔ Belongs cls right := by
-  rcases hsame with ⟨_, hbytes, _, _⟩
+  rcases hsame with ⟨_, hbytes, _⟩
   simp [Belongs, hbytes]
 
 theorem samePhysical_aligned_iff {left right : Block}
     (hsame : SamePhysical left right) : left.aligned ↔ right.aligned := by
-  rcases hsame with ⟨hoffset, hbytes, _, _⟩
+  rcases hsame with ⟨hoffset, hbytes, _⟩
   simp [Block.aligned, hoffset, hbytes]
 
 theorem samePhysical_region {left right : Block}
     (hsame : SamePhysical left right) (pool : Region) :
     left.region pool = right.region pool := by
-  rcases hsame with ⟨hoffset, hbytes, _, _⟩
+  rcases hsame with ⟨hoffset, hbytes, _⟩
   simp [Block.region, hoffset, hbytes]
 
 theorem samePhysical_free {left right : Block}
     (hsame : SamePhysical left right) : left.free = right.free :=
-  hsame.2.2.1
+  hsame.2.2
 
 /-- Relates the cached bin projection to the authoritative physical block
 sequence. Every cached header represents a physical header, and every free
@@ -313,6 +338,46 @@ theorem member_physical {physical : List Block} {state : State}
     ∃ actual ∈ physical, SamePhysical actual b :=
   hagrees.1 cls b hmem
 
+theorem removeFront_kept_origin {state : State} (hvalid : Valid state)
+    {cls : SizeClass} {removed kept : Block} {rest : List Block}
+    (hremove : FreeList.removeFront (state.chains cls) = some (removed, rest))
+    (hkept : kept ∈ rest) :
+    ∃ old ∈ state.chains cls, SamePhysical old kept := by
+  cases hchain : state.chains cls with
+  | nil => simp [hchain, FreeList.removeFront] at hremove
+  | cons head tail =>
+      cases tail with
+      | nil => simp [hchain, FreeList.removeFront] at hremove; simp_all
+      | cons next more =>
+          have hnextMem : next ∈ state.chains cls := by simp [hchain]
+          have hnextFree := member_free hvalid hnextMem
+          simp [hchain, FreeList.removeFront] at hremove
+          rcases hremove with ⟨rfl, rfl⟩
+          simp only [List.mem_cons] at hkept
+          rcases hkept with hnext | hmore
+          · subst kept
+            exact ⟨next, by simp,
+              samePhysical_withLinks next none next.nextFreeLink hnextFree⟩
+          · exact ⟨kept, by simp [hmore], samePhysical_refl kept⟩
+
+theorem removeFront_preserves_forward_agreement {physical : List Block}
+    {state : State} (hvalid : Valid state)
+    (hagrees : PhysicalAgreement physical state) {cls : SizeClass}
+    {removed : Block} {rest : List Block}
+    (hremove : FreeList.removeFront (state.chains cls) = some (removed, rest)) :
+    ∀ query cached, cached ∈ (state.replaceChain cls rest).chains query →
+      ∃ actual ∈ physical, SamePhysical actual cached := by
+  intro query cached hmem
+  by_cases hquery : query = cls
+  · subst query
+    rw [replaceChain_target] at hmem
+    obtain ⟨old, hold, hsame⟩ :=
+      removeFront_kept_origin hvalid hremove hmem
+    obtain ⟨actual, hactual, hactualOld⟩ := hagrees.1 cls old hold
+    exact ⟨actual, hactual, samePhysical_trans hactualOld hsame⟩
+  · rw [replaceChain_other state rest hquery] at hmem
+    exact hagrees.1 query cached hmem
+
 theorem physical_free_member {physical : List Block} {state : State}
     (hagrees : PhysicalAgreement physical state) {b : Block}
     (hphysical : b ∈ physical) (hfree : b.free = true) :
@@ -328,7 +393,7 @@ theorem physical_free_iff_member {physical : List Block} {state : State}
   · exact physical_free_member hagrees hphysical
   · rintro ⟨cls, cached, hmem, hsame⟩
     have hcached := member_free hvalid hmem
-    exact hsame.2.2.1.trans hcached
+    exact hsame.2.2.trans hcached
 
 theorem allocated_not_member {state : State}
     (hvalid : Valid state) {b : Block} (hallocated : b.free = false) :
@@ -737,6 +802,16 @@ theorem takeCandidate_valid {state next : State} {start : SizeClass}
   obtain ⟨cls, rest, _, hremove, rfl⟩ := takeCandidate_result htake
   exact removeFront_valid hvalid hremove
 
+theorem takeCandidate_preserves_forward_agreement {physical : List Block}
+    {state next : State} (hvalid : Valid state)
+    (hagrees : PhysicalAgreement physical state) {start : SizeClass}
+    {removed : Block}
+    (htake : state.takeCandidate start = some (removed, next)) :
+    ∀ cls cached, cached ∈ next.chains cls →
+      ∃ actual ∈ physical, SamePhysical actual cached := by
+  obtain ⟨cls, rest, _, hremove, rfl⟩ := takeCandidate_result htake
+  exact removeFront_preserves_forward_agreement hvalid hagrees hremove
+
 theorem takeCandidate_detached {state next : State} {start : SizeClass}
     {removed : Block} (htake : state.takeCandidate start = some (removed, next)) :
     removed.free = true ∧ removed.prevFreeLink = none ∧
@@ -754,7 +829,8 @@ theorem takeCandidate_suitable {pool : Region} {physical : List Block}
     (htake : state.takeCandidate
       (searchSizeClass request hrequest hkeyMax) = some (removed, next)) :
     ∃ actual, actual ∈ physical ∧ SamePhysical actual removed ∧
-      removed.free = true ∧ removed.aligned ∧ request ≤ removed.bytes := by
+      removed.free = true ∧ removed.aligned ∧ request ≤ removed.bytes ∧
+      removed.bytes < 2 ^ firstLevelCount := by
   obtain ⟨cls, rest, hfind, hremove, _⟩ := takeCandidate_result htake
   obtain ⟨head, hmem, hheadRemoved⟩ :=
     removeFront_removed_represents_member hpool.2.1 hremove
@@ -768,9 +844,10 @@ theorem takeCandidate_suitable {pool : Region} {physical : List Block}
   have horder := findCandidate_ordered hfind
   have hsuitable := ordered_search_class_suitable request hrequest hkeyMax
     horder hremovedBelongs hremovedAligned.2
+  obtain ⟨_, hremovedMax, _⟩ := hremovedBelongs
   have hdetached := takeCandidate_detached htake
   exact ⟨actual, hactual, samePhysical_trans hactualHead hheadRemoved,
-    hdetached.1, hremovedAligned, hsuitable⟩
+    hdetached.1, hremovedAligned, hsuitable, hremovedMax⟩
 
 theorem takeCandidate_complete {state : State} {start : SizeClass}
     (hvalid : Valid state) (heligible : HasEligibleBin state start) :

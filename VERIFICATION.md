@@ -52,12 +52,15 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   are executable and proved to preserve bidirectional link consistency and
   offset uniqueness; removed blocks are proved detached. A joint bin invariant
   now requires every member to be free and classified into its containing bin.
-  A whole-pool agreement invariant now additionally requires every bin-chain
-  entry to occur in the authoritative physical-block sequence and every free
-  physical block to occur in a bin. Bitmap-selected heads are proved to be
-  physical blocks, and classification functionality rules out representing a
-  block in two distinct classes. State-changing bin operations must still be
-  proved to preserve this agreement. Bitmap caches can now be rebuilt from
+  A whole-pool agreement invariant now additionally relates every bin-chain
+  entry to a header in the authoritative physical-block sequence and gives
+  every free physical header a bin representative. The relation deliberately
+  equates physical metadata while allowing the chain projection to carry
+  rewritten intrusive links. Bitmap-selected heads are proved to represent
+  physical blocks, with free state, size classification, alignment, and region
+  transferred across that relation; classification functionality rules out
+  two distinct classes. State-changing bin operations must still be proved to
+  preserve this agreement. Bitmap caches can now be rebuilt from
   chains with a proof that both levels exactly reflect chain nonemptiness;
   front insertion of a fresh, correctly classified block preserves intrusive
   links, classification, and both rebuilt bitmap invariants. Front removal is

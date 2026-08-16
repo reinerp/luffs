@@ -81,6 +81,21 @@ def drop (pool : Region) (state : Alloc.State) (block : Block) :
   | none => none
   | some i => Dealloc.deallocate pool state i (block.region pool)
 
+theorem drop_result {pool : Region} {state next : Alloc.State} {block : Block}
+    (hsuccess : drop pool state block = some next) :
+    ∃ i, Bins.findPhysicalIndex state.physical block = some i ∧
+      Dealloc.deallocate pool state i (block.region pool) = some next := by
+  unfold drop at hsuccess
+  cases hfind : Bins.findPhysicalIndex state.physical block with
+  | none => simp [hfind] at hsuccess
+  | some i => exact ⟨i, rfl, by simpa [hfind] using hsuccess⟩
+
+theorem drop_preserves_valid {pool : Region} {state next : Alloc.State}
+    (hvalid : Alloc.Valid pool state) {block : Block}
+    (hsuccess : drop pool state block = some next) : Alloc.Valid pool next := by
+  obtain ⟨i, _, hdealloc⟩ := drop_result hsuccess
+  exact Dealloc.deallocate_preserves_valid hvalid hdealloc
+
 theorem drop_complete {pool : Region} {state : Alloc.State}
     (hvalid : Alloc.Valid pool state)
     (hpoolMax : pool.bytes < 2 ^ firstLevelCount) {block current : Block}

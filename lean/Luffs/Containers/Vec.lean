@@ -37,6 +37,81 @@ def Valid {α : Type} (codec : Codec α) (handle : Handle) : Prop :=
   handle.len ≤ handle.capacity ∧
     handle.capacity * codec.size ≤ handle.block.bytes
 
+structure AllocResult where
+  handle : Handle
+  state : Alloc.State
+
+def allocationBytes {α : Type} (codec : Codec α) (capacity : Nat) : Nat :=
+  Box.requestBytes (capacity * codec.size)
+
+theorem allocationBytes_positive {α : Type} (codec : Codec α) {capacity : Nat}
+    (hcapacity : 0 < capacity) : 0 < allocationBytes codec capacity :=
+  Box.requestBytes_positive (Nat.mul_pos hcapacity codec.size_pos)
+
+theorem allocationBytes_fits {α : Type} (codec : Codec α) {capacity : Nat}
+    (hcapacity : 0 < capacity) :
+    capacity * codec.size ≤ allocationBytes codec capacity :=
+  Box.requestBytes_fits (Nat.mul_pos hcapacity codec.size_pos)
+
+def allocate {α : Type} (codec : Codec α) (capacity : Nat)
+    (hcapacity : 0 < capacity) (state : Alloc.State)
+    (hkeyMax : requestKey (allocationBytes codec capacity) <
+      2 ^ firstLevelCount) : Option AllocResult :=
+  match Alloc.allocate state (allocationBytes codec capacity)
+      (allocationBytes_positive codec hcapacity) hkeyMax with
+  | none => none
+  | some result => some ⟨⟨result.allocated, 0, capacity⟩, result.state⟩
+
+theorem allocate_result {α : Type} {codec : Codec α} {capacity : Nat}
+    {hcapacity : 0 < capacity} {state : Alloc.State}
+    {hkeyMax : requestKey (allocationBytes codec capacity) <
+      2 ^ firstLevelCount} {result : AllocResult}
+    (hsuccess : allocate codec capacity hcapacity state hkeyMax = some result) :
+    ∃ raw, Alloc.allocate state (allocationBytes codec capacity)
+        (allocationBytes_positive codec hcapacity) hkeyMax = some raw ∧
+      result.handle = ⟨raw.allocated, 0, capacity⟩ ∧
+      result.state = raw.state := by
+  unfold allocate at hsuccess
+  cases hraw : Alloc.allocate state (allocationBytes codec capacity)
+      (allocationBytes_positive codec hcapacity) hkeyMax with
+  | none => simp [hraw] at hsuccess
+  | some raw =>
+      simp [hraw] at hsuccess
+      subst result
+      exact ⟨raw, rfl, rfl, rfl⟩
+
+theorem allocate_safe {α : Type} {codec : Codec α} {capacity : Nat}
+    {hcapacity : 0 < capacity} {pool : Region} {state : Alloc.State}
+    (hvalid : Alloc.Valid pool state)
+    {hkeyMax : requestKey (allocationBytes codec capacity) <
+      2 ^ firstLevelCount} {result : AllocResult}
+    (hsuccess : allocate codec capacity hcapacity state hkeyMax = some result) :
+    Valid codec result.handle ∧ result.handle.block.free = false ∧
+      result.handle.block.aligned ∧ Alloc.Valid pool result.state := by
+  obtain ⟨raw, hraw, hhandle, hstate⟩ := allocate_result hsuccess
+  rw [hhandle, hstate]
+  have hsafe := Alloc.allocate_safe hvalid hraw
+  have hpreserved := Alloc.allocate_preserves_valid hvalid
+    (Box.requestBytes_aligned (capacity * codec.size)) hraw
+  exact ⟨⟨by simp, Nat.le_trans (allocationBytes_fits codec hcapacity)
+      hsafe.2.2.1⟩, hsafe.1, hsafe.2.1, hpreserved⟩
+
+theorem allocate_complete {α : Type} {codec : Codec α} {capacity : Nat}
+    {hcapacity : 0 < capacity} {pool : Region} {state : Alloc.State}
+    (hvalid : Alloc.Valid pool state)
+    {hkeyMax : requestKey (allocationBytes codec capacity) <
+      2 ^ firstLevelCount}
+    (heligible : Bins.HasEligibleBin state.bins
+      (searchSizeClass (allocationBytes codec capacity)
+        (allocationBytes_positive codec hcapacity) hkeyMax)) :
+    ∃ result, allocate codec capacity hcapacity state hkeyMax = some result := by
+  obtain ⟨raw, hraw⟩ := Alloc.allocate_complete hvalid
+    (Box.requestBytes_aligned (capacity * codec.size)) heligible
+  change Alloc.allocate state (allocationBytes codec capacity)
+    (allocationBytes_positive codec hcapacity) hkeyMax = some raw at hraw
+  exact ⟨⟨⟨raw.allocated, 0, capacity⟩, raw.state⟩, by
+    simp [allocate, hraw]⟩
+
 def push (handle : Handle) : Option Handle :=
   if handle.len < handle.capacity then
     some { handle with len := handle.len + 1 }
@@ -78,6 +153,76 @@ def Owns {GF : BundledGFunctors} [ByteRegionGS GF] [ByteContentsGS GF]
     (values : List α) : IProp GF :=
   iprop(OwnsBytes (handle.block.region pool) ∗
     PointsToBytes (handle.block.region pool).base (encodeValues codec values))
+
+theorem allocate_ownsFree {GF : BundledGFunctors}
+    [ByteRegionGS GF] [ByteContentsGS GF] {α : Type}
+    {codec : Codec α} {capacity : Nat} {hcapacity : 0 < capacity}
+    {pool : Region} {state : Alloc.State}
+    (hvalid : Alloc.Valid pool state)
+    {hkeyMax : requestKey (allocationBytes codec capacity) <
+      2 ^ firstLevelCount} {result : AllocResult}
+    (hsuccess : allocate codec capacity hcapacity state hkeyMax = some result) :
+    Ownership.OwnsFree (PROP := IProp GF) pool state.physical ⊣⊢
+      Owns codec pool result.handle [] ∗
+        Ownership.OwnsFree pool result.state.physical := by
+  obtain ⟨raw, hraw, hhandle, hstate⟩ := allocate_result hsuccess
+  rw [hhandle, hstate]
+  have htransfer := Ownership.allocate_ownsFree (PROP := IProp GF)
+    pool hvalid hraw
+  simpa [Owns, encodeValues, PointsToBytes] using
+    htransfer.trans (sep_congr_left sep_emp.symm)
+
+def drop (pool : Region) (state : Alloc.State) (handle : Handle) :
+    Option Alloc.State :=
+  Box.drop pool state handle.block
+
+theorem drop_preserves_valid {pool : Region} {state next : Alloc.State}
+    (hvalid : Alloc.Valid pool state) {handle : Handle}
+    (hsuccess : drop pool state handle = some next) : Alloc.Valid pool next :=
+  Box.drop_preserves_valid hvalid hsuccess
+
+theorem drop_complete {pool : Region} {state : Alloc.State}
+    (hvalid : Alloc.Valid pool state)
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount) {handle : Handle}
+    (hmember : handle.block ∈ state.physical)
+    (hallocated : handle.block.free = false) :
+    ∃ next, drop pool state handle = some next := by
+  exact Box.drop_complete hvalid hpoolMax hmember (Bins.samePhysical_refl _)
+    hallocated
+
+theorem drop_owns {GF : BundledGFunctors}
+    [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
+    (codec : Codec α) {pool : Region} {state next : Alloc.State}
+    {handle : Handle} (values : List α) (contents : ContentsMap)
+    (hdrop : drop pool state handle = some next) :
+    contentsInterp (G := G) contents ∗
+        (Owns codec pool handle values ∗
+          Ownership.OwnsFree pool state.physical) ==∗
+      contentsInterp (deleteBytes contents (handle.block.region pool).base
+          (encodeValues codec values)) ∗
+        Ownership.OwnsFree pool next.physical := by
+  unfold drop at hdrop
+  unfold Box.drop at hdrop
+  cases hfind : Bins.findPhysicalIndex state.physical handle.block with
+  | none => simp [hfind] at hdrop
+  | some i =>
+      have hdealloc : Dealloc.deallocate pool state i
+          (handle.block.region pool) = some next := by
+        simpa [hfind] using hdrop
+      simp only [Owns]
+      iintro ⟨Hcontents, Hrest⟩
+      icases Hrest with ⟨Hvec, Hallocator⟩
+      icases Hvec with ⟨Hregion, Hpoints⟩
+      icombine Hcontents Hpoints as Hinitialized
+      imod pointsToBytes_delete contents (handle.block.region pool).base
+        (encodeValues codec values) $$ Hinitialized with Hcontents
+      icombine Hregion Hallocator as Hreturn
+      ihave Hallocator :=
+        (Dealloc.deallocate_ownsFree (PROP := IProp GF) hdealloc).mp $$ Hreturn
+      imodintro
+      isplitl [Hcontents]
+      · iassumption
+      · iassumption
 
 theorem owns_exclusive {GF : BundledGFunctors}
     [ByteRegionGS GF] [ByteContentsGS GF] {α : Type}

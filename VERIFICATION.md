@@ -183,7 +183,11 @@ concurrency are later extensions and are not prerequisites for `Box` and
   prefix and allocation, and indexing produces exact operational load steps.
   Push appends initialized fragments through a frame-preserving content update;
   pop deletes exactly the last encoding, retains the prefix, and proves the
-  new logical length. Allocation, growth, decoded element reads, slices, and
-  final drop remain.
+  new logical length. Capacity allocation now checks the complete
+  `capacity * size` request path, transfers the exact TLSF region into an empty
+  Vec assertion, and preserves the allocator invariant. Final drop deletes the
+  complete initialized prefix, returns that exact region to TLSF, and restores
+  allocator ownership; its pure transition is proved safe and complete.
+  Growth, decoded element reads, slices, and Luffs lowering remain.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.

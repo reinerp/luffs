@@ -63,11 +63,13 @@ The checked-in foundation currently contains:
 - a two-level bin invariant tying cached bitmap bits to nonempty intrusive
   chains and proving every selected chain head is free and correctly classified.
 
-It does **not** yet constitute a verified TLSF, `Box`, or `Vec`. The remaining
-proof must instantiate `OwnsBytes` with Iris authoritative heap resources,
-connect Luffs small-step semantics to Iris weakest preconditions, implement the
-full allocator in Luffs, and prove its operations before the container claims
-can be made. See [`VERIFICATION.md`](VERIFICATION.md) for the proof boundary and
+It does **not** yet constitute a fully verified TLSF, `Box`, or `Vec`. The
+current Lean development does instantiate `OwnsBytes` with Iris authoritative
+ghost-map resources and proves the allocator's main allocation/deallocation
+ownership paths plus initial Box and Vec clients. Remaining work includes the
+Luffs implementations and lowering, weakest-precondition integration, Vec
+growth and borrowing, and the allocator's O(1) link-update refinement. See
+[`VERIFICATION.md`](VERIFICATION.md) for the precise proof boundary and
 completion criteria.
 
 ## A complete small program

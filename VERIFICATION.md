@@ -52,8 +52,12 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   are executable and proved to preserve bidirectional link consistency and
   offset uniqueness; removed blocks are proved detached. A joint bin invariant
   now requires every member to be free and classified into its containing bin.
-  Connecting bin-chain block copies to the authoritative physical-block table
-  remains.
+  A whole-pool agreement invariant now additionally requires every bin-chain
+  entry to occur in the authoritative physical-block sequence and every free
+  physical block to occur in a bin. Bitmap-selected heads are proved to be
+  physical blocks, and classification functionality rules out representing a
+  block in two distinct classes. State-changing bin operations must still be
+  proved to preserve this agreement.
 - [ ] Prove physical blocks form a disjoint partition of every mapped pool.
   `partitions` now requires adjacency from offset zero plus exact byte coverage,
   closing the gap permitted by the earlier ordered/sum-only invariant.

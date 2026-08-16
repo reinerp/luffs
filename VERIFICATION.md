@@ -187,7 +187,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   `capacity * size` request path, transfers the exact TLSF region into an empty
   Vec assertion, and preserves the allocator invariant. Final drop deletes the
   complete initialized prefix, returns that exact region to TLSF, and restores
-  allocator ownership; its pure transition is proved safe and complete.
-  Growth, decoded element reads, slices, and Luffs lowering remain.
+  allocator ownership; its pure transition is proved safe and complete. A
+  replacement-buffer growth transition now allocates before freeing, preserves
+  the complete allocator invariant, proves the larger layout fits, and has an
+  Iris ownership law that initializes exactly one copy of the logical prefix,
+  deletes the old copy, and returns the old region without loss or
+  double-ownership. Operational byte-copy sequencing, growth completeness,
+  decoded element reads, slices, and Luffs lowering remain.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.

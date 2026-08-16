@@ -154,6 +154,14 @@ def Owns {GF : BundledGFunctors} [ByteRegionGS GF] [ByteContentsGS GF]
   iprop(OwnsBytes (handle.block.region pool) ∗
     PointsToBytes (handle.block.region pool).base (encodeValues codec values))
 
+theorem owns_empty {GF : BundledGFunctors}
+    [ByteRegionGS GF] [ByteContentsGS GF] {α : Type}
+    (codec : Codec α) (pool : Region) (handle : Handle) :
+    Owns (GF := GF) codec pool handle [] ⊣⊢
+      OwnsBytes (handle.block.region pool) := by
+  simp only [Owns, encodeValues, List.flatMap_nil, PointsToBytes]
+  exact sep_emp
+
 theorem allocate_ownsFree {GF : BundledGFunctors}
     [ByteRegionGS GF] [ByteContentsGS GF] {α : Type}
     {codec : Codec α} {capacity : Nat} {hcapacity : 0 < capacity}
@@ -223,6 +231,114 @@ theorem drop_owns {GF : BundledGFunctors}
       isplitl [Hcontents]
       · iassumption
       · iassumption
+
+structure GrowResult where
+  handle : Handle
+  state : Alloc.State
+
+/-- Allocate a replacement buffer and return the old buffer to TLSF. Byte
+copying is specified separately by `grow_owns`; this pure transition changes
+only allocator metadata. -/
+def grow {α : Type} (codec : Codec α) (pool : Region) (handle : Handle)
+    (newCapacity : Nat) (hcapacity : 0 < newCapacity) (state : Alloc.State)
+    (hkeyMax : requestKey (allocationBytes codec newCapacity) <
+      2 ^ firstLevelCount) : Option GrowResult :=
+  match allocate codec newCapacity hcapacity state hkeyMax with
+  | none => none
+  | some allocated =>
+      match drop pool allocated.state handle with
+      | none => none
+      | some next => some ⟨⟨allocated.handle.block, handle.len,
+          newCapacity⟩, next⟩
+
+theorem grow_result {α : Type} {codec : Codec α} {pool : Region}
+    {handle : Handle} {newCapacity : Nat} {hcapacity : 0 < newCapacity}
+    {state : Alloc.State}
+    {hkeyMax : requestKey (allocationBytes codec newCapacity) <
+      2 ^ firstLevelCount} {result : GrowResult}
+    (hsuccess : grow codec pool handle newCapacity hcapacity state hkeyMax =
+      some result) :
+    ∃ allocated next,
+      allocate codec newCapacity hcapacity state hkeyMax = some allocated ∧
+      drop pool allocated.state handle = some next ∧
+      result = ⟨⟨allocated.handle.block, handle.len, newCapacity⟩, next⟩ := by
+  unfold grow at hsuccess
+  cases halloc : allocate codec newCapacity hcapacity state hkeyMax with
+  | none => simp [halloc] at hsuccess
+  | some allocated =>
+      cases hdrop : drop pool allocated.state handle with
+      | none => simp [halloc, hdrop] at hsuccess
+      | some next =>
+          simp [halloc, hdrop] at hsuccess
+          subst result
+          exact ⟨allocated, next, rfl, hdrop, rfl⟩
+
+theorem grow_preserves_valid {α : Type} {codec : Codec α} {pool : Region}
+    {handle : Handle}
+    {newCapacity : Nat} {hcapacity : 0 < newCapacity}
+    (hlen : handle.len ≤ newCapacity) {state : Alloc.State}
+    (hvalid : Alloc.Valid pool state)
+    {hkeyMax : requestKey (allocationBytes codec newCapacity) <
+      2 ^ firstLevelCount} {result : GrowResult}
+    (hsuccess : grow codec pool handle newCapacity hcapacity state hkeyMax =
+      some result) :
+    Valid codec result.handle ∧ Alloc.Valid pool result.state := by
+  obtain ⟨allocated, next, halloc, hdrop, rfl⟩ := grow_result hsuccess
+  have hsafe := allocate_safe hvalid halloc
+  have hnext := drop_preserves_valid hsafe.2.2.2 hdrop
+  obtain ⟨raw, _, hallocated, _⟩ := allocate_result halloc
+  have hcap : allocated.handle.capacity = newCapacity := by
+    rw [hallocated]
+  exact ⟨⟨hlen, by simpa [hcap] using hsafe.1.2⟩, hnext⟩
+
+theorem grow_owns_step {GF : BundledGFunctors}
+    [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
+    (codec : Codec α) {pool : Region} {handle : Handle}
+    {newCapacity : Nat} {hcapacity : 0 < newCapacity}
+    {state : Alloc.State} (hvalid : Alloc.Valid pool state)
+    {hkeyMax : requestKey (allocationBytes codec newCapacity) <
+      2 ^ firstLevelCount} {allocated : AllocResult} {next : Alloc.State}
+    (halloc : allocate codec newCapacity hcapacity state hkeyMax =
+      some allocated)
+    (hdrop : drop pool allocated.state handle = some next)
+    (values : List α) (contents : ContentsMap)
+    (hfresh : CanInsertBytes contents
+      (allocated.handle.block.region pool).base (encodeValues codec values)) :
+    contentsInterp (G := G) contents ∗
+        (Owns codec pool handle values ∗
+          Ownership.OwnsFree pool state.physical) ==∗
+      contentsInterp
+          (deleteBytes
+            (insertBytes contents (allocated.handle.block.region pool).base
+              (encodeValues codec values))
+            (handle.block.region pool).base (encodeValues codec values)) ∗
+        (Owns codec pool
+            ⟨allocated.handle.block, handle.len, newCapacity⟩ values ∗
+          Ownership.OwnsFree pool next.physical) := by
+  iintro ⟨Hcontents, Hrest⟩
+  icases Hrest with ⟨Hold, Hallocator⟩
+  ihave Hallocated :=
+    (allocate_ownsFree (GF := GF) hvalid halloc).mp $$ Hallocator
+  icases Hallocated with ⟨Hempty, Hallocator⟩
+  ihave HnewRegion := (owns_empty codec pool allocated.handle).mp $$ Hempty
+  imod pointsToBytes_insert contents
+    (allocated.handle.block.region pool).base (encodeValues codec values)
+    hfresh $$ Hcontents with ⟨Hcontents, HnewPoints⟩
+  icombine Hold Hallocator as HoldAndAllocator
+  icombine Hcontents HoldAndAllocator as HdropInput
+  imod drop_owns codec values
+    (insertBytes contents (allocated.handle.block.region pool).base
+      (encodeValues codec values)) hdrop $$ HdropInput with
+    ⟨Hcontents, Hallocator⟩
+  imodintro
+  isplitl [Hcontents]
+  · iassumption
+  · isplitr [Hallocator]
+    · unfold Owns
+      isplitl [HnewRegion]
+      · iassumption
+      · iassumption
+    · iassumption
 
 theorem owns_exclusive {GF : BundledGFunctors}
     [ByteRegionGS GF] [ByteContentsGS GF] {α : Type}

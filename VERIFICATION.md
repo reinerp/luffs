@@ -127,8 +127,11 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   allocator assertion, including arbitrary physical-list positions. An
   executable uncoalesced stage now validates the return, marks the physical
   header, classifies and inserts it, preserves physical well-formedness, and
-  is composed with that ownership law. Proving full physical/bin agreement
-  for this stage and neighbor removal/reinsertion around coalescing remain.
+  is composed with that ownership law. Both directions of physical/bin
+  agreement, size-class membership, bitmap consistency, and intrusive-link
+  consistency are now proved for that stage, yielding preservation of the
+  complete allocator invariant. Neighbor removal/reinsertion around
+  coalescing remains.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 
 The first target is sequential TLSF with fixed-size pools obtained from `mmap`.

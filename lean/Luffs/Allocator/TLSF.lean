@@ -140,11 +140,14 @@ structure Block where
   offset : Nat
   bytes : Nat
   free : Bool
+  /-- Cached physical-predecessor state used for O(1) backward coalescing. -/
+  prevFree : Bool
 deriving DecidableEq, Repr
 
 def splitBlock (b : Block) (wanted : Nat) : Block × Block :=
   ({ b with bytes := wanted, free := false },
-   { offset := b.offset + wanted, bytes := b.bytes - wanted, free := true })
+   { offset := b.offset + wanted, bytes := b.bytes - wanted,
+     free := true, prevFree := false })
 
 /-- Replace the selected physical block by its two split pieces. An invalid
 index is totalized to the unchanged tail; verified callers prove lookup first. -/
@@ -217,17 +220,26 @@ def contiguousFrom : Nat -> List Block -> Prop
   | cursor, b :: rest =>
       b.offset = cursor ∧ contiguousFrom (cursor + b.bytes) rest
 
+/-- The cached `prevFree` bit of each block agrees with its physical
+predecessor. The first block has no predecessor and therefore starts false. -/
+def boundaryTagsFrom : Bool -> List Block -> Prop
+  | _, [] => True
+  | previousFree, b :: rest =>
+      b.prevFree = previousFree ∧ boundaryTagsFrom b.free rest
+
+def boundaryTags (blocks : List Block) : Prop := boundaryTagsFrom false blocks
+
 def partitions (pool : Region) (blocks : List Block) : Prop :=
   contiguousFrom 0 blocks ∧ covers pool blocks
 
 def wellFormed (pool : Region) (blocks : List Block) : Prop :=
-  ordered blocks ∧ partitions pool blocks ∧
+  ordered blocks ∧ partitions pool blocks ∧ boundaryTags blocks ∧
     ∀ b ∈ blocks, 0 < b.bytes ∧ b.offset + b.bytes ≤ pool.bytes ∧ b.aligned
 
 theorem block_inside {pool : Region} {blocks : List Block}
     (h : wellFormed pool blocks) {b : Block} (hb : b ∈ blocks) {i : Nat}
     (hi : i < b.bytes) : pool.contains (pool.base + b.offset + i) := by
-  rcases h with ⟨_, _, hall⟩
+  rcases h with ⟨_, _, _, hall⟩
   have hbound := (hall b hb).2.1
   simp only [Region.contains, Region.endAddr]
   constructor
@@ -330,6 +342,38 @@ theorem partitions_splitAt {pool : Region} {blocks : List Block} {i : Nat} {b : 
   exact ⟨contiguousFrom_splitAt 0 wanted hget hparts.1 hwanted,
     covers_splitAt wanted hget hparts.2 hwanted⟩
 
+theorem boundaryTagsFrom_split_head (previousFree : Bool) (b : Block)
+    (rest : List Block) (wanted : Nat) (hbfree : b.free = true)
+    (htags : boundaryTagsFrom previousFree (b :: rest)) :
+    boundaryTagsFrom previousFree
+      ((splitBlock b wanted).1 :: (splitBlock b wanted).2 :: rest) := by
+  simp only [boundaryTagsFrom] at htags ⊢
+  rcases htags with ⟨hprev, hrest⟩
+  simp only [splitBlock]
+  exact ⟨hprev, trivial, by simpa only [hbfree] using hrest⟩
+
+theorem boundaryTagsFrom_splitAt {blocks : List Block} {i : Nat} {b : Block}
+    (previousFree : Bool) (wanted : Nat) (hget : blocks[i]? = some b)
+    (hbfree : b.free = true) (htags : boundaryTagsFrom previousFree blocks) :
+    boundaryTagsFrom previousFree (splitAt blocks i wanted) := by
+  induction blocks generalizing i b previousFree with
+  | nil => simp at hget
+  | cons head rest ih =>
+      cases i with
+      | zero =>
+          simp only [List.getElem?_cons_zero, Option.some.injEq] at hget
+          subst hget
+          exact boundaryTagsFrom_split_head previousFree head rest wanted hbfree htags
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at hget
+          simp only [boundaryTagsFrom, splitAt] at htags ⊢
+          exact ⟨htags.1, ih head.free hget hbfree htags.2⟩
+
+theorem boundaryTags_splitAt {blocks : List Block} {i : Nat} {b : Block}
+    (wanted : Nat) (hget : blocks[i]? = some b) (hbfree : b.free = true)
+    (htags : boundaryTags blocks) : boundaryTags (splitAt blocks i wanted) :=
+  boundaryTagsFrom_splitAt false wanted hget hbfree htags
+
 theorem allocateAt_preserves_partitions {pool : Region} {blocks : List Block}
     {i wanted : Nat} {b : Block} (hget : blocks[i]? = some b)
     (hparts : partitions pool blocks)
@@ -338,6 +382,15 @@ theorem allocateAt_preserves_partitions {pool : Region} {blocks : List Block}
     partitions pool (splitAt blocks i wanted) := by
   have hpre := (allocateAt_success_iff hget).1 hsuccess
   exact partitions_splitAt wanted hget hparts (canSplit_wanted_le hpre.2.1)
+
+theorem allocateAt_preserves_boundaryTags {blocks : List Block}
+    {i wanted : Nat} {b : Block} (hget : blocks[i]? = some b)
+    (htags : boundaryTags blocks)
+    (hsuccess : allocateAt blocks i wanted =
+      some ((splitBlock b wanted).1, splitAt blocks i wanted)) :
+    boundaryTags (splitAt blocks i wanted) := by
+  have hpre := (allocateAt_success_iff hget).1 hsuccess
+  exact boundaryTags_splitAt wanted hget hpre.1 htags
 
 theorem splitBlock_aligned {b : Block} {wanted : Nat} (hb : b.aligned)
     (hwanted : alignment ∣ wanted) :
@@ -493,6 +546,50 @@ theorem partitions_coalesceAt {pool : Region} {blocks : List Block} {i : Nat}
   ⟨contiguousFrom_coalesceAt 0 hleft hright hparts.1,
     covers_coalesceAt hleft hright hparts.2⟩
 
+theorem boundaryTagsFrom_coalesce_head (previousFree : Bool)
+    (left right : Block) (rest : List Block) (hcan : canCoalesce left right)
+    (htags : boundaryTagsFrom previousFree (left :: right :: rest)) :
+    boundaryTagsFrom previousFree (coalesceBlocks left right :: rest) := by
+  rcases hcan with ⟨hleftFree, hrightFree, _⟩
+  simp only [boundaryTagsFrom] at htags ⊢
+  rcases htags with ⟨hleftPrev, _hrightPrev, hrest⟩
+  simp only [coalesceBlocks]
+  exact ⟨hleftPrev, by simpa only [hrightFree] using hrest⟩
+
+theorem boundaryTagsFrom_coalesceAt {blocks : List Block} {i : Nat}
+    {left right : Block} (previousFree : Bool)
+    (hleft : blocks[i]? = some left) (hright : blocks[i + 1]? = some right)
+    (hcan : canCoalesce left right)
+    (htags : boundaryTagsFrom previousFree blocks) :
+    boundaryTagsFrom previousFree (coalesceAt blocks i) := by
+  induction blocks generalizing i left right previousFree with
+  | nil => simp at hleft
+  | cons head rest ih =>
+      cases i with
+      | zero =>
+          cases rest with
+          | nil => simp at hright
+          | cons next tail =>
+              simp only [List.getElem?_cons_zero, Option.some.injEq] at hleft
+              simp only [Nat.zero_add, List.getElem?_cons_succ,
+                List.getElem?_cons_zero, Option.some.injEq] at hright
+              subst hleft
+              subst hright
+              exact boundaryTagsFrom_coalesce_head previousFree head next tail hcan htags
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at hleft
+          have hright' : rest[j + 1]? = some right := by
+            change rest[j + 1]? = some right at hright
+            exact hright
+          simp only [boundaryTagsFrom, coalesceAt] at htags ⊢
+          exact ⟨htags.1, ih head.free hleft hright' hcan htags.2⟩
+
+theorem boundaryTags_coalesceAt {blocks : List Block} {i : Nat}
+    {left right : Block} (hleft : blocks[i]? = some left)
+    (hright : blocks[i + 1]? = some right) (hcan : canCoalesce left right)
+    (htags : boundaryTags blocks) : boundaryTags (coalesceAt blocks i) :=
+  boundaryTagsFrom_coalesceAt false hleft hright hcan htags
+
 /-- Adjacent ownership fragments recombine into ownership of the merged block. -/
 theorem ownsBytes_coalesceBlocks {PROP : Type} [BI PROP] [ByteRegionLogic PROP]
     (pool : Region) (left right : Block)
@@ -509,7 +606,9 @@ theorem ownsBytes_coalesceBlocks {PROP : Type} [BI PROP] [ByteRegionLogic PROP]
 /-- Change only allocation state; physical layout is untouched. -/
 def markFreeAt : List Block -> Nat -> List Block
   | [], _ => []
-  | b :: rest, 0 => { b with free := true } :: rest
+  | [b], 0 => [{ b with free := true }]
+  | b :: next :: rest, 0 =>
+      { b with free := true } :: { next with prevFree := true } :: rest
   | b :: rest, i + 1 => b :: markFreeAt rest i
 
 def deallocateAt (pool : Region) (blocks : List Block) (i : Nat)
@@ -546,8 +645,9 @@ theorem contiguousFrom_markFreeAt (blocks : List Block) (cursor i : Nat)
   | cons b rest ih =>
       cases i with
       | zero =>
-          simp only [contiguousFrom, markFreeAt] at h ⊢
-          exact h
+          cases rest with
+          | nil => simpa [contiguousFrom, markFreeAt] using h
+          | cons next tail => simpa [contiguousFrom, markFreeAt] using h
       | succ j =>
           simp only [contiguousFrom, markFreeAt] at h ⊢
           exact ⟨h.1, ih (cursor + b.bytes) j h.2⟩
@@ -559,7 +659,10 @@ theorem covers_markFreeAt (pool : Region) (blocks : List Block) (i : Nat)
   | nil => exact h
   | cons b rest ih =>
       cases i with
-      | zero => exact h
+      | zero =>
+          cases rest with
+          | nil => simpa [markFreeAt] using h
+          | cons next tail => simpa [markFreeAt] using h
       | succ j =>
           simp only [markFreeAt, List.map_cons, List.sum_cons] at h ⊢
           have htail : (rest.map (fun b => b.bytes)).sum = pool.bytes - b.bytes := by
@@ -573,6 +676,34 @@ theorem partitions_markFreeAt (pool : Region) (blocks : List Block) (i : Nat)
     (h : partitions pool blocks) : partitions pool (markFreeAt blocks i) :=
   ⟨contiguousFrom_markFreeAt blocks 0 i h.1, covers_markFreeAt pool blocks i h.2⟩
 
+theorem boundaryTagsFrom_markFreeAt {blocks : List Block} {i : Nat} {b : Block}
+    (previousFree : Bool) (hget : blocks[i]? = some b) (hallocated : b.free = false)
+    (htags : boundaryTagsFrom previousFree blocks) :
+    boundaryTagsFrom previousFree (markFreeAt blocks i) := by
+  induction blocks generalizing i b previousFree with
+  | nil => simp at hget
+  | cons head rest ih =>
+      cases i with
+      | zero =>
+          simp only [List.getElem?_cons_zero, Option.some.injEq] at hget
+          subst hget
+          cases rest with
+          | nil => simpa [boundaryTagsFrom, markFreeAt] using htags
+          | cons next tail =>
+              simp only [boundaryTagsFrom] at htags ⊢
+              rcases htags with ⟨hhead, hnext, htail⟩
+              simp only [markFreeAt]
+              exact ⟨hhead, rfl, htail⟩
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at hget
+          simp only [boundaryTagsFrom, markFreeAt] at htags ⊢
+          exact ⟨htags.1, ih head.free hget hallocated htags.2⟩
+
+theorem boundaryTags_markFreeAt {blocks : List Block} {i : Nat} {b : Block}
+    (hget : blocks[i]? = some b) (hallocated : b.free = false)
+    (htags : boundaryTags blocks) : boundaryTags (markFreeAt blocks i) :=
+  boundaryTagsFrom_markFreeAt false hget hallocated htags
+
 theorem deallocateAt_preserves_partitions {pool : Region} {blocks : List Block}
     {i : Nat} {b : Block} {returned : Region} (hget : blocks[i]? = some b)
     (hparts : partitions pool blocks)
@@ -580,5 +711,13 @@ theorem deallocateAt_preserves_partitions {pool : Region} {blocks : List Block}
     partitions pool (markFreeAt blocks i) := by
   have _hpre := (deallocateAt_success_iff hget).1 hsuccess
   exact partitions_markFreeAt pool blocks i hparts
+
+theorem deallocateAt_preserves_boundaryTags {pool : Region} {blocks : List Block}
+    {i : Nat} {b : Block} {returned : Region} (hget : blocks[i]? = some b)
+    (htags : boundaryTags blocks)
+    (hsuccess : deallocateAt pool blocks i returned = some (markFreeAt blocks i)) :
+    boundaryTags (markFreeAt blocks i) := by
+  have hpre := (deallocateAt_success_iff hget).1 hsuccess
+  exact boundaryTags_markFreeAt hget hpre.1 htags
 
 end Luffs.Allocator.TLSF

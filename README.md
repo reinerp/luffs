@@ -56,6 +56,8 @@ The checked-in foundation currently contains:
 - executable deallocation checks that reject wrong regions and double frees,
   plus arbitrary-position coalescing proofs preserving the pool partition,
   alignment, and exact Iris ownership.
+- predecessor-free boundary tags with checked consistency across allocation,
+  deallocation, and coalescing, providing the basis for O(1) backward merging.
 
 It does **not** yet constitute a verified TLSF, `Box`, or `Vec`. The remaining
 proof must instantiate `OwnsBytes` with Iris authoritative heap resources,

@@ -53,7 +53,9 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   Head-block splitting now preserves the contiguous pool partition and
   transfers the original Iris byte ownership exactly to the two output blocks.
   Arbitrary-position splitting now preserves the partition; aligned requests
-  produce two aligned, nonempty blocks. Boundary tags and bins remain.
+  produce two aligned, nonempty blocks. The executable block model now carries
+  a predecessor-free boundary tag, and allocation, deallocation, and
+  coalescing are proved to preserve tag consistency. Bin membership remains.
 - [ ] Prove `alloc`: failure preserves the heap; success returns a fresh,
   aligned owned region of at least the requested size.
   The executable split-success transition now rejects non-free, undersized, or

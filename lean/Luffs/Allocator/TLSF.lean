@@ -246,6 +246,196 @@ theorem high_sizeClass_sl (size : Nat) (hsize : 0 < size)
   simp [sizeClass, Nat.not_le_of_gt hhigh, highBinNumber, highBinStep,
     high_sizeClass_no_wrap size hsize hlog]
 
+theorem high_log_at_least_five (size : Nat) (hhigh : linearCutoff < size) :
+    5 ≤ size.log2 := by
+  have hsize : 0 < size := by
+    simp only [linearCutoff, alignment, secondLevelCount] at hhigh
+    omega
+  rw [Nat.le_log2 (Nat.ne_of_gt hsize)]
+  simp only [linearCutoff, alignment, secondLevelCount] at hhigh
+  change 32 ≤ size
+  omega
+
+/-- Mapping-down classes are genuine intervals: two high-range sizes in the
+same class have exactly the same lower boundary. -/
+theorem high_same_class_lower_eq (left right : Nat)
+    (hleft : 0 < left) (hright : 0 < right)
+    (hleftMax : left < 2 ^ firstLevelCount)
+    (hrightMax : right < 2 ^ firstLevelCount)
+    (hleftHigh : linearCutoff < left)
+    (hrightHigh : linearCutoff < right)
+    (hclass : sizeClass left hleft hleftMax =
+      sizeClass right hright hrightMax) :
+    highBinLower left = highBinLower right := by
+  have hlogs : left.log2 = right.log2 := by
+    rw [← high_sizeClass_fl left hleft hleftMax hleftHigh,
+      ← high_sizeClass_fl right hright hrightMax hrightHigh, hclass]
+  have hleftLog := high_log_at_least_five left hleftHigh
+  have hrightLog := high_log_at_least_five right hrightHigh
+  have hbins : highBinNumber left = highBinNumber right := by
+    rw [← high_sizeClass_sl left hleft hleftMax hleftHigh hleftLog,
+      ← high_sizeClass_sl right hright hrightMax hrightHigh hrightLog, hclass]
+  simp [highBinLower, highBinStep, hlogs, hbins]
+
+/-- Once mapping-up produces an exact high-bin boundary, any free block in
+that class is large enough. -/
+theorem high_boundary_same_class_suitable (requestKey block : Nat)
+    (hkey : 0 < requestKey) (hblock : 0 < block)
+    (hkeyMax : requestKey < 2 ^ firstLevelCount)
+    (hblockMax : block < 2 ^ firstLevelCount)
+    (hkeyHigh : linearCutoff < requestKey)
+    (hblockHigh : linearCutoff < block)
+    (hboundary : highBinLower requestKey = requestKey)
+    (hclass : sizeClass requestKey hkey hkeyMax =
+      sizeClass block hblock hblockMax) :
+    requestKey ≤ block := by
+  have hlower := (high_sizeClass_covers block hblock).1
+  have heq := high_same_class_lower_eq requestKey block hkey hblock hkeyMax
+    hblockMax hkeyHigh hblockHigh hclass
+  rw [hboundary] at heq
+  rw [← heq] at hlower
+  exact hlower
+
+/-- The upper endpoint of a high-range containing bin is exactly the lower
+endpoint of the mapping-up bin. This includes the `sl = 31` carry into the next
+first level. -/
+theorem high_upper_is_boundary (size : Nat) (hsize : 0 < size)
+    (hhigh : linearCutoff < size) :
+    highBinLower (highBinUpper size) = highBinUpper size := by
+  let log := size.log2
+  let step := highBinStep size
+  let quotient := highBinNumber size
+  have hlog : 5 ≤ log := high_log_at_least_five size hhigh
+  have hstep : 0 < step := by
+    exact Nat.pow_pos (by decide)
+  have hquotient : quotient < secondLevelCount := by
+    exact high_sizeClass_quotient_lt size hsize hlog
+  have hbaseStep : 2 ^ log = secondLevelCount * step := by
+    simp only [log, step, highBinStep]
+    rw [show secondLevelCount = 2 ^ 5 by decide, Nat.mul_comm,
+      Nat.pow_sub_mul_pow 2 hlog]
+  have hupper : highBinUpper size = 2 ^ log + (quotient + 1) * step := by
+    simp [highBinUpper, highBinLower, quotient, step, log, Nat.add_mul,
+      Nat.add_assoc]
+  by_cases hlast : quotient + 1 = secondLevelCount
+  · have hkey : highBinUpper size = 2 ^ (log + 1) := by
+      rw [hupper, hlast, ← hbaseStep]
+      simp [Nat.pow_add, Nat.mul_two]
+    simp [highBinLower, highBinNumber, highBinStep, hkey]
+  · have hqnext : quotient + 1 < secondLevelCount := by omega
+    have hkeyPositive : 0 < highBinUpper size :=
+      Nat.lt_trans hsize (high_sizeClass_covers size hsize).2
+    have hkeyLog : (highBinUpper size).log2 = log := by
+      rw [Nat.log2_eq_iff (Nat.ne_of_gt hkeyPositive)]
+      constructor
+      · rw [hupper]
+        exact Nat.le_add_right _ _
+      · have hterm : (quotient + 1) * step < secondLevelCount * step :=
+          Nat.mul_lt_mul_of_pos_right hqnext hstep
+        rw [← hbaseStep] at hterm
+        rw [hupper, Nat.pow_add, Nat.mul_two]
+        omega
+    simp only [highBinLower, highBinNumber, highBinStep]
+    rw [show (highBinUpper size).log2 = log from hkeyLog]
+    rw [hupper]
+    change 2 ^ log +
+      ((2 ^ log + (quotient + 1) * step - 2 ^ log) / step) * step =
+        2 ^ log + (quotient + 1) * step
+    simp [hstep]
+
+theorem high_requestKey_is_boundary (size : Nat) (hsize : 0 < size)
+    (hhigh : linearCutoff < size) :
+    highBinLower (requestKey size) = requestKey size := by
+  rw [high_requestKey size hhigh]
+  exact high_upper_is_boundary size hsize hhigh
+
+/-- A block in the exact mapping-up class of a high-range request is suitable.
+Search into later classes is handled separately by class-order monotonicity. -/
+theorem high_request_same_class_suitable (request block : Nat)
+    (hrequest : 0 < request) (hblock : 0 < block)
+    (hkeyMax : requestKey request < 2 ^ firstLevelCount)
+    (hblockMax : block < 2 ^ firstLevelCount)
+    (hrequestHigh : linearCutoff < request)
+    (hblockHigh : linearCutoff < block)
+    (hclass : requestSizeClass request hrequest hkeyMax =
+      sizeClass block hblock hblockMax) :
+    request ≤ block := by
+  have hkeyPositive := requestKey_positive request hrequest
+  have hkeyHigh : linearCutoff < requestKey request :=
+    Nat.lt_of_lt_of_le hrequestHigh (request_le_key request hrequest)
+  have hkeyFits := high_boundary_same_class_suitable
+    (requestKey request) block hkeyPositive hblock hkeyMax hblockMax
+    hkeyHigh hblockHigh (high_requestKey_is_boundary request hrequest hrequestHigh)
+    hclass
+  exact Nat.le_trans (request_le_key request hrequest) hkeyFits
+
+/-- Lexicographically later high-range classes are also suitable. This is the
+cross-bin inequality needed after bitmap search skips an empty mapping-up bin. -/
+theorem high_boundary_later_class_suitable (key block : Nat)
+    (hkey : 0 < key) (hblock : 0 < block)
+    (hkeyMax : key < 2 ^ firstLevelCount)
+    (hblockMax : block < 2 ^ firstLevelCount)
+    (hkeyHigh : linearCutoff < key)
+    (hblockHigh : linearCutoff < block)
+    (hboundary : highBinLower key = key)
+    (horder :
+      (sizeClass key hkey hkeyMax).fl.val <
+        (sizeClass block hblock hblockMax).fl.val ∨
+      ((sizeClass key hkey hkeyMax).fl.val =
+          (sizeClass block hblock hblockMax).fl.val ∧
+        (sizeClass key hkey hkeyMax).sl.val ≤
+          (sizeClass block hblock hblockMax).sl.val)) :
+    key ≤ block := by
+  rcases horder with hfl | ⟨hfl, hsl⟩
+  · have hlogs : key.log2 < block.log2 := by
+      simpa [high_sizeClass_fl key hkey hkeyMax hkeyHigh,
+        high_sizeClass_fl block hblock hblockMax hblockHigh] using hfl
+    have hkeyUpper : key < 2 ^ (key.log2 + 1) := Nat.lt_log2_self
+    have hpowers : 2 ^ (key.log2 + 1) ≤ 2 ^ block.log2 :=
+      Nat.pow_le_pow_right (by decide) (by omega)
+    have hblockLower : 2 ^ block.log2 ≤ block :=
+      Nat.log2_self_le (Nat.ne_of_gt hblock)
+    exact Nat.le_trans (Nat.le_of_lt (Nat.lt_of_lt_of_le hkeyUpper hpowers))
+      hblockLower
+  · have hlogs : key.log2 = block.log2 := by
+      simpa [high_sizeClass_fl key hkey hkeyMax hkeyHigh,
+        high_sizeClass_fl block hblock hblockMax hblockHigh] using hfl
+    have hkeyLog := high_log_at_least_five key hkeyHigh
+    have hblockLog := high_log_at_least_five block hblockHigh
+    have hbins : highBinNumber key ≤ highBinNumber block := by
+      rw [← high_sizeClass_sl key hkey hkeyMax hkeyHigh hkeyLog,
+        ← high_sizeClass_sl block hblock hblockMax hblockHigh hblockLog]
+      exact hsl
+    have hlower := (high_sizeClass_covers block hblock).1
+    rw [← hboundary]
+    simp only [highBinLower, highBinStep]
+    rw [hlogs]
+    simp only [highBinLower, highBinStep] at hlower
+    apply Nat.le_trans _ hlower
+    exact Nat.add_le_add_left (Nat.mul_le_mul_right _ hbins) _
+
+theorem high_request_later_class_suitable (request block : Nat)
+    (hrequest : 0 < request) (hblock : 0 < block)
+    (hkeyMax : requestKey request < 2 ^ firstLevelCount)
+    (hblockMax : block < 2 ^ firstLevelCount)
+    (hrequestHigh : linearCutoff < request)
+    (hblockHigh : linearCutoff < block)
+    (horder :
+      (requestSizeClass request hrequest hkeyMax).fl.val <
+        (sizeClass block hblock hblockMax).fl.val ∨
+      ((requestSizeClass request hrequest hkeyMax).fl.val =
+          (sizeClass block hblock hblockMax).fl.val ∧
+        (requestSizeClass request hrequest hkeyMax).sl.val ≤
+          (sizeClass block hblock hblockMax).sl.val)) :
+    request ≤ block := by
+  have hkey := requestKey_positive request hrequest
+  have hkeyHigh : linearCutoff < requestKey request :=
+    Nat.lt_of_lt_of_le hrequestHigh (request_le_key request hrequest)
+  apply Nat.le_trans (request_le_key request hrequest)
+  exact high_boundary_later_class_suitable (requestKey request) block hkey hblock
+    hkeyMax hblockMax hkeyHigh hblockHigh
+    (high_requestKey_is_boundary request hrequest hrequestHigh) horder
+
 /-- A compact pure view used by the executable allocator and its Iris invariant. -/
 structure Block where
   offset : Nat

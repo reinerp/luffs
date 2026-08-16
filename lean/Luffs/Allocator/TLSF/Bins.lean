@@ -422,6 +422,56 @@ theorem secondLevel_search_linear_suitable {pool : Region} {physical : List Bloc
     haligned.2 hsl
   exact ⟨actual, hactual, hactualFree, haligned, hsuitable⟩
 
+/-- End-to-end suitability for a successful second-level search in the
+mapping-up first level of a logarithmic request. -/
+theorem secondLevel_search_high_suitable {pool : Region} {physical : List Block}
+    {state : State} (hpool : PoolValid pool physical state)
+    (request : Nat) (hrequest : 0 < request)
+    (hrequestHigh : linearCutoff < request)
+    (hkeyMax : requestKey request < 2 ^ firstLevelCount) (found : Nat)
+    (hsearch : firstSetFrom
+      (slBitmap state (requestSizeClass request hrequest hkeyMax).fl)
+      (requestSizeClass request hrequest hkeyMax).sl.val = some found) :
+    ∃ actual : Block, actual ∈ physical ∧ actual.free = true ∧
+      actual.aligned ∧ request ≤ actual.bytes := by
+  let requestClass := requestSizeClass request hrequest hkeyMax
+  obtain ⟨hfound, head, actual, rest, hchain, hactual, hsame,
+      hactualFree, hbelongs, _⟩ :=
+    secondLevel_search_physical_head hpool requestClass.fl
+      requestClass.sl.val found hsearch
+  obtain ⟨hblock, hblockMax, hblockClass⟩ := hbelongs
+  have hkey := requestKey_positive request hrequest
+  have hkeyHigh : linearCutoff < requestKey request :=
+    Nat.lt_of_lt_of_le hrequestHigh (request_le_key request hrequest)
+  have hrequestFl : 0 < requestClass.fl.val := by
+    rw [show requestClass.fl.val = (requestKey request).log2 by
+      exact high_sizeClass_fl (requestKey request) hkey hkeyMax hkeyHigh]
+    exact Nat.lt_of_lt_of_le (by decide : 0 < 5)
+      (high_log_at_least_five (requestKey request) hkeyHigh)
+  have hblockHigh : linearCutoff < actual.bytes := by
+    apply Nat.lt_of_not_ge
+    intro hlinear
+    have hzero := (linear_sizeClass_values actual.bytes hblock hblockMax hlinear).1
+    rw [hblockClass] at hzero
+    exact (Nat.ne_of_gt hrequestFl) hzero
+  have hsearchSound := firstSetFrom_sound hsearch
+  have horder :
+      requestClass.fl.val <
+          (sizeClass actual.bytes hblock hblockMax).fl.val ∨
+        (requestClass.fl.val =
+            (sizeClass actual.bytes hblock hblockMax).fl.val ∧
+          requestClass.sl.val ≤
+            (sizeClass actual.bytes hblock hblockMax).sl.val) := by
+    right
+    constructor
+    · rw [hblockClass]
+    · rw [hblockClass]
+      exact hsearchSound.1
+  have hsuitable := high_request_later_class_suitable request actual.bytes
+    hrequest hblock hkeyMax hblockMax hrequestHigh hblockHigh horder
+  have haligned := (hpool.1.2.2.2 actual hactual).2.2
+  exact ⟨actual, hactual, hactualFree, haligned, hsuitable⟩
+
 /-- Likewise, a successful first-level search identifies a first level with at
 least one nonempty second-level chain. -/
 theorem firstLevel_search_nonempty {state : State} (hvalid : Valid state)
@@ -439,5 +489,57 @@ theorem firstLevel_search_nonempty {state : State} (hvalid : Valid state)
     simpa [flBitmap] using hvalue
   obtain ⟨sl, hchain⟩ := (fl_bit_iff_nonempty hvalid ⟨found, hbound⟩).1 hbit
   exact ⟨hbound, sl, hchain⟩
+
+/-- If the request's own first level has no suitable chain, searching later
+first levels returns a physical free block that is necessarily large enough. -/
+theorem firstLevel_search_high_suitable {pool : Region} {physical : List Block}
+    {state : State} (hpool : PoolValid pool physical state)
+    (request : Nat) (hrequest : 0 < request)
+    (hrequestHigh : linearCutoff < request)
+    (hkeyMax : requestKey request < 2 ^ firstLevelCount) (found : Nat)
+    (hsearch : firstSetFrom (flBitmap state)
+      ((requestSizeClass request hrequest hkeyMax).fl.val + 1) = some found) :
+    ∃ actual : Block, actual ∈ physical ∧ actual.free = true ∧
+      actual.aligned ∧ request ≤ actual.bytes := by
+  let requestClass := requestSizeClass request hrequest hkeyMax
+  obtain ⟨hfound, sl, hnonempty⟩ :=
+    firstLevel_search_nonempty hpool.2.1 (requestClass.fl.val + 1) found hsearch
+  let selected : SizeClass := { fl := ⟨found, hfound⟩, sl := sl }
+  cases hchain : state.chains selected with
+  | nil => exact (hnonempty hchain).elim
+  | cons head rest =>
+      have hmem : head ∈ state.chains selected := by simp [hchain]
+      have hfree := member_free hpool.2.1 hmem
+      obtain ⟨hblock, hblockMax, hblockClass⟩ := member_belongs hpool.2.1 hmem
+      obtain ⟨actual, hactual, hsame⟩ := member_physical hpool.2.2 hmem
+      have hactualFree : actual.free = true := (samePhysical_free hsame).trans hfree
+      have hactualClass : Belongs selected actual :=
+        (samePhysical_belongs_iff hsame selected).2 ⟨hblock, hblockMax, hblockClass⟩
+      obtain ⟨hactualBytes, hactualMax, hactualClassEq⟩ := hactualClass
+      have hsearchSound := firstSetFrom_sound hsearch
+      have hflLater : requestClass.fl.val < found := by
+        simpa [requestClass] using (Nat.lt_of_succ_le hsearchSound.1)
+      have hblockHigh : linearCutoff < actual.bytes := by
+        apply Nat.lt_of_not_ge
+        intro hlinear
+        have hzero :=
+          (linear_sizeClass_values actual.bytes hactualBytes hactualMax hlinear).1
+        rw [hactualClassEq] at hzero
+        have : 0 < found := by omega
+        exact (Nat.ne_of_gt this) hzero
+      have horder :
+          requestClass.fl.val <
+              (sizeClass actual.bytes hactualBytes hactualMax).fl.val ∨
+            (requestClass.fl.val =
+                (sizeClass actual.bytes hactualBytes hactualMax).fl.val ∧
+              requestClass.sl.val ≤
+                (sizeClass actual.bytes hactualBytes hactualMax).sl.val) := by
+        left
+        rw [hactualClassEq]
+        exact hflLater
+      have hsuitable := high_request_later_class_suitable request actual.bytes
+        hrequest hactualBytes hkeyMax hactualMax hrequestHigh hblockHigh horder
+      have haligned := (hpool.1.2.2.2 actual hactual).2.2
+      exact ⟨actual, hactual, hactualFree, haligned, hsuitable⟩
 
 end Luffs.Allocator.TLSF.Bins

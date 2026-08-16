@@ -47,7 +47,8 @@ The checked-in foundation currently contains:
 - the trusted `mmap`/`munmap` contract, kept separate from TLSF;
 - the initial pure TLSF block invariant and checked split/coalesce byte-count
   lemmas, plus an intrinsically bounded two-level size-class reference mapping
-  with checked high-bin no-wrap and coverage theorems.
+  with checked linear/high-bin coverage, and a bitmap reference search with
+  checked bounds, set-bit soundness, and minimality.
 
 It does **not** yet constitute a verified TLSF, `Box`, or `Vec`. The remaining
 proof must instantiate `OwnsBytes` with Iris authoritative heap resources,

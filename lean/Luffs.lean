@@ -3,6 +3,7 @@ import Luffs.Memory.Iris
 import Luffs.Memory.ConcreteIris
 import Luffs.Memory.Semantics
 import Luffs.Allocator.TLSF
+import Luffs.Allocator.TLSF.Bitmap
 
 namespace Luffs
 

@@ -38,8 +38,11 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
 - [ ] Implement size-class mapping and prove every `(fl, sl)` index in range.
   The Lean reference mapping returns `Fin 64 × Fin 32`; its high-range quotient
   is proved not to wrap and its selected interval is proved to contain the
-  request. The Luffs implementation and low linear-bin proof remain.
+  request. The corrected 32-bin linear branch is also proved to contain every
+  request through 256 bytes. The Luffs implementation remains.
 - [ ] Implement bitmap search and prove it returns a nonempty suitable bin.
+  The reference search is proved in-bounds, set-bit sound, and minimal from its
+  starting index; connecting the two bitmap levels to size suitability remains.
 - [ ] Implement intrusive free-list insertion/removal and prove link
   consistency and ownership preservation.
 - [ ] Prove physical blocks form a disjoint partition of every mapped pool.

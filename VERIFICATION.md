@@ -122,7 +122,10 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   The executable deallocation transition now requires the exact returned
   region, rejects already-free blocks, preserves the physical partition, and
   has proved arbitrary-position coalescing with exact Iris ownership
-  recombination. Neighbor selection and bin reinsertion remain.
+  recombination. The Iris return law now proves that marking the exact live
+  block free consumes the client's region capability and restores it to the
+  allocator assertion, including arbitrary physical-list positions. Neighbor
+  selection and bin removal/reinsertion around coalescing remain.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 
 The first target is sequential TLSF with fixed-size pools obtained from `mmap`.

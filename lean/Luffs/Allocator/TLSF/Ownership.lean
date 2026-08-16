@@ -127,4 +127,49 @@ theorem allocate_ownsFree {PROP : Type} [BI PROP] [ByteRegionLogic PROP]
   rw [hallocated, Alloc.finishCore_physical hfinish]
   exact htransfer
 
+theorem deallocate_head_ownsFree {PROP : Type} [BI PROP] [ByteRegionLogic PROP]
+    (pool : Region) (b : Block) (rest : List Block)
+    (hallocated : b.free = false) :
+    OwnsBytes (PROP := PROP) (b.region pool) ∗ OwnsFree pool (b :: rest) ⊣⊢
+      OwnsFree pool (markFreeAt (b :: rest) 0) := by
+  cases rest with
+  | nil =>
+      simp only [OwnsFree, hallocated, markFreeAt, Block.region]
+      simp only [if_true]
+      exact sep_congr_right emp_sep
+  | cons next tail =>
+      simp only [OwnsFree, hallocated, markFreeAt, Block.region]
+      simp only [if_true]
+      exact sep_congr_right emp_sep
+
+/-- Returning the exact live region consumes the client's capability and adds
+it back to the allocator assertion. This is the ownership half of `dealloc`;
+subsequent neighbor coalescing merely reassociates adjacent capabilities. -/
+theorem deallocateAt_ownsFree {PROP : Type} [BI PROP] [ByteRegionLogic PROP]
+    (pool : Region) {blocks : List Block} {i : Nat} {selected : Block}
+    {returned : Region} (hget : blocks[i]? = some selected)
+    (hsuccess : deallocateAt pool blocks i returned =
+      some (markFreeAt blocks i)) :
+    OwnsBytes (PROP := PROP) returned ∗ OwnsFree pool blocks ⊣⊢
+      OwnsFree pool (markFreeAt blocks i) := by
+  have hpre := (deallocateAt_success_iff hget).1 hsuccess
+  rw [hpre.2]
+  induction blocks generalizing i selected with
+  | nil => simp at hget
+  | cons head rest ih =>
+      cases i with
+      | zero =>
+          simp only [List.getElem?_cons_zero, Option.some.injEq] at hget
+          subst selected
+          exact deallocate_head_ownsFree pool head rest hpre.1
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at hget
+          simp only [OwnsFree, markFreeAt]
+          have htail : deallocateAt pool rest j returned =
+              some (markFreeAt rest j) :=
+            (deallocateAt_success_iff hget).2 hpre
+          have hih := ih hget htail hpre
+          exact sep_assoc.symm.trans ((sep_congr_left sep_comm).trans
+            (sep_assoc.trans (sep_congr_right hih)))
+
 end Luffs.Allocator.TLSF.Ownership

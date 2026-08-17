@@ -228,8 +228,11 @@ cache relation are now proved as well. The composed candidate theorem starts
 from valid abstract bins plus concrete bitmap/list representations and proves
 that a successful Luffs transition returns the abstract head offset and
 preserves both bitmap levels for the abstract `removeFront` successor state.
-The remaining candidate work is preservation of the intrusive metadata
-representation for every chain in the successor state.
+With the proved cross-bin offset-disjointness premise, the composed theorem
+also preserves the intrusive metadata representation for every chain in the
+successor state: the selected head is detached, its remainder is represented,
+and all other bins are framed unchanged. This closes the modeled candidate
+transition from concrete Luffs metadata to the abstract bin operation.
 The logical 2048-bit search is also proved equal to a chunked search that
 examines only the suffix of the starting `u32` and then the remaining complete
 second-level words. For each `u32`, masked `ctz` is proved exactly equal to its

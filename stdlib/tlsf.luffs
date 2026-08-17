@@ -61,6 +61,7 @@ fn tlsf_find_fit(sizes: &[usize; 4096], is_free: &[u8; 4096], request: usize) ->
 
 // Search a 256-bit nonempty-bin bitmap at or above `start_bin`. Four machine
 // words are examined at most, so this remains a bounded TLSF metadata lookup.
+// refines Luffs.Runtime.TLSF.findNonemptyBin
 fn tlsf_find_nonempty_bin(nonempty: &[u64; 4], start_bin: usize) -> Option<usize> {
     let mut word: usize = start_bin >> 6;
     let bit = start_bin & 63;

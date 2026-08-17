@@ -10,6 +10,8 @@ namespace Luffs.Runtime.TLSF
 open Luffs.Allocator.TLSF
 open Luffs.Allocator.TLSF.Bins
 
+def usizeMax : Nat := 2 ^ 64 - 1
+
 def encodeSizeClass (cls : SizeClass) : Nat :=
   cls.fl.val * secondLevelCount + cls.sl.val
 
@@ -4542,6 +4544,43 @@ theorem coalesceClassArrays_result
                             rfl, hmergedSize, hmergedBin, hinserted,
                             rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
+def allocatorArrays (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (second : List (BitVec 32))
+    (first : BitVec 64) (heads next previous : List Nat)
+    (count : Nat) : CoalesceClassResult := {
+  offsets, sizes, isFree, prevFree, count, second, first, heads, next, previous }
+
+/-- Exact pure semantics of `tlsf_coalesce_if_possible`. Ineligible or absent
+neighbors are successful identity transitions. -/
+def coalesceIfPossibleArrays (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (second : List (BitVec 32))
+    (first : BitVec 64) (heads next previous : List Nat)
+    (count left : Nat) : Option CoalesceClassResult :=
+  if count > offsets.length ∨ count > sizes.length ∨
+      count > isFree.length ∨ count > prevFree.length then none
+  else if left = usizeMax then
+    some (allocatorArrays offsets sizes isFree prevFree second first heads next
+      previous count)
+  else
+    let right := left + 1
+    if right ≥ count then
+      some (allocatorArrays offsets sizes isFree prevFree second first heads next
+        previous count)
+    else if isFree[left]? = some 0 then
+      some (allocatorArrays offsets sizes isFree prevFree second first heads next
+        previous count)
+    else if isFree[right]? = some 0 then
+      some (allocatorArrays offsets sizes isFree prevFree second first heads next
+        previous count)
+    else match offsets[left]?, sizes[left]?, offsets[right]? with
+      | some leftOffset, some leftSize, some rightOffset =>
+          if leftOffset + leftSize ≠ rightOffset then
+            some (allocatorArrays offsets sizes isFree prevFree second first
+              heads next previous count)
+          else coalesceClassArrays offsets sizes isFree prevFree second first
+            heads next previous count left
+      | _, _, _ => none
+
 /-- The full class transaction carries the already-proved physical refinement:
 bin unlink/relink operations cannot change the physical active prefix. -/
 theorem coalesceClassArrays_refines_physical_append
@@ -4816,6 +4855,104 @@ def deallocateUncoalescedArrays (offsets sizes : List Nat)
     let insertion ← insertClassArrays second first heads next previous bin returnedOffset
     pure { isFree := nextIsFree, prevFree := nextPrevFree, insertion }
   else none
+
+/-- Exact pure semantics of the public Luffs deallocator. -/
+def deallocateArrays (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (second : List (BitVec 32))
+    (first : BitVec 64) (heads next previous : List Nat)
+    (count block returnedOffset returnedBytes : Nat) :
+    Option CoalesceClassResult := do
+  let marked ← deallocateUncoalescedArrays offsets sizes isFree prevFree second
+    first heads next previous count block returnedOffset returnedBytes
+  let afterRight ← coalesceIfPossibleArrays offsets sizes marked.isFree
+    marked.prevFree marked.insertion.second marked.insertion.first
+    marked.insertion.heads marked.insertion.next marked.insertion.previous
+    count block
+  if block = 0 then return afterRight
+  let afterLeft ← coalesceIfPossibleArrays afterRight.offsets afterRight.sizes
+    afterRight.isFree afterRight.prevFree afterRight.second afterRight.first
+    afterRight.heads afterRight.next afterRight.previous afterRight.count
+    (block - 1)
+  return afterLeft
+
+theorem coalesceIfPossibleArrays_result
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {count left : Nat}
+    {result : CoalesceClassResult}
+    (hsuccess : coalesceIfPossibleArrays offsets sizes isFree prevFree second
+      first heads next previous count left = some result) :
+    result = allocatorArrays offsets sizes isFree prevFree second first heads
+        next previous count ∨
+      coalesceClassArrays offsets sizes isFree prevFree second first heads next
+        previous count left = some result := by
+  unfold coalesceIfPossibleArrays at hsuccess
+  split at hsuccess <;> try contradiction
+  next =>
+    split at hsuccess
+    next => exact Or.inl (Option.some.inj hsuccess).symm
+    next =>
+      dsimp only at hsuccess
+      split at hsuccess
+      next => exact Or.inl (Option.some.inj hsuccess).symm
+      next =>
+        split at hsuccess
+        next => exact Or.inl (Option.some.inj hsuccess).symm
+        next =>
+          split at hsuccess
+          next => exact Or.inl (Option.some.inj hsuccess).symm
+          next =>
+            split at hsuccess <;> try contradiction
+            next leftOffset leftSize rightOffset =>
+              split at hsuccess
+              next => exact Or.inl (Option.some.inj hsuccess).symm
+              next => exact Or.inr hsuccess
+
+theorem deallocateArrays_result
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat}
+    {count block returnedOffset returnedBytes : Nat}
+    {result : CoalesceClassResult}
+    (hsuccess : deallocateArrays offsets sizes isFree prevFree second first heads
+      next previous count block returnedOffset returnedBytes = some result) :
+    ∃ marked afterRight,
+      deallocateUncoalescedArrays offsets sizes isFree prevFree second first heads
+          next previous count block returnedOffset returnedBytes = some marked ∧
+      coalesceIfPossibleArrays offsets sizes marked.isFree marked.prevFree
+          marked.insertion.second marked.insertion.first marked.insertion.heads
+          marked.insertion.next marked.insertion.previous count block =
+        some afterRight ∧
+      ((block = 0 ∧ result = afterRight) ∨
+        (block ≠ 0 ∧ coalesceIfPossibleArrays afterRight.offsets
+          afterRight.sizes afterRight.isFree afterRight.prevFree
+          afterRight.second afterRight.first afterRight.heads afterRight.next
+          afterRight.previous afterRight.count (block - 1) = some result)) := by
+  unfold deallocateArrays at hsuccess
+  cases hmarked : deallocateUncoalescedArrays offsets sizes isFree prevFree
+      second first heads next previous count block returnedOffset returnedBytes with
+  | none => simp [hmarked] at hsuccess
+  | some marked =>
+      cases hright : coalesceIfPossibleArrays offsets sizes marked.isFree
+          marked.prevFree marked.insertion.second marked.insertion.first
+          marked.insertion.heads marked.insertion.next marked.insertion.previous
+          count block with
+      | none => simp [hmarked, hright] at hsuccess
+      | some afterRight =>
+          rw [hmarked] at hsuccess
+          simp [hright] at hsuccess
+          by_cases hblock : block = 0
+          · have hresult : afterRight = result := by
+              simpa [hblock] using hsuccess
+            exact ⟨marked, afterRight, rfl, hright,
+              Or.inl ⟨hblock, hresult.symm⟩⟩
+          · have hlast : coalesceIfPossibleArrays afterRight.offsets
+                afterRight.sizes afterRight.isFree afterRight.prevFree
+                afterRight.second afterRight.first afterRight.heads
+                afterRight.next afterRight.previous afterRight.count
+                (block - 1) = some result := by
+              simpa [hblock] using hsuccess
+            exact ⟨marked, afterRight, rfl, hright, Or.inr ⟨hblock, hlast⟩⟩
 
 /-- The concrete flag writes are exactly the projection of the abstract
 `markFreeAt` physical-header transition. This includes the successor boundary

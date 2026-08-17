@@ -236,6 +236,14 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   the abstract `coalescePair` successor. Together with the Iris-Lean
   `OwnsFree` equivalence, the same transition preserves metadata invariants
   and recombines the adjacent byte capabilities without loss or duplication.
+  The Luffs stdlib now exposes the public sequential deallocation control flow:
+  it performs the verified uncoalesced stage, conditionally merges the right
+  neighbor, then conditionally merges the left neighbor. Both the conditional
+  helper and full transaction have compiler-recognized exact Lean models, and
+  a source-shape regression rejects omission of the left stage. Proving this
+  public composition requires the adjacent-pair refinement to accept any
+  represented active array prefix (including spare capacity left by the first
+  merge), rather than only canonical freshly projected arrays.
   Pointer-to-offset validation belongs at the mmap-backed pool boundary.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 

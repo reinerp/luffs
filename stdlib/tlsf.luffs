@@ -390,3 +390,33 @@ fn tlsf_coalesce_class(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], i
     tlsf_insert_class(second_nonempty, first_nonempty, heads, next, previous, merged_bin, left_offset)?;
     Some(new_count)
 }
+
+// Coalesce `left` with its right neighbor exactly when the physical metadata
+// says that the pair is adjacent and free. A missing or ineligible neighbor is
+// a successful no-op, matching the abstract `coalesceIfPossible` transition.
+// refines Luffs.Runtime.TLSF.coalesceIfPossibleArrays
+fn tlsf_coalesce_if_possible(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: usize, left: usize) -> Option<usize> {
+    if block_count > offsets.len() { return None; }
+    if block_count > sizes.len() { return None; }
+    if block_count > is_free.len() { return None; }
+    if block_count > prev_free.len() { return None; }
+    if left == usize::MAX { return Some(block_count); }
+    let right: usize = left + 1;
+    if right >= block_count { return Some(block_count); }
+    if is_free[left] == 0 { return Some(block_count); }
+    if is_free[right] == 0 { return Some(block_count); }
+    let left_end: usize = offsets[left].checked_add(sizes[left])?;
+    if left_end != offsets[right] { return Some(block_count); }
+    tlsf_coalesce_class(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, left)
+}
+
+// Public sequential deallocation: validate and restore the returned block,
+// then merge first with its right neighbor and then with its left neighbor.
+// refines Luffs.Runtime.TLSF.deallocateArrays
+fn tlsf_deallocate(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: usize, block: usize, returned_offset: usize, returned_bytes: usize) -> Option<usize> {
+    tlsf_deallocate_uncoalesced(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, block, returned_offset, returned_bytes)?;
+    let after_right: usize = tlsf_coalesce_if_possible(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, block)?;
+    if block == 0 { return Some(after_right); }
+    let left: usize = block - 1;
+    tlsf_coalesce_if_possible(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, after_right, left)
+}

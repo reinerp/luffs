@@ -39,6 +39,7 @@ struct Module {
     tlsf_take_candidate_class_models: Vec<TlsfTakeCandidateModel>,
     tlsf_mark_free_models: Vec<TlsfMarkFreeModel>,
     tlsf_classify_size_models: Vec<TlsfClassifySizeModel>,
+    tlsf_classify_request_models: Vec<TlsfClassifySizeModel>,
     tlsf_insert_class_models: Vec<TlsfInsertClassModel>,
     tlsf_initialize_models: Vec<TlsfCoalescePhysicalModel>,
     tlsf_remove_class_models: Vec<TlsfInsertClassModel>,
@@ -406,6 +407,7 @@ fn parse(source: &str) -> Result<Module, String> {
         tlsf_take_candidate_class_models: parse_tlsf_take_candidate_class_models(source),
         tlsf_mark_free_models: parse_tlsf_mark_free_models(source),
         tlsf_classify_size_models: parse_tlsf_classify_size_models(source),
+        tlsf_classify_request_models: parse_tlsf_classify_request_models(source),
         tlsf_insert_class_models: parse_tlsf_insert_class_models(source),
         tlsf_initialize_models: parse_tlsf_initialize_models(source),
         tlsf_remove_class_models: parse_tlsf_remove_class_models(source),
@@ -1445,6 +1447,61 @@ fn parse_tlsf_classify_size_models(source: &str) -> Vec<TlsfClassifySizeModel> {
     }
 }
 
+fn parse_tlsf_classify_request_models(source: &str) -> Vec<TlsfClassifySizeModel> {
+    let lines = source.lines().collect::<Vec<_>>();
+    let Some(index) = lines
+        .iter()
+        .position(|line| line.trim().starts_with("fn tlsf_classify_request("))
+    else {
+        return Vec::new();
+    };
+    let Some(target) = index
+        .checked_sub(1)
+        .and_then(|i| lines.get(i))
+        .and_then(|line| line.trim().strip_prefix("// refines "))
+    else {
+        return Vec::new();
+    };
+    let body = lines[index + 1..]
+        .iter()
+        .map(|line| line.trim())
+        .collect::<Vec<_>>();
+    let required = [
+        "if request == 0 { return None; }",
+        "if request <= 256 {",
+        "return tlsf_classify_size(request);",
+        "let leading: usize = request.leading_zeros() as usize;",
+        "let fl: usize = 63 - leading;",
+        "let base: usize = 1 << fl;",
+        "if base > request { return None; }",
+        "let shift: usize = fl - 5;",
+        "let step: usize = 1 << shift;",
+        "let delta: usize = request - base;",
+        "let sl: usize = delta / step;",
+        "if sl >= 32 { return None; }",
+        "let lower_delta: usize = sl.checked_mul(step)?;",
+        "let lower: usize = base.checked_add(lower_delta)?;",
+        "let key: usize = lower.checked_add(step)?;",
+        "tlsf_classify_size(key)",
+    ];
+    let mut position = 0;
+    if required.iter().all(|expected| {
+        if let Some(offset) = body[position..].iter().position(|line| line == expected) {
+            position += offset + 1;
+            true
+        } else {
+            false
+        }
+    }) {
+        vec![TlsfClassifySizeModel {
+            name: "tlsf_classify_request".to_owned(),
+            refines: target.trim().to_owned(),
+        }]
+    } else {
+        Vec::new()
+    }
+}
+
 fn parse_tlsf_insert_class_models(source: &str) -> Vec<TlsfInsertClassModel> {
     let lines = source.lines().collect::<Vec<_>>();
     let Some(index) = lines
@@ -2183,6 +2240,7 @@ fn lean(module: &Module) -> String {
         || !module.tlsf_take_candidate_class_models.is_empty()
         || !module.tlsf_mark_free_models.is_empty()
         || !module.tlsf_classify_size_models.is_empty()
+        || !module.tlsf_classify_request_models.is_empty()
         || !module.tlsf_insert_class_models.is_empty()
         || !module.tlsf_remove_class_models.is_empty()
         || !module.tlsf_deallocate_uncoalesced_models.is_empty()
@@ -2526,6 +2584,16 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
             model.name, model.name, model.refines
         ));
     }
+    for model in &module.tlsf_classify_request_models {
+        out.push_str(&format!(
+            "def {}_model (request : Nat) : Option Nat :=\n  {} request\n\n",
+            model.name, model.refines
+        ));
+        out.push_str(&format!(
+            "theorem {}_refines : {}_model = {} := by rfl\n\n",
+            model.name, model.name, model.refines
+        ));
+    }
     for model in &module.tlsf_insert_class_models {
         out.push_str(&format!(
             "def {}_model (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (bin block : Nat) : Option Luffs.Runtime.TLSF.InsertClassResult :=\n  {} second first heads next previous bin block\n\n",
@@ -2801,6 +2869,7 @@ mod tests {
         assert_eq!(m.tlsf_take_candidate_class_models.len(), 1);
         assert_eq!(m.tlsf_mark_free_models.len(), 1);
         assert_eq!(m.tlsf_classify_size_models.len(), 1);
+        assert_eq!(m.tlsf_classify_request_models.len(), 1);
         assert_eq!(m.tlsf_insert_class_models.len(), 1);
         assert_eq!(m.tlsf_initialize_models.len(), 1);
         assert_eq!(m.tlsf_remove_class_models.len(), 1);
@@ -2834,6 +2903,9 @@ mod tests {
         ));
         assert!(generated.contains(
             "theorem tlsf_classify_size_refines : tlsf_classify_size_model = Luffs.Runtime.TLSF.classifySizeBin"
+        ));
+        assert!(generated.contains(
+            "theorem tlsf_classify_request_refines : tlsf_classify_request_model = Luffs.Runtime.TLSF.classifyRequestBin"
         ));
         assert!(generated.contains(
             "theorem tlsf_insert_class_refines : tlsf_insert_class_model = Luffs.Runtime.TLSF.insertClassArrays"
@@ -2875,6 +2947,16 @@ mod tests {
             .replace("sizes[cursor] = 0;", "sizes[cursor] = pool_bytes;");
         let m = parse(&source).unwrap();
         assert!(m.tlsf_initialize_models.is_empty());
+    }
+
+    #[test]
+    fn tlsf_request_classifier_refinement_rejects_wrong_rounding() {
+        let source = include_str!("../stdlib/tlsf.luffs").replace(
+            "let key: usize = lower.checked_add(step)?;",
+            "let key: usize = lower;",
+        );
+        let m = parse(&source).unwrap();
+        assert!(m.tlsf_classify_request_models.is_empty());
     }
 
     #[test]

@@ -51,6 +51,33 @@ theorem classifySizeBin_refines_block {block : Block} {encoded : Nat}
   refine ⟨cls, ?_, hencoded⟩
   simp [Bins.classifyBlock?, cls, hsize, hmax]
 
+/-- The executable mapping-up classifier used to start allocation lookup. -/
+def classifyRequestBin (request : Nat) : Option Nat :=
+  if hrequest : 0 < request then
+    if hmax : requestKey request < 2 ^ firstLevelCount then
+      some (encodeSizeClass (searchSizeClass request hrequest hmax))
+    else none
+  else none
+
+theorem classifyRequestBin_result {request encoded : Nat}
+    (hclass : classifyRequestBin request = some encoded) :
+    ∃ (hrequest : 0 < request)
+        (hmax : requestKey request < 2 ^ firstLevelCount),
+      encoded = encodeSizeClass (searchSizeClass request hrequest hmax) ∧
+      encoded < 2048 := by
+  unfold classifyRequestBin at hclass
+  split at hclass <;> try contradiction
+  next hrequest =>
+    split at hclass <;> try contradiction
+    next hmax =>
+      simp only [Option.some.injEq] at hclass
+      subst encoded
+      refine ⟨hrequest, hmax, rfl, ?_⟩
+      have hfl := (searchSizeClass request hrequest hmax).fl.isLt
+      have hsl := (searchSizeClass request hrequest hmax).sl.isLt
+      simp only [encodeSizeClass, firstLevelCount, secondLevelCount] at hfl hsl ⊢
+      omega
+
 /-- Pure state used by the fixed parallel-array TLSF lowering. -/
 structure Metadata where
   heads : List Nat
@@ -4685,7 +4712,7 @@ deriving DecidableEq, Repr
 metadata is reset before the single mmap-backed free block is inserted. -/
 def initializeArrays (offsets sizes : List Nat)
     (isFree prevFree : List (Fin 256)) (second : List (BitVec 32))
-    (first : BitVec 64) (heads next previous : List Nat)
+    (_first : BitVec 64) (heads next previous : List Nat)
     (poolBytes : Nat) : Option InitializeArraysResult := do
   if offsets.length = 0 ∨ sizes.length ≠ offsets.length ∨
       isFree.length ≠ offsets.length ∨ prevFree.length ≠ offsets.length ∨
@@ -4752,12 +4779,12 @@ theorem clearedFirst_represents_clearedSecond :
       (List.replicate firstLevelCount (0 : BitVec 32)) := by
   simp [FirstBitmapRep, firstLevelCount, wordBits, secondNonzeroBits]
 
-set_option maxRecDepth 10000 in
-theorem clearedMetadata_represents_emptyBins :
+theorem clearedMetadata_represents_emptyBins (headsLength linkLength : Nat)
+    (hheadsLength : 2048 ≤ headsLength) :
     RepresentsBins {
-      heads := List.replicate 2048 4096
-      next := List.replicate 4096 4096
-      previous := List.replicate 4096 4096 } emptyBins := by
+      heads := List.replicate headsLength linkLength
+      next := List.replicate linkLength linkLength
+      previous := List.replicate linkLength linkLength } emptyBins := by
   intro cls
   have hbin : cls.fl.val * secondLevelCount + cls.sl.val < 2048 := by
     have := cls.fl.isLt
@@ -4765,14 +4792,18 @@ theorem clearedMetadata_represents_emptyBins :
     simp only [firstLevelCount, secondLevelCount] at *
     omega
   change RepresentsBin {
-    heads := List.replicate 2048 4096
-    next := List.replicate 4096 4096
-    previous := List.replicate 4096 4096 }
+    heads := List.replicate headsLength linkLength
+    next := List.replicate linkLength linkLength
+    previous := List.replicate linkLength linkLength }
     (cls.fl.val * secondLevelCount + cls.sl.val) []
-  refine ⟨hbin, by simp only [List.length_replicate], ?_, trivial,
+  have hbin' : cls.fl.val * secondLevelCount + cls.sl.val < headsLength :=
+    Nat.lt_of_lt_of_le hbin hheadsLength
+  refine ⟨by simpa only [List.length_replicate] using hbin',
+    by simp only [List.length_replicate], ?_, trivial,
     List.nodup_nil⟩
-  rw [List.getElem?_replicate_of_lt hbin]
-  rfl
+  rw [List.getElem?_replicate_of_lt hbin']
+  simp only [Option.getD_some, List.head?_nil, Option.getD_none,
+    List.length_replicate]
 
 theorem initializeArrays_result
     {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
@@ -4795,24 +4826,42 @@ theorem initializeArrays_result
       result.first = inserted.first ∧ result.heads = inserted.heads ∧
       result.next = inserted.next ∧ result.previous = inserted.previous := by
   unfold initializeArrays at hsuccess
-  split at hsuccess <;> try contradiction
+  split at hsuccess
+  next => contradiction
   next =>
     cases hclass : classifySizeBin poolBytes with
     | none => simp [hclass] at hsuccess
     | some bin =>
+        rw [hclass] at hsuccess
+        simp only [Option.bind_eq_bind, Option.bind_some] at hsuccess
         cases hinsert : insertClassArrays
             (List.replicate second.length (0 : BitVec 32)) 0
             (List.replicate heads.length next.length)
             (List.replicate next.length next.length)
             (List.replicate previous.length next.length) bin 0 with
-        | none => simp [hclass, hinsert] at hsuccess
+        | none => rw [hinsert] at hsuccess; contradiction
         | some inserted =>
-            simp [hclass, hinsert] at hsuccess
+            rw [hinsert] at hsuccess
+            simp only [Option.bind_some, Option.pure_def,
+              Option.some.injEq] at hsuccess
             subst result
-            exact ⟨bin, inserted, hclass, hinsert, rfl, rfl, rfl, rfl,
+            exact ⟨bin, inserted, rfl, hinsert, rfl, rfl, rfl, rfl,
               rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-set_option maxRecDepth 10000 in
+theorem initializedPhysical_represents (capacity poolBytes : Nat)
+    (hcapacity : 0 < capacity) :
+    RepresentsPhysicalArrays
+      (List.replicate capacity 0)
+      ((List.replicate capacity 0).set 0 poolBytes)
+      ((List.replicate capacity (0 : Fin 256)).set 0 1)
+      (List.replicate capacity (0 : Fin 256)) 1
+      [initialBlock poolBytes] := by
+  cases capacity with
+  | zero => omega
+  | succ capacity =>
+      simp [List.replicate_succ, RepresentsPhysicalArrays, blockOffsets,
+        blockSizes, freeFlags, prevFreeFlags, initialBlock]
+
 set_option maxHeartbeats 600000 in
 /-- Successful fixed-capacity initialization constructs the valid abstract
 allocator containing exactly the mmap-backed pool as one free block. -/
@@ -4852,7 +4901,8 @@ theorem initializeArrays_refines
       (List.replicate firstLevelCount (0 : BitVec 32)) 0
       (List.replicate 2048 4096) (List.replicate 4096 4096)
       (List.replicate 4096 4096) bin 0 = some inserted := by
-    simpa [hsecondLength, hheads, hnext, hprevious] using hinsert
+    rw [hsecondLength, hheads, hnext, hprevious] at hinsert
+    exact hinsert
   have hfresh : ∀ query,
       (initialBlock poolBytes).offset ∉
         (emptyBins.chains query).map Block.offset := by
@@ -4861,15 +4911,15 @@ theorem initializeArrays_refines
     (inserted := initialBlock poolBytes) emptyBins_valid
     clearedSecond_represents_emptyBins
     clearedFirst_represents_clearedSecond
-    clearedMetadata_represents_emptyBins emptyBins_offsets_disjoint hfresh
+    (clearedMetadata_represents_emptyBins 2048 4096 (Nat.le_refl _))
+    emptyBins_offsets_disjoint hfresh
     (Bins.classifyBlock?_result habstractClass) (by simp [initialBlock])
     hencoded hinsert'
   have hphysical : RepresentsPhysicalArrays result.offsets result.sizes
       result.isFree result.prevFree result.count [initialBlock poolBytes] := by
     rw [hresultOffsets, hresultSizes, hresultFree, hresultPrevFree,
       hresultCount, hoffsets, hsizes, hisFree, hprevFree]
-    simp [RepresentsPhysicalArrays, blockOffsets, blockSizes, freeFlags,
-      prevFreeFlags, initialBlock]
+    exact initializedPhysical_represents 4096 poolBytes (by omega)
   rw [hresultSecond, hresultFirst, hresultHeads, hresultNext, hresultPrevious]
   exact ⟨cls, habstractClass, hphysical, hrefine.1, hrefine.2.1,
     insert_preserves_offsets_disjoint emptyBins_offsets_disjoint hfresh,
@@ -4889,9 +4939,11 @@ theorem initialAllocator_valid (pool : Luffs.Memory.Region)
   have hbinsValid := Bins.insert_valid emptyBins_valid cls
     (initialBlock pool.bytes) hbelongs hfresh
   have hwell : wellFormed pool [initialBlock pool.bytes] := by
+    have haligned8 : 8 ∣ pool.bytes := by
+      simpa [alignment] using haligned
     simp [wellFormed, ordered, partitions, contiguousFrom, covers,
       boundaryTags, boundaryTagsFrom, initialBlock, Block.aligned,
-      alignment, hpositive, haligned]
+      alignment, hpositive, haligned8]
   have hagreement : Bins.PhysicalAgreement [initialBlock pool.bytes]
       (emptyBins.insert cls (initialBlock pool.bytes)) := by
     constructor
@@ -4899,12 +4951,13 @@ theorem initialAllocator_valid (pool : Luffs.Memory.Region)
       by_cases hquery : query = cls
       · subst query
         have horigin := Bins.insert_member_origin emptyBins_valid
-          (b := initialBlock pool.bytes) (by simp [initialBlock]) hmem
+          (inserted := initialBlock pool.bytes) (by simp [initialBlock]) hmem
         rcases horigin with hnew | hold
         · exact ⟨initialBlock pool.bytes, by simp, hnew⟩
         · rcases hold with ⟨old, hold, _⟩
           simp [emptyBins, Bins.State.fromChains] at hold
       · have hold : cached ∈ emptyBins.chains query := by
+          simp only [Bins.State.insert] at hmem
           rw [Bins.replaceChain_other emptyBins
             (FreeList.insertFront (initialBlock pool.bytes)
               (emptyBins.chains cls)) hquery] at hmem
@@ -4957,7 +5010,11 @@ theorem initialAllocator_ownsMappedPool
     Luffs.Allocator.TLSF.Ownership.OwnsFree (PROP := PROP) pool
         [initialBlock pool.bytes] ⊣⊢
       Luffs.Memory.OwnsBytes pool := by
-  simp [Luffs.Allocator.TLSF.Ownership.OwnsFree, initialBlock, Block.region]
+  simp only [Luffs.Allocator.TLSF.Ownership.OwnsFree, initialBlock,
+    Block.region, List.foldr_cons, List.foldr_nil]
+  change Luffs.Memory.OwnsBytes (PROP := PROP) pool ∗ iprop(emp) ⊣⊢
+    Luffs.Memory.OwnsBytes pool
+  exact Iris.BI.sep_emp
 
 
 theorem coalesceClassArrays_result

@@ -979,3 +979,57 @@ fn tlsf_vec_grow_u32(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: 
     tlsf_box_drop_u8(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, old_offset)?;
     Some(new_offset)
 }
+
+// refines Luffs.Runtime.Containers.vecGrowU64Arrays
+fn tlsf_vec_grow_u64(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], old_offset: usize, len: usize, old_capacity: usize, new_capacity: usize) -> Option<usize> {
+    if len > old_capacity { return None; }
+    if new_capacity <= old_capacity { return None; }
+    let initialized_bytes: usize = len.checked_mul(8)?;
+    let allocation_bytes: usize = new_capacity.checked_mul(8)?;
+    let rounded: usize = allocation_bytes.checked_add(7)?;
+    let old_end: usize = old_offset.checked_add(initialized_bytes)?;
+    if old_end > pool.len() { return None; }
+    let request: usize = rounded & !7;
+    let new_offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)?;
+    let new_end: usize = new_offset.checked_add(initialized_bytes)?;
+    if new_end > pool.len() { return None; }
+    let mut cursor: usize = 0;
+    while cursor < initialized_bytes {
+        let source: usize = old_offset.checked_add(cursor)?;
+        if source >= pool.len() { return None; }
+        let destination: usize = new_offset.checked_add(cursor)?;
+        if destination >= pool.len() { return None; }
+        let byte: u8 = pool[source];
+        pool[destination] = byte;
+        cursor = cursor + 1;
+    }
+    tlsf_box_drop_u8(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, old_offset)?;
+    Some(new_offset)
+}
+
+// refines Luffs.Runtime.Containers.vecGrowU128Arrays
+fn tlsf_vec_grow_u128(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], old_offset: usize, len: usize, old_capacity: usize, new_capacity: usize) -> Option<usize> {
+    if len > old_capacity { return None; }
+    if new_capacity <= old_capacity { return None; }
+    let initialized_bytes: usize = len.checked_mul(16)?;
+    let allocation_bytes: usize = new_capacity.checked_mul(16)?;
+    let rounded: usize = allocation_bytes.checked_add(7)?;
+    let old_end: usize = old_offset.checked_add(initialized_bytes)?;
+    if old_end > pool.len() { return None; }
+    let request: usize = rounded & !7;
+    let new_offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)?;
+    let new_end: usize = new_offset.checked_add(initialized_bytes)?;
+    if new_end > pool.len() { return None; }
+    let mut cursor: usize = 0;
+    while cursor < initialized_bytes {
+        let source: usize = old_offset.checked_add(cursor)?;
+        if source >= pool.len() { return None; }
+        let destination: usize = new_offset.checked_add(cursor)?;
+        if destination >= pool.len() { return None; }
+        let byte: u8 = pool[source];
+        pool[destination] = byte;
+        cursor = cursor + 1;
+    }
+    tlsf_box_drop_u8(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, old_offset)?;
+    Some(new_offset)
+}

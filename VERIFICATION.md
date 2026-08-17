@@ -779,16 +779,17 @@ concurrency are later extensions and are not prerequisites for `Box` and
   law covers exactly `len * codec.size` bytes. Its refinement theorem targets
   abstract `Vec.grow codec`, and its Iris theorem transfers the generic typed
   `Vec.Owns codec` capability while framing allocator ownership. The first
-  non-byte source connections now cover `tlsf_vec_grow_u16` and
-  `tlsf_vec_grow_u32`. They respectively check `len * 2`/`len * 4` and
-  `new_capacity * 2`/`new_capacity * 4`, check TLSF rounding, and copy exactly
-  the initialized byte prefix. Generated Lean identifies them with
-  `vecGrowArrays Scalar.u16` and `vecGrowArrays Scalar.u32`, so the generic
-  refinement and Iris ownership laws apply directly. Their generated copy
-  programs have closed weakest-precondition proofs for exactly `len * 2` and
-  `len * 4` byte steps. Source-shape regressions reject omission or corruption
-  of the element-to-byte multiplication; the remaining scalar growth
-  monomorphizations are still outstanding.
+  unsigned source connections now cover every distinct scalar width:
+  `tlsf_vec_grow_u8/u16/u32/u64/u128`. They check the corresponding
+  `len * size` and `new_capacity * size` arithmetic (with overflow), check TLSF
+  rounding, and copy exactly the initialized byte prefix. Generated Lean
+  identifies them with `vecGrowArrays` at the matching scalar codec, so the
+  generic refinement and Iris ownership laws apply directly. Their generated
+  copy programs have closed weakest-precondition proofs for exactly
+  `len * size` byte steps. Source-shape regressions reject omission or
+  corruption of both initialized-length and capacity multiplications. Signed
+  and pointer-width source-level aliases to these width proofs are still
+  outstanding.
   New, growth, and drop now all quantify over represented fixed-capacity
   physical-header arrays. The generalized public allocation theorem proves
   the active prefix refines abstract TLSF while framing unused slots, closing

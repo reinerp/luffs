@@ -203,6 +203,9 @@ through the exhausted-chain clear operation. The compiler's specialized
 source-shape gate emits the corresponding refinement declaration. Relating
 this fixed-array state to `Bins.State.takeCandidate` is still required before
 the abstract allocator proof can consume it.
+The clear operation is no longer opaque: Lean proves array length preservation,
+preservation of every other bitmap word, preservation of every other bit in
+the selected word, and that the selected bit becomes false.
 The current linear size/free-array fallback also has executable list semantics.
 Success is proved to return an in-bounds entry whose flag is nonzero and whose
 size satisfies the request; conversely, any such entry proves lookup cannot

@@ -437,11 +437,73 @@ theorem findNonemptyBin_minimal {words : List (BitVec 64)} {start found earlier 
     (bitmapBits words)[earlier]? = some false := by
   exact firstSetFrom_minimal hfind hstart hearlier
 
+def clearWordBit (bitmap : BitVec 64) (bit : Nat) : BitVec 64 :=
+  bitmap &&& ~~~(BitVec.ofNat 64 1 <<< bit)
+
 def clearBinBit (words : List (BitVec 64)) (bin : Nat) : List (BitVec 64) :=
   let wordIndex := bin / 64
   let bit := bin % 64
   let bitmap := words[wordIndex]?.getD 0
-  words.set wordIndex (bitmap &&& ~~~(BitVec.ofNat 64 1 <<< bit))
+  words.set wordIndex (clearWordBit bitmap bit)
+
+theorem clearWordBit_getLsbD (bitmap : BitVec 64) (bit index : Nat) :
+    (clearWordBit bitmap bit).getLsbD index =
+      if index = bit ∧ index < 64 then false else bitmap.getLsbD index := by
+  simp only [clearWordBit, BitVec.getLsbD_and, BitVec.getLsbD_not,
+    BitVec.getLsbD_shiftLeft, BitVec.getLsbD_ofNat]
+  by_cases hindex : index < 64 <;> by_cases heq : index = bit
+  · subst bit
+    simp [hindex]
+  ·
+    by_cases hbefore : index < bit
+    · simp [hindex, heq, hbefore]
+    · have htestFalse : Nat.testBit 1 (index - bit) = false := by
+        cases htest : Nat.testBit 1 (index - bit) with
+        | false => rfl
+        | true =>
+          have hzero := Nat.testBit_one_eq_true_iff_self_eq_zero.mp htest
+          omega
+      simp [hindex, heq, hbefore, htestFalse]
+  · have hbitmap := BitVec.getLsbD_of_ge bitmap index (by omega)
+    simp [hindex, hbitmap]
+  · have hbitmap := BitVec.getLsbD_of_ge bitmap index (by omega)
+    simp [hindex, hbitmap]
+
+theorem clearBinBit_length (words : List (BitVec 64)) (bin : Nat) :
+    (clearBinBit words bin).length = words.length := by
+  simp [clearBinBit]
+
+theorem clearBinBit_selected_word {words : List (BitVec 64)} {bin : Nat}
+    {bitmap : BitVec 64} (hget : words[bin / 64]? = some bitmap) :
+    (clearBinBit words bin)[bin / 64]? =
+      some (clearWordBit bitmap (bin % 64)) := by
+  have hbound := (List.getElem?_eq_some_iff.mp hget).1
+  simp [clearBinBit, hget, List.getElem?_set_self hbound]
+
+theorem clearBinBit_other_word {words : List (BitVec 64)} {bin index : Nat}
+    (hne : index ≠ bin / 64) :
+    (clearBinBit words bin)[index]? = words[index]? := by
+  unfold clearBinBit
+  exact List.getElem?_set_ne (Ne.symm hne)
+
+theorem clearBinBit_selected_false {words : List (BitVec 64)} {bin : Nat}
+    {bitmap : BitVec 64} (hget : words[bin / 64]? = some bitmap) :
+    ((clearBinBit words bin)[bin / 64]?.getD 0).getLsbD (bin % 64) = false := by
+  rw [clearBinBit_selected_word hget]
+  simp only [Option.getD_some]
+  rw [clearWordBit_getLsbD]
+  have hbit : bin % 64 < 64 := Nat.mod_lt bin (by decide)
+  simp [hbit]
+
+theorem clearBinBit_preserves_other_bit {words : List (BitVec 64)} {bin : Nat}
+    {bitmap : BitVec 64} (hget : words[bin / 64]? = some bitmap)
+    {index : Nat} (hne : index ≠ bin % 64) :
+    ((clearBinBit words bin)[bin / 64]?.getD 0).getLsbD index =
+      bitmap.getLsbD index := by
+  rw [clearBinBit_selected_word hget]
+  simp only [Option.getD_some]
+  rw [clearWordBit_getLsbD]
+  simp [hne]
 
 structure CandidateResult where
   block : Nat

@@ -332,11 +332,13 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   consumes the exact initialized Vec ownership. Generated Lean semantics for
   both wrappers are now composed from the generated pointer-conversion and
   offset-drop models instead of directly aliasing their reference targets.
-  The first mutating physical stage now additionally has source-ordered,
-  state-retaining semantics. Lean proves every rejected return preserves both
-  mutable flag arrays exactly, with an Iris-Lean corollary framing arbitrary
-  disjoint allocator and client resources. Composing later bin insertion and
-  optional coalescing into the same public failure theorem remains.
+  The first mutating physical stage and the complete uncoalesced transaction
+  now additionally have source-ordered, state-retaining semantics. Lean derives
+  the source preflight facts, proves both marking and bin insertion infallible
+  after those guards, and concludes that every rejected return preserves all
+  seven mutable metadata components exactly. Iris-Lean corollaries frame
+  arbitrary disjoint allocator and client resources. Composing the optional
+  coalescing stages into the same public failure theorem remains.
 - [x] Prove the bounded-step property of bin lookup and local list updates.
   The exact lowered flat-bitmap cost model counts inspected 64-bit words and
   is bounded by the input word count, hence at most four probes for the fixed

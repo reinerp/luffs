@@ -4700,6 +4700,20 @@ theorem markFreeArraysOutcome_failure_preserves_frame
     failed = ⟨isFree, prevFree⟩ ∧ (frame ∗ (emp : PROP) ⊣⊢ frame) := by
   exact ⟨markFreeArraysOutcome_failure_eq_input hfailure, sep_emp⟩
 
+theorem markFreeArrays_ne_none_of_preflight
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {block returnedOffset returnedBytes : Nat}
+    (hoffsets : block < offsets.length) (hsizes : block < sizes.length)
+    (hisFree : block < isFree.length) (hprevFree : block < prevFree.length)
+    (hallocated : isFree[block]? = some 0)
+    (hoffset : offsets[block]? = some returnedOffset)
+    (hbytes : sizes[block]? = some returnedBytes) :
+    markFreeArrays offsets sizes isFree prevFree block returnedOffset
+      returnedBytes ≠ none := by
+  simp [markFreeArrays, Nat.not_le.mpr hoffsets, Nat.not_le.mpr hsizes,
+    Nat.not_le.mpr hisFree, Nat.not_le.mpr hprevFree, hallocated, hoffset,
+    hbytes]
+
 def freeFlags (blocks : List Block) : List (Fin 256) :=
   blocks.map fun block => if block.free then 1 else 0
 
@@ -7875,6 +7889,168 @@ def deallocateUncoalescedArrays (offsets sizes : List Nat)
     let insertion ← insertClassArrays second first heads next previous bin returnedOffset
     pure { isFree := nextIsFree, prevFree := nextPrevFree, insertion }
   else none
+
+structure DeallocateMachineState where
+  isFree : List (Fin 256)
+  prevFree : List (Fin 256)
+  second : List (BitVec 32)
+  first : BitVec 64
+  heads : List Nat
+  next : List Nat
+  previous : List Nat
+deriving DecidableEq, Repr
+
+inductive DeallocateUncoalescedOutcome where
+  | success (state : DeallocateMachineState)
+  | failure (state : DeallocateMachineState)
+deriving DecidableEq, Repr
+
+def deallocateInputState (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) : DeallocateMachineState :=
+  ⟨isFree, prevFree, second, first, heads, next, previous⟩
+
+def deallocateStateAfterMark (marked : List (Fin 256) × List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) : DeallocateMachineState :=
+  ⟨marked.1, marked.2, second, first, heads, next, previous⟩
+
+/-- Mutation phase of uncoalesced deallocation after all source preflights.
+Its explicit failure states expose whether a supposedly impossible failure
+would occur before or after physical flag mutation. -/
+def commitDeallocateUncoalescedOutcome (input : DeallocateMachineState)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (block returnedOffset returnedBytes bin : Nat) :
+    DeallocateUncoalescedOutcome :=
+  match markFreeArrays offsets sizes isFree prevFree block returnedOffset
+      returnedBytes with
+  | none => .failure input
+  | some marked =>
+    match insertClassArrays second first heads next previous bin returnedOffset with
+    | none => .failure
+        (deallocateStateAfterMark marked second first heads next previous)
+    | some inserted => .success
+        ⟨marked.1, marked.2, inserted.second, inserted.first, inserted.heads,
+          inserted.next, inserted.previous⟩
+
+/-- Once the source preflight facts establish totality of both component
+operations, the uncoalesced mutation phase has no failure edge at all. -/
+theorem commitDeallocateUncoalescedOutcome_ne_failure
+    {input failed : DeallocateMachineState}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat}
+    {block returnedOffset returnedBytes bin : Nat}
+    (hmark : markFreeArrays offsets sizes isFree prevFree block returnedOffset
+      returnedBytes ≠ none)
+    (hinsert : insertClassArrays second first heads next previous bin
+      returnedOffset ≠ none) :
+    commitDeallocateUncoalescedOutcome input offsets sizes isFree prevFree
+      second first heads next previous block returnedOffset returnedBytes bin ≠
+        .failure failed := by
+  unfold commitDeallocateUncoalescedOutcome
+  cases hmarkEq : markFreeArrays offsets sizes isFree prevFree block
+      returnedOffset returnedBytes with
+  | none => exact (hmark hmarkEq).elim
+  | some marked =>
+    simp only [hmarkEq]
+    cases hinsertEq : insertClassArrays second first heads next previous bin
+        returnedOffset with
+    | none => exact (hinsert hinsertEq).elim
+    | some inserted => simp
+
+/-- Stateful semantics of the complete uncoalesced source transaction. The
+guards are the checks hoisted by `tlsf_deallocate_uncoalesced` before its first
+write. -/
+def deallocateUncoalescedArraysOutcome (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (second : List (BitVec 32))
+    (first : BitVec 64) (heads next previous : List Nat)
+    (count block returnedOffset returnedBytes : Nat) :
+    DeallocateUncoalescedOutcome :=
+  let input := deallocateInputState isFree prevFree second first heads next previous
+  let bad := count > offsets.length ∨ count > sizes.length ∨
+    count > isFree.length ∨ count > prevFree.length ∨ block ≥ count ∨
+    block ≥ offsets.length ∨ block ≥ sizes.length ∨
+    block ≥ isFree.length ∨ block ≥ prevFree.length ∨
+    isFree[block]? != some 0 ∨ offsets[block]? != some returnedOffset ∨
+    sizes[block]? != some returnedBytes
+  if bad then .failure input
+  else match classifySizeBin returnedBytes with
+  | none => .failure input
+  | some bin =>
+    if bin ≥ heads.length ∨ bin / secondLevelCount ≥ second.length ∨
+        returnedOffset ≥ next.length ∨ returnedOffset ≥ previous.length then
+      .failure input
+    else commitDeallocateUncoalescedOutcome input offsets sizes isFree prevFree
+      second first heads next previous block returnedOffset returnedBytes bin
+
+/-- Public uncoalesced deallocation is transactional: failure returns the
+exact complete mutable metadata state supplied by the caller. -/
+theorem deallocateUncoalescedArraysOutcome_failure_eq_input
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat}
+    {count block returnedOffset returnedBytes : Nat}
+    {failed : DeallocateMachineState}
+    (hfailure : deallocateUncoalescedArraysOutcome offsets sizes isFree prevFree
+      second first heads next previous count block returnedOffset returnedBytes =
+        .failure failed) :
+    failed = deallocateInputState isFree prevFree second first heads next previous := by
+  let input := deallocateInputState isFree prevFree second first heads next previous
+  let bad := count > offsets.length ∨ count > sizes.length ∨
+    count > isFree.length ∨ count > prevFree.length ∨ block ≥ count ∨
+    block ≥ offsets.length ∨ block ≥ sizes.length ∨
+    block ≥ isFree.length ∨ block ≥ prevFree.length ∨
+    isFree[block]? != some 0 ∨ offsets[block]? != some returnedOffset ∨
+    sizes[block]? != some returnedBytes
+  by_cases hbad : bad
+  · simpa [deallocateUncoalescedArraysOutcome, input, bad, hbad] using
+      hfailure.symm
+  cases hclass : classifySizeBin returnedBytes with
+  | none =>
+      simpa [deallocateUncoalescedArraysOutcome, input, bad, hbad, hclass] using
+        hfailure.symm
+  | some bin =>
+    let insertionBad := bin ≥ heads.length ∨
+      bin / secondLevelCount ≥ second.length ∨
+      returnedOffset ≥ next.length ∨ returnedOffset ≥ previous.length
+    by_cases hinsertionBad : insertionBad
+    · simpa [deallocateUncoalescedArraysOutcome, input, bad, hbad, hclass,
+        insertionBad, hinsertionBad] using hfailure.symm
+    have hmark : markFreeArrays offsets sizes isFree prevFree block
+        returnedOffset returnedBytes ≠ none := by
+      apply markFreeArrays_ne_none_of_preflight
+      all_goals simp only [bad] at hbad
+      · omega
+      · omega
+      · omega
+      · omega
+      · apply Classical.byContradiction; intro h; exact hbad (by aesop)
+      · apply Classical.byContradiction; intro h; exact hbad (by aesop)
+      · apply Classical.byContradiction; intro h; exact hbad (by aesop)
+    have hinsert : insertClassArrays second first heads next previous bin
+        returnedOffset ≠ none := by
+      apply insertClassArrays_ne_none_of_preflight
+      all_goals simp only [insertionBad] at hinsertionBad
+      all_goals omega
+    exact (commitDeallocateUncoalescedOutcome_ne_failure hmark hinsert (by
+      simpa [deallocateUncoalescedArraysOutcome, input, bad, hbad, hclass,
+        insertionBad, hinsertionBad] using hfailure)).elim
+
+theorem deallocateUncoalescedArraysOutcome_failure_preserves_frame
+    {PROP : Type} [Iris.BI PROP]
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat}
+    {count block returnedOffset returnedBytes : Nat}
+    {failed : DeallocateMachineState} (frame : PROP)
+    (hfailure : deallocateUncoalescedArraysOutcome offsets sizes isFree prevFree
+      second first heads next previous count block returnedOffset returnedBytes =
+        .failure failed) :
+    failed = deallocateInputState isFree prevFree second first heads next previous ∧
+      (frame ∗ (emp : PROP) ⊣⊢ frame) := by
+  exact ⟨deallocateUncoalescedArraysOutcome_failure_eq_input hfailure, sep_emp⟩
 
 /-- Exact pure semantics of the public Luffs deallocator. -/
 def deallocateArrays (offsets sizes : List Nat)

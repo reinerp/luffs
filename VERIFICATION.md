@@ -889,7 +889,11 @@ alias semantics. This removes the one-store restriction that blocked
   and mapped-address WP. `vecPushU64_refines_generic` identifies successful
   concrete execution with `vecPush Scalar.u64`, and `vecPushU64_owns` therefore
   appends the logical value while transferring the same exclusive Vec
-  ownership capability to the incremented handle.
+  ownership capability to the incremented handle. The matching
+  `vec_get_u64` path checks the same eight-byte element address, generates an
+  eight-load program, and refines `vecGet Scalar.u64`. Its Iris theorem returns
+  the codec-decoded logical element together with the unchanged exclusive Vec
+  capability and the exact eight-step `ReadSteps` witness.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.
   All four checked-in examples are currently accepted by Lean and compile to

@@ -279,6 +279,16 @@ fn vec_get_u32(storage: &[u8], offset: usize, len: usize, index: usize) -> Optio
     Some(u32::from_le_bytes([storage[offset + index * 4], storage[offset + index * 4 + 1], storage[offset + index * 4 + 2], storage[offset + index * 4 + 3]]))
 }
 
+// refines Luffs.Runtime.Containers.vecGetU64
+fn vec_get_u64(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<u64> {
+    if index >= len { return None; }
+    if index > usize::MAX / 8 { return None; }
+    if offset > usize::MAX - index * 8 { return None; }
+    if offset + index * 8 > usize::MAX - 8 { return None; }
+    if offset + index * 8 + 7 >= storage.len() { return None; }
+    Some(u64::from_le_bytes([storage[offset + index * 8], storage[offset + index * 8 + 1], storage[offset + index * 8 + 2], storage[offset + index * 8 + 3], storage[offset + index * 8 + 4], storage[offset + index * 8 + 5], storage[offset + index * 8 + 6], storage[offset + index * 8 + 7]]))
+}
+
 // refines Luffs.Runtime.Containers.vecSliceU8
 fn vec_slice_u8(storage: &[u8], len: usize, begin: usize, end: usize) -> Option<&[u8]> {
     if begin > end { return None; }

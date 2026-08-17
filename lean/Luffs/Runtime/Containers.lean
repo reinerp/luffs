@@ -222,6 +222,85 @@ theorem drop_take_four_of_getElem? {α : Type} (values : List α) (offset : Nat)
           simp only [List.drop_succ_cons]
           exact ih offset h0 h1' h2' h3'
 
+theorem drop_take_eight_of_getElem? {α : Type} (values : List α) (offset : Nat)
+    (b0 b1 b2 b3 b4 b5 b6 b7 : α)
+    (h0 : values[offset]? = some b0) (h1 : values[offset + 1]? = some b1)
+    (h2 : values[offset + 2]? = some b2) (h3 : values[offset + 3]? = some b3)
+    (h4 : values[offset + 4]? = some b4) (h5 : values[offset + 5]? = some b5)
+    (h6 : values[offset + 6]? = some b6) (h7 : values[offset + 7]? = some b7) :
+    (values.drop offset).take 8 = [b0, b1, b2, b3, b4, b5, b6, b7] := by
+  induction values generalizing offset with
+  | nil => simp at h0
+  | cons head tail ih =>
+      cases offset with
+      | zero =>
+          simp only [List.getElem?_cons_zero, Option.some.injEq] at h0
+          subst b0
+          cases tail with
+          | nil => simp at h1
+          | cons t1 tail =>
+              simp only [Nat.zero_add, List.getElem?_cons_succ,
+                List.getElem?_cons_zero, Option.some.injEq] at h1
+              subst b1
+              cases tail with
+              | nil => simp at h2
+              | cons t2 tail =>
+                  simp only [List.getElem?_cons_succ, List.getElem?_cons_zero,
+                    Option.some.injEq] at h2
+                  subst b2
+                  cases tail with
+                  | nil => simp at h3
+                  | cons t3 tail =>
+                      simp only [List.getElem?_cons_succ,
+                        List.getElem?_cons_zero, Option.some.injEq] at h3
+                      subst b3
+                      cases tail with
+                      | nil => simp at h4
+                      | cons t4 tail =>
+                          simp only [List.getElem?_cons_succ,
+                            List.getElem?_cons_zero, Option.some.injEq] at h4
+                          subst b4
+                          cases tail with
+                          | nil => simp at h5
+                          | cons t5 tail =>
+                              simp only [List.getElem?_cons_succ,
+                                List.getElem?_cons_zero,
+                                Option.some.injEq] at h5
+                              subst b5
+                              cases tail with
+                              | nil => simp at h6
+                              | cons t6 tail =>
+                                  simp only [List.getElem?_cons_succ,
+                                    List.getElem?_cons_zero,
+                                    Option.some.injEq] at h6
+                                  subst b6
+                                  cases tail with
+                                  | nil => simp at h7
+                                  | cons t7 rest =>
+                                      simp only [List.getElem?_cons_succ,
+                                        List.getElem?_cons_zero,
+                                        Option.some.injEq] at h7
+                                      subst b7
+                                      simp
+      | succ offset =>
+          simp only [List.getElem?_cons_succ] at h0
+          have h1' : tail[offset + 1]? = some b1 := by
+            simpa [Nat.succ_eq_add_one, Nat.add_assoc] using h1
+          have h2' : tail[offset + 2]? = some b2 := by
+            simpa [Nat.succ_eq_add_one, Nat.add_assoc] using h2
+          have h3' : tail[offset + 3]? = some b3 := by
+            simpa [Nat.succ_eq_add_one, Nat.add_assoc] using h3
+          have h4' : tail[offset + 4]? = some b4 := by
+            simpa [Nat.succ_eq_add_one, Nat.add_assoc] using h4
+          have h5' : tail[offset + 5]? = some b5 := by
+            simpa [Nat.succ_eq_add_one, Nat.add_assoc] using h5
+          have h6' : tail[offset + 6]? = some b6 := by
+            simpa [Nat.succ_eq_add_one, Nat.add_assoc] using h6
+          have h7' : tail[offset + 7]? = some b7 := by
+            simpa [Nat.succ_eq_add_one, Nat.add_assoc] using h7
+          simp only [List.drop_succ_cons]
+          exact ih offset h0 h1' h2' h3' h4' h5' h6' h7'
+
 /-- Codec-generic executable state transformer for allocator-backed Box
 construction. A Luffs monomorphization supplies one of the verified scalar
 codecs and lowers the finite encoding to byte stores. -/
@@ -2595,6 +2674,53 @@ theorem boxLoadU32_eq_generic (storage : List Byte) (begin : Nat)
       exact (drop_take_four_of_getElem? storage begin b0 b1 b2 b3 hb0 hb1
         hb2 hb3).symm
 
+theorem boxLoadU64_eq_generic (storage : List Byte) (begin : Nat)
+    (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax) :
+    boxLoadU64 storage begin = boxLoad Scalar.u64 storage begin := by
+  by_cases hword : begin > Luffs.Runtime.TLSF.usizeMax - 7
+  · have hgeneric : begin + Scalar.u64.size > storage.length := by
+      simp only [Scalar.u64]
+      omega
+    simp [boxLoadU64, boxLoad, hword, hgeneric]
+  · by_cases hbound : begin + 7 ≥ storage.length
+    · have hgeneric : begin + Scalar.u64.size > storage.length := by
+        simp only [Scalar.u64]
+        omega
+      simp [boxLoadU64, boxLoad, hword, hbound, hgeneric]
+    · have hgeneric : ¬begin + Scalar.u64.size > storage.length := by
+        simp only [Scalar.u64]
+        omega
+      have h0 : begin < storage.length := by omega
+      have h1 : begin + 1 < storage.length := by omega
+      have h2 : begin + 2 < storage.length := by omega
+      have h3 : begin + 3 < storage.length := by omega
+      have h4 : begin + 4 < storage.length := by omega
+      have h5 : begin + 5 < storage.length := by omega
+      have h6 : begin + 6 < storage.length := by omega
+      have h7 : begin + 7 < storage.length := by omega
+      let b0 := storage[begin]'h0
+      let b1 := storage[begin + 1]'h1
+      let b2 := storage[begin + 2]'h2
+      let b3 := storage[begin + 3]'h3
+      let b4 := storage[begin + 4]'h4
+      let b5 := storage[begin + 5]'h5
+      let b6 := storage[begin + 6]'h6
+      let b7 := storage[begin + 7]'h7
+      have hb0 : storage[begin]? = some b0 := List.getElem?_eq_getElem h0
+      have hb1 : storage[begin + 1]? = some b1 := List.getElem?_eq_getElem h1
+      have hb2 : storage[begin + 2]? = some b2 := List.getElem?_eq_getElem h2
+      have hb3 : storage[begin + 3]? = some b3 := List.getElem?_eq_getElem h3
+      have hb4 : storage[begin + 4]? = some b4 := List.getElem?_eq_getElem h4
+      have hb5 : storage[begin + 5]? = some b5 := List.getElem?_eq_getElem h5
+      have hb6 : storage[begin + 6]? = some b6 := List.getElem?_eq_getElem h6
+      have hb7 : storage[begin + 7]? = some b7 := List.getElem?_eq_getElem h7
+      rw [boxLoadU64, if_neg hword, if_neg hbound, boxLoad, if_neg hgeneric]
+      rw [hb0, hb1, hb2, hb3, hb4, hb5, hb6, hb7]
+      simp only [Option.bind_eq_bind, Option.bind_some, Scalar.u64]
+      congr 1
+      exact (drop_take_eight_of_getElem? storage begin b0 b1 b2 b3 b4 b5 b6 b7
+        hb0 hb1 hb2 hb3 hb4 hb5 hb6 hb7).symm
+
 theorem boxStoreU16_eq_generic (storage : List Byte) (begin : Nat)
     (value : BitVec 16)
     (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax) :
@@ -3276,6 +3402,89 @@ theorem vecGetU32_owns {GF : Iris.BundledGFunctors}
       hstorageMax]
     exact hsuccess
   exact vecGet_owns Scalar.u32 hlen hgeneric hvalues hencoded hrep
+
+def vecGetU64 (storage : List Byte) (offset len index : Nat) :
+    Option (BitVec 64) :=
+  if index ≥ len then none
+  else if index > Luffs.Runtime.TLSF.usizeMax / 8 then none
+  else if offset > Luffs.Runtime.TLSF.usizeMax - index * 8 then none
+  else if offset + index * 8 > Luffs.Runtime.TLSF.usizeMax - 8 then none
+  else
+    let address := offset + index * 8
+    if address + 7 ≥ storage.length then none
+    else do
+      let b0 ← storage[address]?
+      let b1 ← storage[address + 1]?
+      let b2 ← storage[address + 2]?
+      let b3 ← storage[address + 3]?
+      let b4 ← storage[address + 4]?
+      let b5 ← storage[address + 5]?
+      let b6 ← storage[address + 6]?
+      let b7 ← storage[address + 7]?
+      Scalar.decode64 [b0, b1, b2, b3, b4, b5, b6, b7]
+
+theorem vecGetU64_eq_generic (storage : List Byte) (offset len index : Nat)
+    (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax) :
+    vecGetU64 storage offset len index =
+      vecGet Scalar.u64 storage offset len index := by
+  by_cases hindex : index ≥ len
+  · simp [vecGetU64, vecGet, hindex]
+  · by_cases hmul : index > Luffs.Runtime.TLSF.usizeMax / 8
+    · simp [vecGetU64, vecGet, Scalar.u64, hindex, hmul]
+    · by_cases hoffset : offset > Luffs.Runtime.TLSF.usizeMax - index * 8
+      · simp [vecGetU64, vecGet, Scalar.u64, hindex, hmul, hoffset]
+      · by_cases haddress : offset + index * 8 >
+          Luffs.Runtime.TLSF.usizeMax - 8
+        · simp [vecGetU64, vecGet, Scalar.u64, hindex, hmul, hoffset, haddress]
+        · simp only [vecGetU64, hindex, ↓reduceIte, hmul, hoffset, haddress,
+            vecGet, Scalar.u64, ↓reduceIte]
+          have hword : ¬offset + index * 8 >
+              Luffs.Runtime.TLSF.usizeMax - 7 := by omega
+          calc
+            (if offset + index * 8 + 7 ≥ storage.length then none
+              else do
+                let b0 ← storage[offset + index * 8]?
+                let b1 ← storage[offset + index * 8 + 1]?
+                let b2 ← storage[offset + index * 8 + 2]?
+                let b3 ← storage[offset + index * 8 + 3]?
+                let b4 ← storage[offset + index * 8 + 4]?
+                let b5 ← storage[offset + index * 8 + 5]?
+                let b6 ← storage[offset + index * 8 + 6]?
+                let b7 ← storage[offset + index * 8 + 7]?
+                Scalar.decode64 [b0, b1, b2, b3, b4, b5, b6, b7]) =
+                boxLoadU64 storage (offset + index * 8) := by
+                  simp [boxLoadU64, hword]
+            _ = boxLoad Scalar.u64 storage (offset + index * 8) :=
+              boxLoadU64_eq_generic storage (offset + index * 8) hstorageMax
+
+theorem vecGetU64_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {storage : List Byte}
+    {handle : Luffs.Containers.Vec.Handle}
+    {values : List (BitVec 64)} {index : Nat} {value expected : BitVec 64}
+    (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hlen : values.length = handle.len)
+    (hsuccess : vecGetU64 storage handle.block.offset handle.len index =
+      some value)
+    (hvalues : values[index]? = some expected)
+    (hencoded :
+      (storage.drop (handle.block.offset + index * Scalar.u64.size)).take
+          Scalar.u64.size = Scalar.u64.encode expected)
+    {contents : ContentsMap} {mem : Memory} (hrep : ContentsRep contents mem) :
+    value = expected ∧
+      (contentsInterp (G := G) contents ∗
+          Luffs.Containers.Vec.Owns Scalar.u64 pool handle values ⊢
+        (contentsInterp contents ∗
+          Luffs.Containers.Vec.Owns Scalar.u64 pool handle values) ∗
+          ⌜ReadSteps ((handle.block.region pool).base + index * Scalar.u64.size)
+              (Scalar.u64.encode expected) mem ∧
+            Scalar.u64.decode (Scalar.u64.encode expected) = some expected⌝) := by
+  have hgeneric : vecGet Scalar.u64 storage handle.block.offset handle.len index =
+      some value := by
+    rw [← vecGetU64_eq_generic storage handle.block.offset handle.len index
+      hstorageMax]
+    exact hsuccess
+  exact vecGet_owns Scalar.u64 hlen hgeneric hvalues hencoded hrep
 
 def vecSliceU8 (storage : List Byte) (len begin end_ : Nat) :
     Option (List Byte) :=

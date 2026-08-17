@@ -4611,6 +4611,10 @@ mod tests {
             "theorem vec_get_u32_refines : vec_get_u32_model = Luffs.Runtime.Containers.vecGetU32"
         ));
         assert!(generated.contains("theorem vec_get_u32_program_wp"));
+        assert!(generated.contains(
+            "theorem vec_get_u64_refines : vec_get_u64_model = Luffs.Runtime.Containers.vecGetU64"
+        ));
+        assert!(generated.contains("theorem vec_get_u64_program_wp"));
     }
 
     #[test]

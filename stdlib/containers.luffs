@@ -77,6 +77,36 @@ fn box_store_u64(storage: &mut [u8], begin: usize, value: u64) -> Option<()> {
     Some(())
 }
 
+// refines Luffs.Runtime.Containers.boxLoadU128
+fn box_load_u128(storage: &[u8], begin: usize) -> Option<u128> {
+    if begin > usize::MAX - 15 { return None; }
+    if begin + 15 >= storage.len() { return None; }
+    Some(u128::from_le_bytes([storage[begin], storage[begin + 1], storage[begin + 2], storage[begin + 3], storage[begin + 4], storage[begin + 5], storage[begin + 6], storage[begin + 7], storage[begin + 8], storage[begin + 9], storage[begin + 10], storage[begin + 11], storage[begin + 12], storage[begin + 13], storage[begin + 14], storage[begin + 15]]))
+}
+
+// refines Luffs.Runtime.Containers.boxStoreU128
+fn box_store_u128(storage: &mut [u8], begin: usize, value: u128) -> Option<()> {
+    if begin > usize::MAX - 15 { return None; }
+    if begin + 15 >= storage.len() { return None; }
+    storage[begin] = (value & 255) as u8;
+    storage[begin + 1] = (value >> 8) as u8;
+    storage[begin + 2] = (value >> 16) as u8;
+    storage[begin + 3] = (value >> 24) as u8;
+    storage[begin + 4] = (value >> 32) as u8;
+    storage[begin + 5] = (value >> 40) as u8;
+    storage[begin + 6] = (value >> 48) as u8;
+    storage[begin + 7] = (value >> 56) as u8;
+    storage[begin + 8] = (value >> 64) as u8;
+    storage[begin + 9] = (value >> 72) as u8;
+    storage[begin + 10] = (value >> 80) as u8;
+    storage[begin + 11] = (value >> 88) as u8;
+    storage[begin + 12] = (value >> 96) as u8;
+    storage[begin + 13] = (value >> 104) as u8;
+    storage[begin + 14] = (value >> 112) as u8;
+    storage[begin + 15] = (value >> 120) as u8;
+    Some(())
+}
+
 // Signed scalars use the same two's-complement BitVec byte semantics.
 // refines Luffs.Runtime.Containers.boxLoadU16
 fn box_load_i16(storage: &[u8], begin: usize) -> Option<i16> {

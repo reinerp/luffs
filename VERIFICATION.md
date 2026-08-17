@@ -683,7 +683,13 @@ concurrency are later extensions and are not prerequisites for `Box` and
   now has the corresponding source-to-Iris connection over all eight encoded
   bytes: loads retain exclusive ownership and expose the eight-read trace,
   while stores update the logical value and authoritative byte contents and
-  close the exact eight-write WP.
+  close the exact eight-write WP. Concrete `u128` load/store operations now
+  complete the unsigned scalar widths: their Luffs bodies check and access all
+  sixteen bytes, generated semantics refine the executable runtime models, and
+  those models are proved equal to `Scalar.u128` load/store. Successful loads
+  therefore return exactly the exclusively owned logical value with the
+  sixteen-read trace; successful stores exchange old ownership for the new
+  value and close the sixteen-write WP.
   The compositional source translator now assigns Lean `BitVec` models to all
   signed and unsigned scalar widths and lowers arbitrary 8/16/32/64/128-bit
   `from_le_bytes` expressions plus byte-extraction stores. `usize`/`isize` are

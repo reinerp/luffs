@@ -126,6 +126,76 @@ theorem writeBytes_eight_eq_set {α : Type} (values : List α)
             List.cons_append, List.cons.injEq, true_and]
           simpa [Nat.succ_eq_add_one, Nat.add_assoc] using ih offset htail
 
+theorem writeBytes_sixteen_eq_set {α : Type} (values : List α)
+    (offset : Nat) (b0 b1 b2 b3 b4 b5 b6 b7 b8 b9 b10 b11 b12 b13 b14 b15 : α)
+    (hbound : offset + 16 ≤ values.length) :
+    values.take offset ++
+        [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14,
+          b15] ++ values.drop (offset + 16) =
+      ((((((((((((((((values.set offset b0).set (offset + 1) b1).set
+        (offset + 2) b2).set (offset + 3) b3).set (offset + 4) b4).set
+        (offset + 5) b5).set (offset + 6) b6).set (offset + 7) b7).set
+        (offset + 8) b8).set (offset + 9) b9).set (offset + 10) b10).set
+        (offset + 11) b11).set (offset + 12) b12).set (offset + 13) b13).set
+        (offset + 14) b14).set (offset + 15) b15) := by
+  induction values generalizing offset with
+  | nil => simp at hbound
+  | cons head tail ih =>
+      cases offset with
+      | zero =>
+          cases tail with
+          | nil => simp at hbound
+          | cons t1 tail =>
+              cases tail with
+              | nil => simp at hbound
+              | cons t2 tail =>
+                  cases tail with
+                  | nil => simp at hbound
+                  | cons t3 tail =>
+                      cases tail with
+                      | nil => simp at hbound
+                      | cons t4 tail =>
+                          cases tail with
+                          | nil => simp at hbound
+                          | cons t5 tail =>
+                              cases tail with
+                              | nil => simp at hbound
+                              | cons t6 tail =>
+                                  cases tail with
+                                  | nil => simp at hbound
+                                  | cons t7 tail =>
+                                      cases tail with
+                                      | nil => simp at hbound
+                                      | cons t8 tail =>
+                                          cases tail with
+                                          | nil => simp at hbound
+                                          | cons t9 tail =>
+                                              cases tail with
+                                              | nil => simp at hbound
+                                              | cons t10 tail =>
+                                                  cases tail with
+                                                  | nil => simp at hbound
+                                                  | cons t11 tail =>
+                                                      cases tail with
+                                                      | nil => simp at hbound
+                                                      | cons t12 tail =>
+                                                          cases tail with
+                                                          | nil => simp at hbound
+                                                          | cons t13 tail =>
+                                                              cases tail with
+                                                              | nil => simp at hbound
+                                                              | cons t14 tail =>
+                                                                  cases tail with
+                                                                  | nil => simp at hbound
+                                                                  | cons t15 rest => simp
+      | succ offset =>
+          have htail : offset + 16 ≤ tail.length := by
+            simp only [List.length_cons] at hbound
+            omega
+          simp only [List.take_succ_cons, List.drop_succ_cons, List.set,
+            List.cons_append, List.cons.injEq, true_and]
+          simpa [Nat.succ_eq_add_one, Nat.add_assoc] using ih offset htail
+
 theorem writeBytes_length (values : List Byte) (offset : Nat)
     (replacement : List Byte) (hbound : offset + replacement.length ≤ values.length) :
     (writeBytes values offset replacement).length = values.length := by
@@ -300,6 +370,33 @@ theorem drop_take_eight_of_getElem? {α : Type} (values : List α) (offset : Nat
             simpa [Nat.succ_eq_add_one, Nat.add_assoc] using h7
           simp only [List.drop_succ_cons]
           exact ih offset h0 h1' h2' h3' h4' h5' h6' h7'
+
+theorem drop_take_sixteen_of_getElem? {α : Type} (values : List α) (offset : Nat)
+    (b0 b1 b2 b3 b4 b5 b6 b7 b8 b9 b10 b11 b12 b13 b14 b15 : α)
+    (h0 : values[offset]? = some b0) (h1 : values[offset + 1]? = some b1)
+    (h2 : values[offset + 2]? = some b2) (h3 : values[offset + 3]? = some b3)
+    (h4 : values[offset + 4]? = some b4) (h5 : values[offset + 5]? = some b5)
+    (h6 : values[offset + 6]? = some b6) (h7 : values[offset + 7]? = some b7)
+    (h8 : values[offset + 8]? = some b8) (h9 : values[offset + 9]? = some b9)
+    (h10 : values[offset + 10]? = some b10)
+    (h11 : values[offset + 11]? = some b11)
+    (h12 : values[offset + 12]? = some b12)
+    (h13 : values[offset + 13]? = some b13)
+    (h14 : values[offset + 14]? = some b14)
+    (h15 : values[offset + 15]? = some b15) :
+    (values.drop offset).take 16 =
+      [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14,
+        b15] := by
+  rw [show 16 = 8 + 8 by omega, List.take_add]
+  rw [drop_take_eight_of_getElem? values offset b0 b1 b2 b3 b4 b5 b6 b7
+    h0 h1 h2 h3 h4 h5 h6 h7]
+  have hsecond := drop_take_eight_of_getElem? values (offset + 8)
+    b8 b9 b10 b11 b12 b13 b14 b15 h8 (by simpa [Nat.add_assoc] using h9)
+    (by simpa [Nat.add_assoc] using h10) (by simpa [Nat.add_assoc] using h11)
+    (by simpa [Nat.add_assoc] using h12) (by simpa [Nat.add_assoc] using h13)
+    (by simpa [Nat.add_assoc] using h14) (by simpa [Nat.add_assoc] using h15)
+  rw [List.drop_drop]
+  simpa [Nat.add_comm, Nat.add_left_comm, Nat.add_assoc] using hsecond
 
 /-- Codec-generic executable state transformer for allocator-backed Box
 construction. A Luffs monomorphization supplies one of the verified scalar
@@ -2657,6 +2754,44 @@ def boxStoreU64 (storage : List Byte) (begin : Nat) (value : BitVec 64) :
       (Scalar.byteAt value 32)).set (begin + 5) (Scalar.byteAt value 40)).set
       (begin + 6) (Scalar.byteAt value 48)).set eighth (Scalar.byteAt value 56))
 
+def boxLoadU128 (storage : List Byte) (begin : Nat) : Option (BitVec 128) := do
+  if begin > Luffs.Runtime.TLSF.usizeMax - 15 then none
+  if begin + 15 ≥ storage.length then none
+  let byte0 ← storage[begin]?
+  let byte1 ← storage[begin + 1]?
+  let byte2 ← storage[begin + 2]?
+  let byte3 ← storage[begin + 3]?
+  let byte4 ← storage[begin + 4]?
+  let byte5 ← storage[begin + 5]?
+  let byte6 ← storage[begin + 6]?
+  let byte7 ← storage[begin + 7]?
+  let byte8 ← storage[begin + 8]?
+  let byte9 ← storage[begin + 9]?
+  let byte10 ← storage[begin + 10]?
+  let byte11 ← storage[begin + 11]?
+  let byte12 ← storage[begin + 12]?
+  let byte13 ← storage[begin + 13]?
+  let byte14 ← storage[begin + 14]?
+  let byte15 ← storage[begin + 15]?
+  Scalar.decode128 [byte0, byte1, byte2, byte3, byte4, byte5, byte6, byte7,
+    byte8, byte9, byte10, byte11, byte12, byte13, byte14, byte15]
+
+def boxStoreU128 (storage : List Byte) (begin : Nat) (value : BitVec 128) :
+    Option (List Byte) :=
+  if begin > Luffs.Runtime.TLSF.usizeMax - 15 then none
+  else if begin + 15 ≥ storage.length then none
+  else some ((((((((((((((((storage.set begin (Scalar.byteAt value 0)).set
+    (begin + 1) (Scalar.byteAt value 8)).set (begin + 2)
+    (Scalar.byteAt value 16)).set (begin + 3) (Scalar.byteAt value 24)).set
+    (begin + 4) (Scalar.byteAt value 32)).set (begin + 5)
+    (Scalar.byteAt value 40)).set (begin + 6) (Scalar.byteAt value 48)).set
+    (begin + 7) (Scalar.byteAt value 56)).set (begin + 8)
+    (Scalar.byteAt value 64)).set (begin + 9) (Scalar.byteAt value 72)).set
+    (begin + 10) (Scalar.byteAt value 80)).set (begin + 11)
+    (Scalar.byteAt value 88)).set (begin + 12) (Scalar.byteAt value 96)).set
+    (begin + 13) (Scalar.byteAt value 104)).set (begin + 14)
+    (Scalar.byteAt value 112)).set (begin + 15) (Scalar.byteAt value 120))
+
 theorem boxLoadU64_after_boxStoreU64 (storage result : List Byte) (begin : Nat)
     (value : BitVec 64)
     (hsuccess : boxStoreU64 storage begin value = some result) :
@@ -2833,6 +2968,169 @@ theorem boxStoreU64_eq_generic (storage : List Byte) (begin : Nat)
       exact ⟨hfit, by
         simpa only [List.cons_append, List.nil_append, List.append_assoc] using
           hwrite.symm⟩
+
+theorem boxLoadU128_eq_generic (storage : List Byte) (begin : Nat)
+    (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax) :
+    boxLoadU128 storage begin = boxLoad Scalar.u128 storage begin := by
+  by_cases hword : begin > Luffs.Runtime.TLSF.usizeMax - 15
+  · have hgeneric : begin + Scalar.u128.size > storage.length := by
+      simp only [Scalar.u128]
+      omega
+    simp [boxLoadU128, boxLoad, hword, hgeneric]
+  · by_cases hbound : begin + 15 ≥ storage.length
+    · have hgeneric : begin + Scalar.u128.size > storage.length := by
+        simp only [Scalar.u128]
+        omega
+      simp [boxLoadU128, boxLoad, hword, hbound, hgeneric]
+    · have hgeneric : ¬begin + Scalar.u128.size > storage.length := by
+        simp only [Scalar.u128]
+        omega
+      have h0 : begin < storage.length := by omega
+      have h1 : begin + 1 < storage.length := by omega
+      have h2 : begin + 2 < storage.length := by omega
+      have h3 : begin + 3 < storage.length := by omega
+      have h4 : begin + 4 < storage.length := by omega
+      have h5 : begin + 5 < storage.length := by omega
+      have h6 : begin + 6 < storage.length := by omega
+      have h7 : begin + 7 < storage.length := by omega
+      have h8 : begin + 8 < storage.length := by omega
+      have h9 : begin + 9 < storage.length := by omega
+      have h10 : begin + 10 < storage.length := by omega
+      have h11 : begin + 11 < storage.length := by omega
+      have h12 : begin + 12 < storage.length := by omega
+      have h13 : begin + 13 < storage.length := by omega
+      have h14 : begin + 14 < storage.length := by omega
+      have h15 : begin + 15 < storage.length := by omega
+      let b0 := storage[begin]'h0
+      let b1 := storage[begin + 1]'h1
+      let b2 := storage[begin + 2]'h2
+      let b3 := storage[begin + 3]'h3
+      let b4 := storage[begin + 4]'h4
+      let b5 := storage[begin + 5]'h5
+      let b6 := storage[begin + 6]'h6
+      let b7 := storage[begin + 7]'h7
+      let b8 := storage[begin + 8]'h8
+      let b9 := storage[begin + 9]'h9
+      let b10 := storage[begin + 10]'h10
+      let b11 := storage[begin + 11]'h11
+      let b12 := storage[begin + 12]'h12
+      let b13 := storage[begin + 13]'h13
+      let b14 := storage[begin + 14]'h14
+      let b15 := storage[begin + 15]'h15
+      have hb0 : storage[begin]? = some b0 := List.getElem?_eq_getElem h0
+      have hb1 : storage[begin + 1]? = some b1 := List.getElem?_eq_getElem h1
+      have hb2 : storage[begin + 2]? = some b2 := List.getElem?_eq_getElem h2
+      have hb3 : storage[begin + 3]? = some b3 := List.getElem?_eq_getElem h3
+      have hb4 : storage[begin + 4]? = some b4 := List.getElem?_eq_getElem h4
+      have hb5 : storage[begin + 5]? = some b5 := List.getElem?_eq_getElem h5
+      have hb6 : storage[begin + 6]? = some b6 := List.getElem?_eq_getElem h6
+      have hb7 : storage[begin + 7]? = some b7 := List.getElem?_eq_getElem h7
+      have hb8 : storage[begin + 8]? = some b8 := List.getElem?_eq_getElem h8
+      have hb9 : storage[begin + 9]? = some b9 := List.getElem?_eq_getElem h9
+      have hb10 : storage[begin + 10]? = some b10 := List.getElem?_eq_getElem h10
+      have hb11 : storage[begin + 11]? = some b11 := List.getElem?_eq_getElem h11
+      have hb12 : storage[begin + 12]? = some b12 := List.getElem?_eq_getElem h12
+      have hb13 : storage[begin + 13]? = some b13 := List.getElem?_eq_getElem h13
+      have hb14 : storage[begin + 14]? = some b14 := List.getElem?_eq_getElem h14
+      have hb15 : storage[begin + 15]? = some b15 := List.getElem?_eq_getElem h15
+      rw [boxLoadU128, if_neg hword, if_neg hbound, boxLoad, if_neg hgeneric]
+      rw [hb0, hb1, hb2, hb3, hb4, hb5, hb6, hb7, hb8, hb9, hb10, hb11,
+        hb12, hb13, hb14, hb15]
+      simp only [Option.bind_eq_bind, Option.bind_some, Scalar.u128]
+      congr 1
+      exact (drop_take_sixteen_of_getElem? storage begin b0 b1 b2 b3 b4 b5 b6
+        b7 b8 b9 b10 b11 b12 b13 b14 b15 hb0 hb1 hb2 hb3 hb4 hb5 hb6 hb7
+        hb8 hb9 hb10 hb11 hb12 hb13 hb14 hb15).symm
+
+theorem boxStoreU128_eq_generic (storage : List Byte) (begin : Nat)
+    (value : BitVec 128)
+    (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax) :
+    boxStoreU128 storage begin value = boxStore Scalar.u128 storage begin value := by
+  by_cases hword : begin > Luffs.Runtime.TLSF.usizeMax - 15
+  · have hgeneric : begin + Scalar.u128.size > storage.length := by
+      simp only [Scalar.u128]
+      omega
+    simp [boxStoreU128, boxStore, hword, hgeneric]
+  · by_cases hbound : begin + 15 ≥ storage.length
+    · have hgeneric : begin + Scalar.u128.size > storage.length := by
+        simp only [Scalar.u128]
+        omega
+      simp [boxStoreU128, boxStore, hword, hbound, hgeneric]
+    · have hfit : begin + 16 ≤ storage.length := by omega
+      have hwrite := writeBytes_sixteen_eq_set storage begin
+        (Scalar.byteAt value 0) (Scalar.byteAt value 8)
+        (Scalar.byteAt value 16) (Scalar.byteAt value 24)
+        (Scalar.byteAt value 32) (Scalar.byteAt value 40)
+        (Scalar.byteAt value 48) (Scalar.byteAt value 56)
+        (Scalar.byteAt value 64) (Scalar.byteAt value 72)
+        (Scalar.byteAt value 80) (Scalar.byteAt value 88)
+        (Scalar.byteAt value 96) (Scalar.byteAt value 104)
+        (Scalar.byteAt value 112) (Scalar.byteAt value 120) hfit
+      simp [boxStoreU128, boxStore, hword, hbound, writeBytes,
+        Scalar.u128, Scalar.encode128]
+      exact ⟨hfit, by
+        simpa only [List.cons_append, List.nil_append, List.append_assoc] using
+          hwrite.symm⟩
+
+/-- A successful source-shaped sixteen-byte Box load returns exactly the owned
+logical value and preserves exclusive ownership while exposing its read trace. -/
+theorem boxLoadU128_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {block : Block} {storage : List Byte}
+    {value expected : BitVec 128} (hstorageMax : storage.length ≤
+      Luffs.Runtime.TLSF.usizeMax)
+    (hload : boxLoadU128 storage block.offset = some value)
+    (hencoded : (storage.drop block.offset).take Scalar.u128.size =
+      Scalar.u128.encode expected)
+    {contents : ContentsMap} {mem : Memory} (hrep : ContentsRep contents mem) :
+    value = expected ∧
+      (contentsInterp (G := G) contents ∗
+          Luffs.Containers.Box.Owns Scalar.u128 pool block expected ⊢
+        (contentsInterp contents ∗
+          Luffs.Containers.Box.Owns Scalar.u128 pool block expected) ∗
+          ⌜ReadSteps (block.region pool).base (Scalar.u128.encode expected) mem ∧
+            Scalar.u128.decode (Scalar.u128.encode expected) = some expected⌝) := by
+  have hgeneric : boxLoad Scalar.u128 storage block.offset = some value := by
+    rw [← boxLoadU128_eq_generic storage block.offset hstorageMax]
+    exact hload
+  have hexpected : boxLoad Scalar.u128 storage block.offset = some expected :=
+    boxLoad_of_encoded Scalar.u128 storage block.offset expected
+      (boxLoad_result hgeneric).1 hencoded
+  have hvalue : value = expected := by
+    rw [hgeneric] at hexpected
+    exact Option.some.inj hexpected
+  refine ⟨hvalue, ?_⟩
+  exact Luffs.Containers.Box.deref_read Scalar.u128 hrep
+
+/-- A successful source-shaped sixteen-byte Box store inherits the generic
+frame-preserving ownership update and exact closed write WP. -/
+theorem boxStoreU128_owns_wp {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {block : Block} {storage nextStorage : List Byte}
+    (oldValue newValue : BitVec 128)
+    (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hstore : boxStoreU128 storage block.offset newValue = some nextStorage)
+    (contents : ContentsMap) (mem : Memory) (hrep : ContentsRep contents mem) :
+    nextStorage = writeBytes storage block.offset (Scalar.u128.encode newValue) ∧
+      (contentsInterp (G := G) contents ∗
+          Luffs.Containers.Box.Owns Scalar.u128 pool block oldValue ==∗
+        (contentsInterp
+            (insertBytes contents (block.region pool).base
+              (Scalar.u128.encode newValue)) ∗
+          Luffs.Containers.Box.Owns Scalar.u128 pool block newValue) ∗
+          ⌜∃ next,
+            WriteSteps (block.region pool).base (Scalar.u128.encode newValue)
+              mem next ∧
+            (⊢@{Iris.IProp GF} Program.wp
+              (Program.writeBytes (block.region pool).base
+                (Scalar.u128.encode newValue))
+              mem (fun final => final = next))⌝) := by
+  have hgeneric : boxStore Scalar.u128 storage block.offset newValue =
+      some nextStorage := by
+    rw [← boxStoreU128_eq_generic storage block.offset newValue hstorageMax]
+    exact hstore
+  exact ⟨(boxStore_result hgeneric).2, Luffs.Containers.Box.store_wp Scalar.u128
+    oldValue newValue contents mem hrep⟩
 
 /-- A successful concrete eight-byte Box load returns the logical value encoded
 in the owned allocation and preserves both authoritative contents and exclusive

@@ -31,6 +31,15 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   arithmetic, `mmap`, and `munmap`.
 - [ ] Prove weakest-precondition rules and adequacy: a closed proved Luffs
   program cannot get stuck on memory access.
+  The primitive-effect core now has dependent finite programs, complete
+  execution semantics, and an extensional Iris weakest precondition requiring
+  both existence of an execution and the postcondition for every execution.
+  `Program.wp_adequacy` extracts a concrete complete run from a closed Iris
+  proof. Pointer-offset, nondeterministic `mmap`, and exact `munmap` rules are
+  proved; authoritative owned loads and stores now entail WPs with exact
+  unchanged/written memory postconditions. Compiler-generated control flow
+  still needs to compose these primitive WPs before this end-to-end item can
+  be checked off.
 - [ ] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
 

@@ -272,4 +272,165 @@ theorem owned_store_safe {GF : BundledGFunctors} [G : ByteRegionGS GF]
   ipureintro
   exact (store_safe_iff mem p value).2 ((hrep p).1 hlookup)
 
+/-- Closed, finite memory-effect programs. The continuation makes subsequent
+control flow depend on the exact result of the preceding primitive. -/
+inductive Program where
+  | done
+  | call (op : Prim) (next : Result → Program)
+
+/-- Complete execution of a closed primitive program. A missing `PrimStep`
+constructor prevents this relation from being constructed, representing a
+stuck memory access. -/
+inductive Program.Exec : Program → Memory → Memory → Prop where
+  | done {mem} : Exec .done mem mem
+  | call {op next mem result after final}
+      (hstep : PrimStep op mem result after)
+      (htail : Exec (next result) after final) :
+      Exec (.call op next) mem final
+
+def Program.Safe (program : Program) (mem : Memory) : Prop :=
+  ∃ final, Program.Exec program mem final
+
+def Program.Spec (program : Program) (mem : Memory)
+    (post : Memory → Prop) : Prop :=
+  Program.Safe program mem ∧
+    ∀ final, Program.Exec program mem final → post final
+
+/-- The semantic weakest precondition embedded in Iris: execution exists, and
+every possible complete execution establishes the postcondition. The first
+conjunct is precisely the no-stuck obligation; the second is demonic over the
+nondeterministic `mmap` base choice. -/
+def Program.wp {GF : BundledGFunctors} (program : Program) (mem : Memory)
+    (post : Memory → Prop) : IProp GF :=
+  iprop(⌜Program.Spec program mem post⌝)
+
+theorem Program.wp_done {GF : BundledGFunctors} (mem : Memory)
+    (post : Memory → Prop) (hpost : post mem) :
+    ⊢@{IProp GF} Program.wp .done mem post := by
+  unfold Program.wp
+  ipureintro
+  exact ⟨⟨mem, .done⟩, fun final hexec => by cases hexec; exact hpost⟩
+
+theorem Program.wp_call {GF : BundledGFunctors} {op : Prim}
+    {next : Result → Program} {mem : Memory} {post : Memory → Prop}
+    (hsafe : Prim.safe op mem)
+    (hnext : ∀ result after, PrimStep op mem result after →
+      Program.Safe (next result) after ∧
+        ∀ final, Program.Exec (next result) after final → post final) :
+    ⊢@{IProp GF} Program.wp (.call op next) mem post := by
+  unfold Program.wp
+  ipureintro
+  obtain ⟨result, after, hstep⟩ := hsafe
+  obtain ⟨⟨final, htail⟩, _⟩ := hnext result after hstep
+  refine ⟨⟨final, .call hstep htail⟩, ?_⟩
+  intro final hexec
+  cases hexec with
+  | call hstep' htail' => exact (hnext _ _ hstep').2 final htail'
+
+/-- Iris adequacy for the Luffs primitive language. This is the closed-proof
+boundary: semantic validity of a WP yields an actual complete execution. -/
+theorem Program.wp_adequacy {GF : BundledGFunctors} {program : Program}
+    {mem : Memory} {post : Memory → Prop}
+    (hwp : ⊢@{IProp GF} Program.wp program mem post) :
+    Program.Safe program mem ∧
+      ∀ final, Program.Exec program mem final → post final := by
+  apply pure_soundness (PROP := IProp GF)
+  exact hwp
+
+def Program.single (op : Prim) : Program := .call op (fun _ => .done)
+
+theorem Program.single_safe_iff (op : Prim) (mem : Memory) :
+    (Program.single op).Safe mem ↔ op.safe mem := by
+  constructor
+  · rintro ⟨final, hexec⟩
+    cases hexec with
+    | call hstep _ => exact ⟨_, _, hstep⟩
+  · rintro ⟨result, after, hstep⟩
+    exact ⟨after, .call hstep .done⟩
+
+theorem Program.single_wp {GF : BundledGFunctors} {op : Prim} {mem : Memory}
+    {post : Memory → Prop} (hsafe : op.safe mem)
+    (hpost : ∀ result after, PrimStep op mem result after → post after) :
+    ⊢@{IProp GF} Program.wp (Program.single op) mem post := by
+  unfold Program.wp
+  ipureintro
+  refine ⟨(Program.single_safe_iff op mem).2 hsafe, ?_⟩
+  intro final hexec
+  cases hexec with
+  | call hstep hdone =>
+      cases hdone
+      exact hpost _ _ hstep
+
+theorem offset_wp {GF : BundledGFunctors} (mem : Memory)
+    (base delta addrMax : Nat) (hbound : base + delta ≤ addrMax) :
+    ⊢@{IProp GF} Program.wp (Program.single (.offset base delta addrMax)) mem
+      (fun final => final = mem) := by
+  apply Program.single_wp ((offset_safe_iff mem base delta addrMax).2 hbound)
+  intro result after hstep
+  cases hstep
+  rfl
+
+theorem mmap_wp {GF : BundledGFunctors} {mem : Memory} {bytes align base : Nat}
+    (hbytes : 0 < bytes) (halign : 0 < align) (hbase : base % align = 0)
+    (hfresh : mem.regionUnmapped { base, bytes }) :
+    ⊢@{IProp GF} Program.wp (Program.single (.mmap bytes align)) mem
+      (fun final => ∃ chosen, chosen % align = 0 ∧
+        mem.regionUnmapped { base := chosen, bytes } ∧
+        final = mem.mapZeroed { base := chosen, bytes }) := by
+  apply Program.single_wp
+    ⟨.region { base, bytes }, mem.mapZeroed { base, bytes },
+      .mmap hbytes halign hbase hfresh⟩
+  intro result after hstep
+  cases hstep with
+  | mmap _ _ hchosen hfreshChosen =>
+      exact ⟨_, hchosen, hfreshChosen, rfl⟩
+
+theorem munmap_wp {GF : BundledGFunctors} {mem : Memory} {region : Region}
+    (hmapped : mem.regionMapped region) :
+    ⊢@{IProp GF} Program.wp (Program.single (.munmap region)) mem
+      (fun final => final = mem.unmap region) := by
+  apply Program.single_wp ⟨.unit, mem.unmap region, .munmap hmapped⟩
+  intro result after hstep
+  cases hstep
+  rfl
+
+/-- Full WP rule for an owned load. The authoritative interpretation and
+client fragment are retained as the premise; the conclusion is a closed
+no-stuck program proof, suitable for `Program.wp_adequacy`. -/
+theorem owned_load_wp {GF : BundledGFunctors} [G : ByteRegionGS GF]
+    {allocated : ByteMap Unit} {mem : Memory} {r : Region} {p : Addr}
+    (hrep : MemoryRep allocated mem) (hp : r.contains p) :
+    byteHeapInterp (G := G) allocated ∗ ghostOwnsBytes r ⊢
+      Program.wp (Program.single (.load p)) mem (fun final => final = mem) := by
+  iintro H
+  ihave %hsafe := owned_load_safe (G := G) hrep hp $$ H
+  unfold Program.wp
+  ipureintro
+  refine ⟨(Program.single_safe_iff (.load p) mem).2 hsafe, ?_⟩
+  intro final hexec
+  cases hexec with
+  | call hstep hdone =>
+      cases hstep
+      cases hdone
+      rfl
+
+/-- Full WP rule for an owned store. -/
+theorem owned_store_wp {GF : BundledGFunctors} [G : ByteRegionGS GF]
+    {allocated : ByteMap Unit} {mem : Memory} {r : Region} {p : Addr}
+    (hrep : MemoryRep allocated mem) (hp : r.contains p) (value : Byte) :
+    byteHeapInterp (G := G) allocated ∗ ghostOwnsBytes r ⊢
+      Program.wp (Program.single (.store p value)) mem
+        (fun final => final = mem.write p value) := by
+  iintro H
+  ihave %hsafe := owned_store_safe (G := G) hrep hp value $$ H
+  unfold Program.wp
+  ipureintro
+  refine ⟨(Program.single_safe_iff (.store p value) mem).2 hsafe, ?_⟩
+  intro final hexec
+  cases hexec with
+  | call hstep hdone =>
+      cases hstep
+      cases hdone
+      rfl
+
 end Luffs.Memory

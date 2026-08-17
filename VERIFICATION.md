@@ -297,7 +297,10 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   outside `pool.bytes`. The pointer-facing `Box<u8>` drop is source-refined to
   that exact conversion followed by the verified offset-based deallocator;
   success identifies the live physical block and consumes its exact Iris byte
-  capability.
+  capability. Pointer-facing `Vec<u8>` drop inherits the same validation and
+  consumes the exact initialized Vec ownership. Generated Lean semantics for
+  both wrappers are now composed from the generated pointer-conversion and
+  offset-drop models instead of directly aliasing their reference targets.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 
 The first concrete `stdlib/tlsf.luffs` runtime layer now implements bounded

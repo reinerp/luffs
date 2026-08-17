@@ -3188,14 +3188,26 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
         ));
     }
     for model in &module.tlsf_box_drop_ptr_models {
-        out.push_str(&format!(
-            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (pool_base pool_bytes pointer : Nat) : Option Luffs.Runtime.TLSF.CoalesceClassResult :=\n  {} offsets sizes is_free prev_free count second first heads next previous pool_base pool_bytes pointer\n\n",
-            model.name, model.refines
-        ));
-        out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
-            model.name, model.name, model.refines
-        ));
+        let signature = format!(
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (pool_base pool_bytes pointer : Nat) : Option Luffs.Runtime.TLSF.CoalesceClassResult :=\n",
+            model.name
+        );
+        out.push_str(&signature);
+        if model.name == "tlsf_box_drop_ptr_u8" {
+            out.push_str("  do\n    let offset ← tlsf_pointer_to_offset_model pool_base pool_bytes pointer\n    tlsf_box_drop_u8_model offsets sizes is_free prev_free count second first heads next previous offset\n\n");
+            out.push_str(&format!(
+                "theorem {}_refines : {}_model = {} := by\n  unfold {}_model\n  rw [tlsf_pointer_to_offset_refines, tlsf_box_drop_u8_refines]\n  rfl\n\n",
+                model.name,
+                model.name, model.refines, model.name
+            ));
+        } else {
+            out.push_str("  tlsf_box_drop_ptr_u8_model offsets sizes is_free prev_free count second first heads next previous pool_base pool_bytes pointer\n\n");
+            out.push_str(&format!(
+                "theorem {}_refines : {}_model = {} := by\n  unfold {}_model\n  rw [tlsf_box_drop_ptr_u8_refines]\n\n",
+                model.name,
+                model.name, model.refines, model.name
+            ));
+        }
     }
     for model in &module.tlsf_vec_new_models {
         out.push_str(&format!(
@@ -3229,12 +3241,12 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
     }
     for model in &module.tlsf_vec_drop_models {
         out.push_str(&format!(
-            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (offset : Nat) : Option Luffs.Runtime.TLSF.CoalesceClassResult :=\n  {} offsets sizes is_free prev_free count second first heads next previous offset\n\n",
-            model.name, model.refines
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (offset : Nat) : Option Luffs.Runtime.TLSF.CoalesceClassResult :=\n  tlsf_box_drop_u8_model offsets sizes is_free prev_free count second first heads next previous offset\n\n",
+            model.name
         ));
         out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
-            model.name, model.name, model.refines
+            "theorem {}_refines : {}_model = {} := by\n  unfold {}_model\n  rw [tlsf_box_drop_u8_refines]\n\n",
+            model.name, model.name, model.refines, model.name
         ));
     }
     for model in &module.tlsf_vec_grow_models {
@@ -3556,6 +3568,10 @@ mod tests {
         assert!(generated.contains(
             "theorem tlsf_box_drop_ptr_u8_refines : tlsf_box_drop_ptr_u8_model = Luffs.Runtime.Containers.boxDropPointerU8Arrays"
         ));
+        assert!(
+            generated
+                .contains("let offset ← tlsf_pointer_to_offset_model pool_base pool_bytes pointer")
+        );
         assert!(generated.contains(
             "theorem tlsf_vec_new_u8_refines : tlsf_vec_new_u8_model = Luffs.Runtime.Containers.vecNewU8Arrays"
         ));
@@ -3570,6 +3586,9 @@ mod tests {
         ));
         assert!(generated.contains(
             "theorem tlsf_vec_drop_ptr_u8_refines : tlsf_vec_drop_ptr_u8_model = Luffs.Runtime.Containers.boxDropPointerU8Arrays"
+        ));
+        assert!(generated.contains(
+            "tlsf_box_drop_ptr_u8_model offsets sizes is_free prev_free count second first heads next previous pool_base pool_bytes pointer"
         ));
         assert!(generated.contains(
             "theorem tlsf_vec_grow_u8_refines : tlsf_vec_grow_u8_model = Luffs.Runtime.Containers.vecGrowU8Arrays"

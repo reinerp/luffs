@@ -1987,10 +1987,11 @@ def removeClassArrays (second : List (BitVec 32)) (first : BitVec 64)
   if block ≥ next.length then none else
   if block ≥ previous.length then none else
   let successor := next[block]?.getD next.length
+  let predecessor := previous[block]?.getD next.length
   match removeArrays heads next previous bin block with
   | none => none
   | some (nextHeads, nextLinks, nextPrevious) =>
-      if successor ≥ next.length then
+      if predecessor ≥ next.length ∧ successor ≥ next.length then
         let nextSecond := clearClassBit second bin
         let nextFirst :=
           if nextSecond[fl]?.getD 0 = 0 then clearWordBit first fl
@@ -2010,7 +2011,8 @@ theorem removeClassArrays_result
       block < next.length ∧ block < previous.length ∧
       removeArrays heads next previous bin block =
         some (result.heads, result.next, result.previous) ∧
-      if next[block]?.getD next.length ≥ next.length then
+      if previous[block]?.getD next.length ≥ next.length ∧
+          next[block]?.getD next.length ≥ next.length then
         result.second = clearClassBit second bin ∧
           result.first =
             if result.second[bin / 32]?.getD 0 = 0 then
@@ -2211,6 +2213,21 @@ def linked (state : Metadata) : Nat → List Nat → Prop
       state.next[block]? = some (rest.head?.getD state.next.length) ∧
       linked state block rest
 
+def chainPrevious : Nat → List Nat → Nat
+  | expected, [] => expected
+  | _, head :: tail => chainPrevious head tail
+
+theorem chainPrevious_mem {expected : Nat} {pre : List Nat}
+    (hnonempty : pre ≠ []) : chainPrevious expected pre ∈ pre := by
+  induction pre generalizing expected with
+  | nil => contradiction
+  | cons head tail ih =>
+      cases tail with
+      | nil => simp [chainPrevious]
+      | cons next more =>
+        simp only [chainPrevious]
+        exact List.mem_cons_of_mem head (ih (expected := head) (by simp))
+
 theorem linked_member_bounds {state : Metadata} {expected : Nat}
     {chain : List Nat} (hlinked : linked state expected chain)
     {node : Nat} (hmem : node ∈ chain) :
@@ -2224,6 +2241,70 @@ theorem linked_member_bounds {state : Metadata} {expected : Nat}
       rcases hmem with rfl | htail
       · exact ⟨hheadNext, hheadPrevious⟩
       · exact ih hrest htail
+
+theorem linked_decomposition_links {state : Metadata} {expected block : Nat}
+    (pre rest : List Nat)
+    (hlinked : linked state expected (pre ++ block :: rest)) :
+    block < state.next.length ∧ block < state.previous.length ∧
+      state.previous[block]? = some (chainPrevious expected pre) ∧
+      state.next[block]? = some (rest.head?.getD state.next.length) := by
+  induction pre generalizing expected with
+  | nil =>
+      simp only [List.nil_append, linked] at hlinked
+      exact ⟨hlinked.1, hlinked.2.1,
+        by simpa [chainPrevious] using hlinked.2.2.1,
+        hlinked.2.2.2.1⟩
+  | cons head tail ih =>
+      simp only [List.cons_append, linked] at hlinked
+      have htail := hlinked.2.2.2.2
+      have result := ih (expected := head) htail
+      simpa [chainPrevious] using result
+
+theorem linked_decomposition_successor_is_sentinel_iff
+    {state : Metadata} {expected block : Nat} (pre rest : List Nat)
+    (hlinked : linked state expected (pre ++ block :: rest)) :
+    state.next[block]?.getD state.next.length ≥ state.next.length ↔
+      rest = [] := by
+  have hlinks := linked_decomposition_links pre rest hlinked
+  rw [hlinks.2.2.2]
+  cases rest with
+  | nil => simp
+  | cons successor tail =>
+      have hbound : successor < state.next.length :=
+        (linked_member_bounds hlinked (by simp)).1
+      simp [hbound]
+
+theorem linked_decomposition_predecessor_is_sentinel_iff
+    {state : Metadata} {block : Nat} (pre rest : List Nat)
+    (hlinked : linked state state.next.length (pre ++ block :: rest)) :
+    state.previous[block]?.getD state.next.length ≥ state.next.length ↔
+      pre = [] := by
+  have hlinks := linked_decomposition_links pre rest hlinked
+  rw [hlinks.2.2.1]
+  constructor
+  · intro hsentinel
+    cases pre with
+    | nil => rfl
+    | cons head tail =>
+      exfalso
+      have hmem : chainPrevious state.next.length (head :: tail) ∈
+          (head :: tail) ++ block :: rest := by
+        exact List.mem_append_left _ (chainPrevious_mem (by simp))
+      have hbound := (linked_member_bounds hlinked hmem).1
+      simp only [Option.getD_some] at hsentinel
+      omega
+  · intro hempty
+    subst pre
+    simp [chainPrevious]
+
+theorem linked_decomposition_is_singleton_iff
+    {state : Metadata} {block : Nat} (pre rest : List Nat)
+    (hlinked : linked state state.next.length (pre ++ block :: rest)) :
+    (state.previous[block]?.getD state.next.length ≥ state.next.length ∧
+        state.next[block]?.getD state.next.length ≥ state.next.length) ↔
+      pre = [] ∧ rest = [] := by
+  rw [linked_decomposition_predecessor_is_sentinel_iff pre rest hlinked,
+    linked_decomposition_successor_is_sentinel_iff pre rest hlinked]
 
 /-- A logical bin chain is represented by the head table and intrusive links. -/
 def RepresentsBin (state : Metadata) (bin : Nat) (chain : List Nat) : Prop :=
@@ -2750,6 +2831,98 @@ theorem remove_result {state nextState : Metadata} {bin block : Nat}
       split at hremove <;> try contradiction
       next hprevious =>
         exact ⟨by omega, by omega, by omega⟩
+
+theorem remove_effect {state nextState : Metadata} {bin block : Nat}
+    (hremove : remove state bin block = some nextState) :
+    let successor := state.next[block]?.getD state.next.length
+    let predecessor := state.previous[block]?.getD state.next.length
+    nextState.heads =
+        (if predecessor ≥ state.next.length then state.heads.set bin successor
+        else state.heads) ∧
+      nextState.next =
+        ((if predecessor < state.next.length then
+          state.next.set predecessor successor else state.next).set
+            block state.next.length) ∧
+      nextState.previous =
+        (if successor < state.previous.length then
+          state.previous.set successor predecessor else state.previous).set
+            block state.previous.length := by
+  have hbounds := remove_result hremove
+  rcases hbounds with ⟨hbin, hnext, hprevious⟩
+  unfold remove at hremove
+  simp only [Nat.not_le.mpr hbin, Nat.not_le.mpr hnext,
+    Nat.not_le.mpr hprevious, if_false] at hremove
+  simp only [Option.some.injEq] at hremove
+  subst nextState
+  exact ⟨rfl, rfl, rfl⟩
+
+theorem remove_preserves_other_node {state nextState : Metadata}
+    {bin block node : Nat}
+    (hremove : remove state bin block = some nextState)
+    (hblock : node ≠ block)
+    (hpredecessor : node ≠ state.previous[block]?.getD state.next.length)
+    (hsuccessor : node ≠ state.next[block]?.getD state.next.length) :
+    nextState.next[node]? = state.next[node]? ∧
+      nextState.previous[node]? = state.previous[node]? := by
+  have heffect := remove_effect hremove
+  dsimp only at heffect
+  rcases heffect with ⟨_, hnext, hprevious⟩
+  constructor
+  · rw [hnext]
+    split
+    · rw [List.getElem?_set_ne (Ne.symm hblock),
+        List.getElem?_set_ne (Ne.symm hpredecessor)]
+    · rw [List.getElem?_set_ne (Ne.symm hblock)]
+  · rw [hprevious]
+    split
+    · rw [List.getElem?_set_ne (Ne.symm hblock),
+        List.getElem?_set_ne (Ne.symm hsuccessor)]
+    · rw [List.getElem?_set_ne (Ne.symm hblock)]
+
+theorem remove_heads_of_predecessor_lt {state nextState : Metadata}
+    {bin block : Nat} (hremove : remove state bin block = some nextState)
+    (hpredecessor : state.previous[block]?.getD state.next.length <
+      state.next.length) :
+    nextState.heads = state.heads := by
+  have heffect := (remove_effect hremove).1
+  rw [heffect]
+  simp [Nat.not_le.mpr hpredecessor]
+
+theorem remove_bypasses_predecessor {state nextState : Metadata}
+    {bin block predecessor successor : Nat}
+    (hremove : remove state bin block = some nextState)
+    (hpred : state.previous[block]? = some predecessor)
+    (hsucc : state.next[block]? = some successor)
+    (hpredecessorBound : predecessor < state.next.length)
+    (hne : predecessor ≠ block) :
+    nextState.next[predecessor]? = some successor := by
+  have heffect := (remove_effect hremove).2.1
+  rw [heffect]
+  have hpredValue : state.previous[block]?.getD state.next.length =
+      predecessor := by simp [hpred]
+  have hsuccValue : state.next[block]?.getD state.next.length = successor := by
+    simp [hsucc]
+  simp only [hpredValue, hsuccValue, hpredecessorBound, if_true]
+  rw [List.getElem?_set_ne (Ne.symm hne),
+    List.getElem?_set_self hpredecessorBound]
+
+theorem remove_bypasses_successor {state nextState : Metadata}
+    {bin block predecessor successor : Nat}
+    (hremove : remove state bin block = some nextState)
+    (hpred : state.previous[block]? = some predecessor)
+    (hsucc : state.next[block]? = some successor)
+    (hsuccessorBound : successor < state.previous.length)
+    (hne : successor ≠ block) :
+    nextState.previous[successor]? = some predecessor := by
+  have heffect := (remove_effect hremove).2.2
+  rw [heffect]
+  have hpredValue : state.previous[block]?.getD state.next.length =
+      predecessor := by simp [hpred]
+  have hsuccValue : state.next[block]?.getD state.next.length = successor := by
+    simp [hsucc]
+  simp only [hpredValue, hsuccValue, hsuccessorBound, if_true]
+  rw [List.getElem?_set_ne (Ne.symm hne),
+    List.getElem?_set_self hsuccessorBound]
 
 theorem remove_preserves_lengths {state nextState : Metadata} {bin block : Nat}
     (hremove : remove state bin block = some nextState) :

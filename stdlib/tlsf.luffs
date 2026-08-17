@@ -100,8 +100,9 @@ fn tlsf_remove_class(second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64;
     if block >= previous.len() { return None; }
 
     let successor: usize = next[block];
+    let predecessor: usize = previous[block];
     tlsf_remove(heads, next, previous, bin, block)?;
-    if successor >= next.len() {
+    if predecessor >= next.len() && successor >= next.len() {
         let old_second: u32 = second_nonempty[fl];
         let second_mask: u32 = 1 << sl;
         let new_second: u32 = old_second & !second_mask;

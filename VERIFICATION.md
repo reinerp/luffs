@@ -188,7 +188,10 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   without conflating a physical-array index with the block's byte offset.
   Concrete arbitrary-node class removal is now lowered from Luffs. It updates
   intrusive links and clears the selected second-level bit, plus its
-  first-level bit exactly when that word becomes empty; its compiler-generated
+  first-level bit exactly when that word becomes empty. The empty-class test is
+  proved to require both a sentinel predecessor and successor: a proof-driven
+  audit caught and fixed the incorrect tail-only test, which would have hidden
+  a still-live prefix from bitmap search. Its compiler-generated
   model is definitionally tied to the checked Lean transformer. The fixed
   physical-header arrays now have an explicit active-prefix
   representation and the concrete free entry point rejects selectors outside

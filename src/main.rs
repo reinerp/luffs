@@ -1519,8 +1519,9 @@ fn parse_tlsf_remove_class_models(source: &str) -> Vec<TlsfInsertClassModel> {
         "if block >= next.len() { return None; }",
         "if block >= previous.len() { return None; }",
         "let successor: usize = next[block];",
+        "let predecessor: usize = previous[block];",
         "tlsf_remove(heads, next, previous, bin, block)?;",
-        "if successor >= next.len() {",
+        "if predecessor >= next.len() && successor >= next.len() {",
         "let old_second: u32 = second_nonempty[fl];",
         "let second_mask: u32 = 1 << sl;",
         "let new_second: u32 = old_second & !second_mask;",
@@ -2662,6 +2663,16 @@ mod tests {
             include_str!("../stdlib/tlsf.luffs").replace("u64::MAX << bit", "u64::MAX >> bit");
         let m = parse(&source).unwrap();
         assert!(m.tlsf_find_nonempty_bin_models.is_empty());
+    }
+
+    #[test]
+    fn tlsf_arbitrary_remove_rejects_tail_only_bitmap_clear() {
+        let source = include_str!("../stdlib/tlsf.luffs").replace(
+            "if predecessor >= next.len() && successor >= next.len() {",
+            "if successor >= next.len() {",
+        );
+        let m = parse(&source).unwrap();
+        assert!(m.tlsf_remove_class_models.is_empty());
     }
 
     #[test]

@@ -224,8 +224,13 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   Iris-Lean `OwnsFree` equivalence showing that adjacent byte capabilities are
   recombined without loss or duplication. Proving that the composed concrete
   bin arrays can therefore be composed with the abstract removals; the
-  remaining coalescing obligation is to carry these results through the two
-  removals, physical compaction, and merged-node insertion as one theorem.
+  two removals and merged-node insertion are now composed as a single bin
+  refinement theorem. It carries validity, both bitmap levels, every intrusive
+  chain, and cross-bin offset disjointness through all three operations;
+  insertion itself now has a separate proof that fresh offsets preserve that
+  disjointness invariant. The remaining coalescing obligation is to identify
+  the runtime-classified blocks with the abstract adjacent pair and combine
+  this bin theorem with physical compaction as one allocator transition.
   Pointer-to-offset validation belongs at the mmap-backed pool boundary.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 

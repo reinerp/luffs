@@ -40,6 +40,15 @@ theorem classifySizeBin_result {size encoded : Nat}
       simp only [encodeSizeClass, firstLevelCount, secondLevelCount] at hfl hsl ⊢
       omega
 
+theorem classifySizeBin_refines_block {block : Block} {encoded : Nat}
+    (hclass : classifySizeBin block.bytes = some encoded) :
+    ∃ cls, Bins.classifyBlock? block = some cls ∧
+      encoded = encodeSizeClass cls := by
+  obtain ⟨hsize, hmax, hencoded, _⟩ := classifySizeBin_result hclass
+  let cls := sizeClass block.bytes hsize hmax
+  refine ⟨cls, ?_, hencoded⟩
+  simp [Bins.classifyBlock?, cls, hsize, hmax]
+
 /-- Pure state used by the fixed parallel-array TLSF lowering. -/
 structure Metadata where
   heads : List Nat
@@ -2903,6 +2912,52 @@ theorem insertClassArrays_preserves_bins
     rw [hchain]
     exact hframe
 
+theorem insert_preserves_offsets_disjoint
+    {state : Bins.State} {cls : SizeClass} {inserted : Block}
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hfresh : ∀ query, inserted.offset ∉
+      (state.chains query).map Block.offset) :
+    BinsOffsetsDisjoint (state.insert cls inserted) := by
+  have hselected : ((state.insert cls inserted).chains cls).map Block.offset =
+      inserted.offset :: (state.chains cls).map Block.offset := by
+    cases hcurrent : state.chains cls <;>
+      simp [Bins.State.insert, Bins.State.replaceChain,
+        Bins.State.fromChains, Bins.Chains.replace,
+        FreeList.insertFront, FreeList.withLinks, hcurrent]
+  intro left right hne offset hleft hright
+  by_cases hleftCls : left = cls
+  · subst left
+    have hrightCls : right ≠ cls := fun h => hne h.symm
+    rw [hselected] at hleft
+    have hrightOld : offset ∈ (state.chains right).map Block.offset := by
+      simpa [Bins.State.insert,
+        Bins.replaceChain_other state (FreeList.insertFront inserted
+          (state.chains cls)) hrightCls] using hright
+    simp only [List.mem_cons] at hleft
+    rcases hleft with hoffset | hleftOld
+    · exact (hfresh right) (by simpa [hoffset] using hrightOld)
+    · exact hdisjoint hne offset hleftOld hrightOld
+  · by_cases hrightCls : right = cls
+    · subst right
+      have hleftOld : offset ∈ (state.chains left).map Block.offset := by
+        simpa [Bins.State.insert,
+          Bins.replaceChain_other state (FreeList.insertFront inserted
+            (state.chains cls)) hleftCls] using hleft
+      rw [hselected] at hright
+      simp only [List.mem_cons] at hright
+      rcases hright with hoffset | hrightOld
+      · exact (hfresh left) (by simpa [hoffset] using hleftOld)
+      · exact hdisjoint hne offset hleftOld hrightOld
+    · have hleftOld : offset ∈ (state.chains left).map Block.offset := by
+        simpa [Bins.State.insert,
+          Bins.replaceChain_other state (FreeList.insertFront inserted
+            (state.chains cls)) hleftCls] using hleft
+      have hrightOld : offset ∈ (state.chains right).map Block.offset := by
+        simpa [Bins.State.insert,
+          Bins.replaceChain_other state (FreeList.insertFront inserted
+            (state.chains cls)) hrightCls] using hright
+      exact hdisjoint hne offset hleftOld hrightOld
+
 /-- End-to-end refinement of the concrete Luffs class insertion to the
 abstract TLSF bin transition, including intrusive chains and both cache levels. -/
 theorem insertClassArrays_refines_insert
@@ -3462,6 +3517,60 @@ theorem removeClassArrays_refines_removeOffset
       hremoveOffset hremove,
     removeOffset_preserves_offsets_disjoint hdisjoint hremoveOffset,
     hbitmaps.1, hbitmaps.2⟩
+
+/-- Compositional bin proof for the remove-left/remove-right/insert-merged core
+of coalescing. -/
+theorem removeRemoveInsert_refines
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat}
+    {leftBin rightBin mergedBin leftOffset rightOffset : Nat}
+    {withoutLeft withoutRight : RemoveClassResult}
+    {inserted : InsertClassResult}
+    {state afterLeft afterRight : Bins.State}
+    {leftClass rightClass mergedClass : SizeClass}
+    {removedLeft removedRight merged : Block}
+    (hvalid : Bins.Valid state)
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hleftBin : leftBin = encodeSizeClass leftClass)
+    (hrightBin : rightBin = encodeSizeClass rightClass)
+    (hmergedBin : mergedBin = encodeSizeClass mergedClass)
+    (hmergedOffset : leftOffset = merged.offset)
+    (hremoveLeftAbstract : state.removeOffset leftClass leftOffset =
+      some (removedLeft, afterLeft))
+    (hremoveRightAbstract : afterLeft.removeOffset rightClass rightOffset =
+      some (removedRight, afterRight))
+    (hbelongs : Bins.Belongs mergedClass merged)
+    (hfresh : ∀ query, merged.offset ∉
+      (afterRight.chains query).map Block.offset)
+    (hremoveLeft : removeClassArrays second first heads next previous
+      leftBin leftOffset = some withoutLeft)
+    (hremoveRight : removeClassArrays withoutLeft.second withoutLeft.first
+      withoutLeft.heads withoutLeft.next withoutLeft.previous
+      rightBin rightOffset = some withoutRight)
+    (hinsert : insertClassArrays withoutRight.second withoutRight.first
+      withoutRight.heads withoutRight.next withoutRight.previous
+      mergedBin leftOffset = some inserted) :
+    let finalState := afterRight.insert mergedClass merged
+    Bins.Valid finalState ∧
+      RepresentsBins (Metadata.mk inserted.heads inserted.next inserted.previous)
+        finalState ∧
+      BinsOffsetsDisjoint finalState ∧
+      RepresentsSecondBitmap inserted.second finalState ∧
+      FirstBitmapRep inserted.first inserted.second := by
+  have hleft := removeClassArrays_refines_removeOffset hvalid hsecond hfirst
+    hbins hdisjoint hleftBin hremoveLeftAbstract hremoveLeft
+  have hright := removeClassArrays_refines_removeOffset hleft.1 hleft.2.2.2.1
+    hleft.2.2.2.2 hleft.2.1 hleft.2.2.1 hrightBin
+    hremoveRightAbstract hremoveRight
+  have hinsertion := insertClassArrays_refines_insert hright.1
+    hright.2.2.2.1 hright.2.2.2.2 hright.2.1 hright.2.2.1 hfresh
+    hbelongs hmergedOffset hmergedBin hinsert
+  exact ⟨hinsertion.1, hinsertion.2.1,
+    insert_preserves_offsets_disjoint hright.2.2.1 hfresh,
+    hinsertion.2.2.1, hinsertion.2.2.2⟩
 
 theorem remove_front_complete {state : Metadata} {bin block : Nat}
     {rest : List Nat} (hrep : RepresentsBin state bin (block :: rest)) :

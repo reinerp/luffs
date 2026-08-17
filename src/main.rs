@@ -49,6 +49,7 @@ struct ArrayModel {
     lets: Vec<(String, String)>,
     assignment: (String, String),
     result: String,
+    returns_unit: bool,
     refines: Option<String>,
 }
 
@@ -319,7 +320,10 @@ fn parse_scalar_models(source: &str) -> Vec<ScalarModel> {
             let Some(open) = trimmed.find('(') else {
                 continue;
             };
-            let Some(close) = trimmed.rfind(')') else {
+            let Some(close) = trimmed[open + 1..]
+                .find(')')
+                .map(|offset| open + 1 + offset)
+            else {
                 continue;
             };
             if !trimmed[close + 1..].contains("-> Option<usize>") {
@@ -414,6 +418,7 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
         lets: Vec<(String, String)>,
         assignment: Option<(String, String)>,
         result: Option<String>,
+        returns_unit: bool,
         refines: Option<String>,
         depth: usize,
         eligible: bool,
@@ -434,10 +439,15 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
             let Some(open) = trimmed.find('(') else {
                 continue;
             };
-            let Some(close) = trimmed.rfind(')') else {
+            let Some(close) = trimmed[open + 1..]
+                .find(')')
+                .map(|offset| open + 1 + offset)
+            else {
                 continue;
             };
-            if !trimmed[close + 1..].contains("-> Option<usize>") {
+            let return_text = &trimmed[close + 1..];
+            let returns_unit = return_text.contains("-> Option<()>");
+            if !returns_unit && !return_text.contains("-> Option<usize>") {
                 next_refinement = None;
                 continue;
             }
@@ -472,6 +482,7 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
                 array,
                 params,
                 refines: next_refinement.take(),
+                returns_unit,
                 depth: 1,
                 eligible,
                 ..Pending::default()
@@ -528,6 +539,7 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
                     lets: model.lets,
                     assignment,
                     result,
+                    returns_unit: model.returns_unit,
                     refines: model.refines,
                 });
             }
@@ -888,7 +900,11 @@ fn lean(module: &Module) -> String {
             out.push_str(ty);
             out.push(')');
         }
-        out.push_str(" : Option (List (Fin 256) × Nat) :=\n  ");
+        if model.returns_unit {
+            out.push_str(" : Option (List (Fin 256)) :=\n  ");
+        } else {
+            out.push_str(" : Option (List (Fin 256) × Nat) :=\n  ");
+        }
         for guard in &model.guards {
             out.push_str("if ");
             out.push_str(guard);
@@ -911,8 +927,10 @@ fn lean(module: &Module) -> String {
         out.push_str(&model.assignment.1);
         out.push_str("\n  some (");
         out.push_str(&model.array);
-        out.push_str(", ");
-        out.push_str(&model.result);
+        if !model.returns_unit {
+            out.push_str(", ");
+            out.push_str(&model.result);
+        }
         out.push_str(")\n\n");
         if let Some(target) = &model.refines {
             out.push_str("theorem ");
@@ -1167,5 +1185,19 @@ mod tests {
         assert!(generated.contains(
             "theorem vec_push_u8_refines : vec_push_u8_model = Luffs.Runtime.Containers.vecPushU8"
         ));
+    }
+
+    #[test]
+    fn emits_unit_returning_array_state_semantics() {
+        let m = parse(
+            "// refines Luffs.Runtime.Containers.boxStoreU8\nfn store(storage: &mut [u8], begin: usize, value: u8) -> Option<()> {\nif begin >= storage.len() { return None; }\nstorage[begin] = value;\nSome(())\n}",
+        )
+        .unwrap();
+        assert_eq!(m.array_models.len(), 1);
+        let generated = lean(&m);
+        assert!(generated.contains(
+            "def store_model (storage : List (Fin 256)) (begin : Nat) (value : Fin 256) : Option (List (Fin 256))"
+        ));
+        assert!(generated.contains("some (storage)"));
     }
 }

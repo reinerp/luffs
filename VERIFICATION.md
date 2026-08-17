@@ -243,7 +243,9 @@ from the function body. `vec_len_after_pop` carries a `refines` declaration,
 and Lean checks extensional equality between that generated definition and the
 verified runtime model; source/model drift therefore fails `luffs check`.
 The same translation now covers one mutable byte slice, scalar parameters, one
-proved array update, and an `Option<usize>` result. `vec_push_u8` is translated
+proved array update, and `Option<usize>` or `Option<()>` results. Both Box byte
+initialization and replacement are checked against `boxStoreU8`, so their
+updated storage semantics now come from the Luffs bodies. `vec_push_u8` is translated
 from its two early-return guards and mutation into executable Lean semantics,
 then checked extensionally against `vecPushU8`; its result theorem connects that
 model to the abstract verified Vec handle transition. Multiple mutations,

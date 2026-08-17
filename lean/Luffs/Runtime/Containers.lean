@@ -16,7 +16,7 @@ def boxLoadU8 (storage : List Byte) (begin : Nat) : Option Byte :=
 
 def boxStoreU8 (storage : List Byte) (begin : Nat) (value : Byte) :
     Option (List Byte) :=
-  if begin < storage.length then some (storage.set begin value) else none
+  if begin ≥ storage.length then none else some (storage.set begin value)
 
 def vecPushU8 (storage : List Byte) (len capacity : Nat) (value : Byte) :
     Option (List Byte × Nat) :=
@@ -57,11 +57,11 @@ theorem boxStoreU8_result {storage next : List Byte} {begin : Nat}
       next.length = storage.length := by
   unfold boxStoreU8 at hstore
   split at hstore
+  next => contradiction
   next hbound =>
     simp only [Option.some.injEq] at hstore
     subst next
-    exact ⟨hbound, rfl, List.length_set⟩
-  next => contradiction
+    exact ⟨Nat.lt_of_not_ge hbound, rfl, List.length_set⟩
 
 theorem vecPushU8_result {storage next : List Byte} {len capacity nextLen : Nat}
     {value : Byte}

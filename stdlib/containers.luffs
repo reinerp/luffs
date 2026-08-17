@@ -1,6 +1,7 @@
 // Concrete byte-specialized Box and Vec runtime operations. Generic codecs are
 // represented in Lean; these functions are the first monomorphized lowering.
 
+// refines Luffs.Runtime.Containers.boxStoreU8
 fn box_initialize_u8(storage: &mut [u8], begin: usize, value: u8) -> Option<()> {
     if begin >= storage.len() { return None; }
     storage[begin] = value;
@@ -12,6 +13,7 @@ fn box_load_u8(storage: &[u8], begin: usize) -> Option<u8> {
     Some(storage[begin])
 }
 
+// refines Luffs.Runtime.Containers.boxStoreU8
 fn box_store_u8(storage: &mut [u8], begin: usize, value: u8) -> Option<()> {
     if begin >= storage.len() { return None; }
     storage[begin] = value;

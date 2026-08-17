@@ -200,6 +200,10 @@ fail. The compiler now recognizes the corresponding Luffs loop, generates its
 typed recursive Lean semantics, and checks equality to `findFit`; changes to
 the loop's guards, access order, suitability test, or increment invalidate this
 refinement. Eventual replacement by the two-level O(1) bitmap path remains.
+The four-word bitmap path now has a flat little-endian bit semantics as well.
+Its reference search is proved sound, complete, and minimal from `start_bin`;
+for at most four words every success is below 256. Refinement of the Luffs
+masked-first-word/`trailing_zeros` loop to this definition is the next step.
 
 The first target is sequential TLSF with fixed-size pools obtained from `mmap`.
 Growing pools, `realloc`, aligned allocation beyond the base alignment, and

@@ -1,8 +1,11 @@
 import Luffs.Allocator.TLSF.FreeList
+import Luffs.Allocator.TLSF.Bitmap
 
 set_option autoImplicit false
 
 namespace Luffs.Runtime.TLSF
+
+open Luffs.Allocator.TLSF
 
 /-- Pure state used by the fixed parallel-array TLSF lowering. -/
 structure Metadata where
@@ -115,6 +118,51 @@ theorem findFit_complete {sizes : List Nat} {flags : List (Fin 256)}
         · obtain ⟨found, hfound⟩ := ih hsize hflag
           exact ⟨found + 1, by
             simp only [findFit, hsuitable, if_false, hfound, Option.map_some]⟩
+
+def wordBits (word : Nat) : List Bool :=
+  List.ofFn fun bit : Fin 64 => word.testBit bit.val
+
+def bitmapBits : List Nat → List Bool
+  | [] => []
+  | word :: rest => wordBits word ++ bitmapBits rest
+
+/-- Flat semantics of the four-word nonempty-bin bitmap search. -/
+def findNonemptyBin (words : List Nat) (start : Nat) : Option Nat :=
+  firstSetFrom (bitmapBits words) start
+
+theorem wordBits_length (word : Nat) : (wordBits word).length = 64 := by
+  simp [wordBits]
+
+theorem bitmapBits_length (words : List Nat) :
+    (bitmapBits words).length = words.length * 64 := by
+  induction words with
+  | nil => rfl
+  | cons word rest => simp [bitmapBits, wordBits_length, *]; omega
+
+theorem findNonemptyBin_sound {words : List Nat} {start found : Nat}
+    (hfind : findNonemptyBin words start = some found) :
+    start ≤ found ∧ found < words.length * 64 ∧
+      (bitmapBits words)[found]? = some true := by
+  have hsound := firstSetFrom_sound hfind
+  simpa [findNonemptyBin, bitmapBits_length] using hsound
+
+theorem findNonemptyBin_bounded {words : List Nat} {start found : Nat}
+    (hwords : words.length ≤ 4)
+    (hfind : findNonemptyBin words start = some found) : found < 256 := by
+  have hsound := findNonemptyBin_sound hfind
+  omega
+
+theorem findNonemptyBin_complete {words : List Nat} {start index : Nat}
+    (hstart : start ≤ index)
+    (hset : (bitmapBits words)[index]? = some true) :
+    ∃ found, findNonemptyBin words start = some found := by
+  exact firstSetFrom_complete hstart hset
+
+theorem findNonemptyBin_minimal {words : List Nat} {start found earlier : Nat}
+    (hfind : findNonemptyBin words start = some found)
+    (hstart : start ≤ earlier) (hearlier : earlier < found) :
+    (bitmapBits words)[earlier]? = some false := by
+  exact firstSetFrom_minimal hfind hstart hearlier
 
 def linked (state : Metadata) : Nat → List Nat → Prop
   | _, [] => True

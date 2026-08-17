@@ -733,7 +733,11 @@ concurrency are later extensions and are not prerequisites for `Box` and
   now includes Luffs new, push, get, pop, drop, and growth operations. New and
   drop are composed through the concrete TLSF array transformers to the
   abstract Vec transitions and Iris ownership laws; push is connected to the
-  typed handle and framed initialization rule. Growth statically checks every
+  typed handle and framed initialization rule. The generated
+  `tlsf_vec_get_u8` model refines the concrete allocator-offset operation; its
+  Iris theorem proves that a successful get returns exactly the owned logical
+  byte, preserves the exclusive typed Vec capability, and exposes exactly one
+  operational byte read. Growth statically checks every
   loop address and has a source-recognized exact Lean state transformer that
   sequences replacement allocation, snapshot-prefix copying, old-block
   deallocation/coalescing, and the returned offset. That concrete transformer

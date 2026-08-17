@@ -1597,6 +1597,93 @@ theorem vecGetU8Offset_result
           Nat.lt_of_not_ge hbound, by
             simpa [vecGetU8Offset, hindex, hoverflow, hbound] using hget⟩
 
+/-- The concrete allocator-offset `Vec<u8>` get recognized from Luffs source
+returns only the owned logical element, preserves exclusive Vec ownership, and
+exposes the exact one-byte operational read. -/
+theorem vecGetU8Offset_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {storage : List Byte}
+    {handle : Luffs.Containers.Vec.Handle} {values : List (BitVec 8)}
+    {index : Nat} {value expected : Byte}
+    (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hlen : values.length = handle.len)
+    (hget : vecGetU8Offset storage handle.block.offset handle.len index =
+      some value)
+    (hvalues : values[index]? = some (Scalar.bv8OfByte expected))
+    (hencoded :
+      (storage.drop (handle.block.offset + index)).take Scalar.u8.size =
+        Scalar.u8.encode (Scalar.bv8OfByte expected))
+    {contents : ContentsMap} {mem : Memory} (hrep : ContentsRep contents mem) :
+    value = expected ∧
+      (contentsInterp (G := G) contents ∗
+          Luffs.Containers.Vec.Owns Scalar.u8 pool handle values ⊢
+        (contentsInterp contents ∗
+          Luffs.Containers.Vec.Owns Scalar.u8 pool handle values) ∗
+          ⌜ReadSteps ((handle.block.region pool).base + index)
+              (Scalar.u8.encode (Scalar.bv8OfByte expected)) mem ∧
+            Scalar.u8.decode (Scalar.u8.encode (Scalar.bv8OfByte expected)) =
+              some (Scalar.bv8OfByte expected)⌝) := by
+  have hresult := vecGetU8Offset_result hget
+  have haddress : handle.block.offset + index + Scalar.u8.size ≤
+      storage.length := by
+    simp only [Scalar.u8]
+    omega
+  have hboxExpected : boxLoad Scalar.u8 storage
+      (handle.block.offset + index) = some (Scalar.bv8OfByte expected) :=
+    boxLoad_of_encoded Scalar.u8 storage (handle.block.offset + index)
+      (Scalar.bv8OfByte expected) haddress hencoded
+  have haddressLtMax : handle.block.offset + index <
+      Luffs.Runtime.TLSF.usizeMax := by omega
+  have hindexMax : ¬index > Luffs.Runtime.TLSF.usizeMax / Scalar.u8.size := by
+    simp only [Scalar.u8]
+    omega
+  have hoffsetMax : ¬handle.block.offset >
+      Luffs.Runtime.TLSF.usizeMax - index * Scalar.u8.size := by
+    simp only [Scalar.u8]
+    omega
+  have haddressMax : ¬handle.block.offset + index * Scalar.u8.size >
+      Luffs.Runtime.TLSF.usizeMax - Scalar.u8.size := by
+    simp only [Scalar.u8]
+    omega
+  have hgeneric : vecGet Scalar.u8 storage handle.block.offset handle.len index =
+      some (Scalar.bv8OfByte expected) := by
+    unfold vecGet
+    rw [if_neg (Nat.not_le.mpr hresult.1), if_neg hindexMax]
+    dsimp only
+    rw [if_neg hoffsetMax]
+    rw [if_neg haddressMax]
+    simpa only [Scalar.u8, Nat.mul_one] using hboxExpected
+  have hsliceValue :
+      (storage.drop (handle.block.offset + index)).take Scalar.u8.size =
+        Scalar.u8.encode (Scalar.bv8OfByte value) := by
+    have hbound : handle.block.offset + index < storage.length := hresult.2.2.1
+    have hvalueAt : storage[handle.block.offset + index] = value := by
+      have hread := hresult.2.2.2
+      rw [List.getElem?_eq_getElem hbound] at hread
+      exact Option.some.inj hread
+    have hdrop : storage.drop (handle.block.offset + index) =
+        value :: storage.drop (handle.block.offset + index + 1) := by
+      rw [List.drop_eq_getElem_cons hbound]
+      rw [hvalueAt]
+    rw [hdrop]
+    simp [Scalar.u8, Scalar.encode8, Scalar.bv8OfByte, Scalar.byteOfBV8]
+  have hbv : Scalar.bv8OfByte value = Scalar.bv8OfByte expected := by
+    have hboxValue : boxLoad Scalar.u8 storage
+        (handle.block.offset + index) = some (Scalar.bv8OfByte value) :=
+      boxLoad_of_encoded Scalar.u8 storage (handle.block.offset + index)
+        (Scalar.bv8OfByte value) haddress hsliceValue
+    rw [hboxExpected] at hboxValue
+    exact Option.some.inj hboxValue.symm
+  have hvalue : value = expected :=
+    Fin.ext (congrArg BitVec.toNat hbv)
+  have hencodedGeneric :
+      (storage.drop (handle.block.offset + index * Scalar.u8.size)).take
+          Scalar.u8.size = Scalar.u8.encode (Scalar.bv8OfByte expected) := by
+    simpa only [Scalar.u8, Nat.mul_one] using hencoded
+  refine ⟨hvalue, ?_⟩
+  simpa [Scalar.u8, Nat.add_assoc] using
+    (vecGet_owns Scalar.u8 hlen hgeneric hvalues hencodedGeneric hrep)
+
 theorem vecDropArrays_owns
     {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
     [G : Luffs.Memory.ByteContentsGS GF] {α : Type} (codec : Codec α)

@@ -159,6 +159,14 @@ TLSF transition: the compiler still needs a function-semantics translation and
 a refinement hook connecting these emitted operations to the existing Lean
 allocator proofs.
 
+`Luffs.Runtime.TLSF` now defines the first exact parallel-array metadata state
+and the pure effect of Luffs front insertion. Successful insertion is proved to
+preserve all three array lengths and to establish the new bin head, forward
+link, detached-sentinel predecessor, and (when present) old-head back-link.
+`RepresentsBin` states the abstraction relation from these arrays to a logical
+intrusive chain. The tail-frame lemma and compiler-generated multi-array
+semantics are still required before this is a full insertion refinement.
+
 The first target is sequential TLSF with fixed-size pools obtained from `mmap`.
 Growing pools, `realloc`, aligned allocation beyond the base alignment, and
 concurrency are later extensions and are not prerequisites for `Box` and

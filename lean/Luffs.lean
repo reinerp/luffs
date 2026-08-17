@@ -15,6 +15,7 @@ import Luffs.Allocator.TLSF.Dealloc
 import Luffs.Containers.Box
 import Luffs.Containers.Vec
 import Luffs.Runtime.Containers
+import Luffs.Runtime.TLSF
 
 namespace Luffs
 

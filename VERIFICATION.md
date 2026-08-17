@@ -224,7 +224,12 @@ the second-level abstraction step in both cases: clearing the bit represents
 replacing the selected abstract chain by the empty list, while an unchanged
 bitmap represents replacement by any nonempty remainder. Connecting the
 intrusive successor sentinel to those two cases and preserving the first-level
-cache relation remain.
+cache relation are now proved as well. The composed candidate theorem starts
+from valid abstract bins plus concrete bitmap/list representations and proves
+that a successful Luffs transition returns the abstract head offset and
+preserves both bitmap levels for the abstract `removeFront` successor state.
+The remaining candidate work is preservation of the intrusive metadata
+representation for every chain in the successor state.
 The logical 2048-bit search is also proved equal to a chunked search that
 examines only the suffix of the starting `u32` and then the remaining complete
 second-level words. For each `u32`, masked `ctz` is proved exactly equal to its

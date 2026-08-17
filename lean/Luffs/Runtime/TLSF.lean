@@ -617,6 +617,38 @@ theorem secondNonzeroBits_get {second : List (BitVec 32)} {index : Nat}
     (secondNonzeroBits second)[index]? = some (decide (word ≠ 0)) := by
   simp [secondNonzeroBits, List.getElem?_map, hget]
 
+theorem FirstBitmapRep.point {first : BitVec 64} {second : List (BitVec 32)}
+    (hrep : FirstBitmapRep first second) {index : Nat} (hindex : index < 64) :
+    first.getLsbD index = decide (second[index]?.getD 0 ≠ 0) := by
+  have hlength := hrep.1
+  have hi : index < second.length := by omega
+  have hfirst := wordBits_get first index hindex
+  have hsecond : second[index]? = some (second[index]'hi) := by simp
+  have hnonzero := secondNonzeroBits_get hsecond
+  rw [hrep.2] at hfirst
+  rw [hnonzero] at hfirst
+  simpa [hsecond] using (Option.some.inj hfirst).symm
+
+theorem firstBitmapRep_of_point {first : BitVec 64}
+    {second : List (BitVec 32)} (hlength : second.length = 64)
+    (hpoint : ∀ index, index < 64 →
+      first.getLsbD index = decide (second[index]?.getD 0 ≠ 0)) :
+    FirstBitmapRep first second := by
+  refine ⟨hlength, ?_⟩
+  apply List.ext_getElem?
+  intro index
+  by_cases hindex : index < 64
+  · have hi : index < second.length := by omega
+    have hfirst := wordBits_get first index hindex
+    have hsecond : second[index]? = some (second[index]'hi) := by simp
+    have hnonzero := secondNonzeroBits_get hsecond
+    rw [hfirst, hnonzero]
+    simpa [hsecond] using congrArg some (hpoint index hindex)
+  · have hwordLength := wordBits_length first
+    have hsecondLength := secondNonzeroBits_length second
+    rw [List.getElem?_eq_none_iff.mpr (by omega),
+      List.getElem?_eq_none_iff.mpr (by omega)]
+
 /-- Exact pure control flow of `tlsf_find_nonempty_class`. -/
 def findNonemptyClassLowered (second : List (BitVec 32)) (first : BitVec 64)
     (startFl startSl : Nat) : Option Nat :=
@@ -1296,6 +1328,61 @@ theorem clearClassBit_preserves_other {second : List (BitVec 32)}
     rw [Nat.mul_comm (other / 32) 32, Nat.div_add_mod] at heq
     exact heq
 
+theorem clearClassBit_preserves_firstBitmapRep
+    {second : List (BitVec 32)} {first : BitVec 64} (bin : Nat)
+    (hrep : FirstBitmapRep first second) (hfl : bin / 32 < second.length) :
+    let nextSecond := clearClassBit second bin
+    let fl := bin / 32
+    let nextFirst :=
+      if nextSecond[fl]?.getD 0 = 0 then clearWordBit first fl else first
+    FirstBitmapRep nextFirst nextSecond := by
+  dsimp only
+  apply firstBitmapRep_of_point
+  · simpa [clearClassBit_length] using hrep.1
+  · intro index hindex
+    have hlength := hrep.1
+    have hfl64 : bin / 32 < 64 := by omega
+    by_cases hselected : index = bin / 32
+    · subst index
+      by_cases hzero :
+          (clearClassBit second bin)[bin / 32]?.getD 0 = 0
+      · simp only [hzero, if_true]
+        rw [clearWordBit_getLsbD]
+        simp [hfl64, hzero]
+      · simp only [hzero, if_false]
+        have hold := hrep.point hfl64
+        have holdNonzero : second[bin / 32]?.getD 0 ≠ 0 := by
+          intro holdZero
+          apply hzero
+          have hget : second[bin / 32]? = some second[bin / 32] := by
+            simp [hfl]
+          have hzElem : second[bin / 32] = 0 := by
+            simpa [hget] using holdZero
+          simp [clearClassBit, hfl, hzElem, clearSecondBit]
+        have holdDecide :
+            decide (second[bin / 32]?.getD 0 ≠ 0) = true := by
+          exact decide_eq_true holdNonzero
+        rw [holdDecide] at hold
+        have nextDecide :
+            decide ((clearClassBit second bin)[bin / 32]?.getD 0 ≠ 0) =
+              true := by
+          exact decide_eq_true hzero
+        rw [nextDecide]
+        exact hold
+    · have hnextGet :
+          (clearClassBit second bin)[index]? = second[index]? := by
+        unfold clearClassBit
+        exact List.getElem?_set_ne (Ne.symm hselected)
+      by_cases hzero :
+          (clearClassBit second bin)[bin / 32]?.getD 0 = 0
+      · simp only [hzero, if_true]
+        rw [clearWordBit_getLsbD]
+        have hold := hrep.point hindex
+        simpa [hselected, hnextGet] using hold
+      · simp only [hzero, if_false]
+        have hold := hrep.point hindex
+        simpa [hnextGet] using hold
+
 theorem clearClassBit_represents_replace_empty
     {second : List (BitVec 32)} {state : Bins.State}
     (hrep : RepresentsSecondBitmap second state) (hvalid : Bins.Valid state)
@@ -1552,6 +1639,148 @@ def RepresentsBin (state : Metadata) (bin : Nat) (chain : List Nat) : Prop :=
   state.heads[bin]?.getD 0 = chain.head?.getD state.next.length ∧
   linked state state.next.length chain ∧
   chain.Nodup
+
+def RepresentsBins (metadata : Metadata) (state : Bins.State) : Prop :=
+  ∀ cls : SizeClass,
+    RepresentsBin metadata
+      (cls.fl.val * secondLevelCount + cls.sl.val)
+      ((state.chains cls).map Block.offset)
+
+theorem represented_front_successor_is_sentinel_iff
+    {state : Metadata} {bin block : Nat} {rest : List Nat}
+    (hrep : RepresentsBin state bin (block :: rest)) :
+    state.next[block]?.getD state.next.length ≥ state.next.length ↔
+      rest = [] := by
+  rcases hrep with ⟨_, _, _, hlinked, _⟩
+  simp only [linked] at hlinked
+  rcases hlinked with ⟨_, _, _, hnext, hrestLinked⟩
+  constructor
+  · intro hsentinel
+    cases rest with
+    | nil => rfl
+    | cons successor more =>
+        simp only [List.head?_cons, Option.getD_some] at hnext
+        simp only [linked] at hrestLinked
+        have hsuccessor := hrestLinked.1
+        have hvalue : state.next[block]?.getD state.next.length =
+            successor := by simp [hnext]
+        rw [hvalue] at hsentinel
+        omega
+  · intro hempty
+    subst rest
+    have hvalue : state.next[block]?.getD state.next.length =
+        state.next.length := by simp [hnext]
+    omega
+
+theorem takeCandidateClassArrays_preserves_bitmaps
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {startFl startSl : Nat}
+    {result : ClassCandidateResult} {state : Bins.State}
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second) (hvalid : Bins.Valid state)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (htake : takeCandidateClassArrays second first heads next previous
+      startFl startSl = some result) :
+    ∃ cls removed rest,
+      classOfBin? result.bin = some cls ∧
+      FreeList.removeFront (state.chains cls) = some (removed, rest) ∧
+      result.block = removed.offset ∧
+      RepresentsSecondBitmap result.second (state.replaceChain cls rest) ∧
+      FirstBitmapRep result.first result.second := by
+  have hresult := takeCandidateClassArrays_result htake
+  rcases hresult with ⟨hfind, _, hfl, hblock, _, _, hremove, heffect⟩
+  obtain ⟨cls, hclass, hbin, hnonempty⟩ :=
+    findNonemptyClassLowered_selects_nonempty hsecond hvalid hfind
+  obtain ⟨removed, rest, hremoveFront⟩ :=
+    FreeList.removeFront_exists hnonempty
+  refine ⟨cls, removed, rest, hclass, hremoveFront, ?_, ?_, ?_⟩
+  · have hfront := FreeList.removeFront_removes_head hremoveFront
+    have hrep := hbins cls
+    rw [← hbin] at hrep
+    have hheadsGet : heads[result.bin]? = some heads[result.bin] := by
+      simp [hrep.1]
+    have hhead := hrep.2.2.1
+    rw [hheadsGet, hfront.1] at hhead
+    simp only [Option.getD_some] at hhead
+    rw [hblock, hheadsGet]
+    simpa using hhead
+  · have hfront := FreeList.removeFront_removes_head hremoveFront
+    have hrep := hbins cls
+    rw [← hbin] at hrep
+    have hblockEq : result.block = removed.offset := by
+      have hheadsGet : heads[result.bin]? = some heads[result.bin] := by
+        simp [hrep.1]
+      have hhead := hrep.2.2.1
+      rw [hheadsGet, hfront.1] at hhead
+      simp only [Option.getD_some] at hhead
+      rw [hblock, hheadsGet]
+      simpa using hhead
+    have hchainShape :
+        (state.chains cls).map Block.offset =
+          result.block :: rest.map Block.offset := by
+      cases hchain : state.chains cls with
+      | nil => exact (hnonempty hchain).elim
+      | cons head tail =>
+        have htail := hfront.2
+        simp only [hchain, List.map_cons, List.head?_cons,
+          List.tail_cons, Option.some.injEq] at hfront htail
+        simp [hchain, hblockEq, hfront.1, htail]
+    rw [hchainShape] at hrep
+    have hsentinel := represented_front_successor_is_sentinel_iff hrep
+    have hrestIff :
+        next[result.block]?.getD next.length ≥ next.length ↔ rest = [] := by
+      rw [hsentinel]
+      simp
+    by_cases hempty : rest = []
+    · have hsent : next[result.block]?.getD next.length ≥ next.length :=
+        hrestIff.2 hempty
+      rw [if_pos hsent] at heffect
+      rw [heffect.1, hempty, hbin]
+      exact clearClassBit_represents_replace_empty hsecond hvalid cls
+    · have hnonsent : ¬next[result.block]?.getD next.length ≥ next.length :=
+        fun h => hempty (hrestIff.1 h)
+      rw [if_neg hnonsent] at heffect
+      exact heffect.1 ▸ representsSecondBitmap_replace_nonempty
+        hsecond hvalid cls hempty hnonempty
+  · have hfront := FreeList.removeFront_removes_head hremoveFront
+    have hrep := hbins cls
+    rw [← hbin] at hrep
+    have hblockEq : result.block = removed.offset := by
+      have hheadsGet : heads[result.bin]? = some heads[result.bin] := by
+        simp [hrep.1]
+      have hhead := hrep.2.2.1
+      rw [hheadsGet, hfront.1] at hhead
+      simp only [Option.getD_some] at hhead
+      rw [hblock, hheadsGet]
+      simpa using hhead
+    have hchainShape :
+        (state.chains cls).map Block.offset =
+          result.block :: rest.map Block.offset := by
+      cases hchain : state.chains cls with
+      | nil => exact (hnonempty hchain).elim
+      | cons head tail =>
+        have htail := hfront.2
+        simp only [hchain, List.map_cons, List.head?_cons,
+          List.tail_cons, Option.some.injEq] at hfront htail
+        simp [hchain, hblockEq, hfront.1, htail]
+    rw [hchainShape] at hrep
+    have hsentinel := represented_front_successor_is_sentinel_iff hrep
+    by_cases hempty : rest = []
+    · have hsent : next[result.block]?.getD next.length ≥ next.length := by
+        rw [hsentinel]
+        simp [hempty]
+      rw [if_pos hsent] at heffect
+      have hsecondEq := heffect.1
+      have hfirstEq := heffect.2
+      rw [hsecondEq] at hfirstEq ⊢
+      rw [hfirstEq]
+      exact clearClassBit_preserves_firstBitmapRep result.bin hfirst hfl
+    · have hnonsent : ¬next[result.block]?.getD next.length ≥ next.length := by
+        rw [hsentinel]
+        simp [hempty]
+      rw [if_neg hnonsent] at heffect
+      rw [heffect.1, heffect.2]
+      exact hfirst
 
 theorem insert_result {state nextState : Metadata} {bin block : Nat}
     (hinsert : insert state bin block = some nextState) :

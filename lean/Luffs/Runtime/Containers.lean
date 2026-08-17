@@ -1885,6 +1885,55 @@ theorem boxLoadU32_after_boxStoreU32 (storage result : List Byte) (begin : Nat)
       simp [boxLoadU32, hword, hbound, h0, h1, h2, h3,
         Scalar.decode32, Scalar.byteAt]
 
+def boxLoadU64 (storage : List Byte) (begin : Nat) : Option (BitVec 64) := do
+  if begin > Luffs.Runtime.TLSF.usizeMax - 7 then none
+  let eighth := begin + 7
+  if eighth ≥ storage.length then none
+  let byte0 ← storage[begin]?
+  let byte1 ← storage[begin + 1]?
+  let byte2 ← storage[begin + 2]?
+  let byte3 ← storage[begin + 3]?
+  let byte4 ← storage[begin + 4]?
+  let byte5 ← storage[begin + 5]?
+  let byte6 ← storage[begin + 6]?
+  let byte7 ← storage[eighth]?
+  Scalar.decode64 [byte0, byte1, byte2, byte3, byte4, byte5, byte6, byte7]
+
+def boxStoreU64 (storage : List Byte) (begin : Nat) (value : BitVec 64) :
+    Option (List Byte) :=
+  if begin > Luffs.Runtime.TLSF.usizeMax - 7 then none
+  else
+    let eighth := begin + 7
+    if eighth ≥ storage.length then none
+    else some ((((((((storage.set begin (Scalar.byteAt value 0)).set (begin + 1)
+      (Scalar.byteAt value 8)).set (begin + 2) (Scalar.byteAt value 16)).set
+      (begin + 3) (Scalar.byteAt value 24)).set (begin + 4)
+      (Scalar.byteAt value 32)).set (begin + 5) (Scalar.byteAt value 40)).set
+      (begin + 6) (Scalar.byteAt value 48)).set eighth (Scalar.byteAt value 56))
+
+theorem boxLoadU64_after_boxStoreU64 (storage result : List Byte) (begin : Nat)
+    (value : BitVec 64)
+    (hsuccess : boxStoreU64 storage begin value = some result) :
+    boxLoadU64 result begin = some value := by
+  unfold boxStoreU64 at hsuccess
+  split at hsuccess <;> try contradiction
+  next hword =>
+    dsimp only at hsuccess
+    split at hsuccess <;> try contradiction
+    next hbound =>
+      simp only [Option.some.injEq] at hsuccess
+      subst result
+      have h0 : begin < storage.length := by omega
+      have h1 : begin + 1 < storage.length := by omega
+      have h2 : begin + 2 < storage.length := by omega
+      have h3 : begin + 3 < storage.length := by omega
+      have h4 : begin + 4 < storage.length := by omega
+      have h5 : begin + 5 < storage.length := by omega
+      have h6 : begin + 6 < storage.length := by omega
+      have h7 : begin + 7 < storage.length := by omega
+      simp [boxLoadU64, hword, hbound, h0, h1, h2, h3, h4, h5, h6, h7,
+        Scalar.decode64, Scalar.byteAt]
+
 theorem boxLoadU16_eq_generic (storage : List Byte) (begin : Nat)
     (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax) :
     boxLoadU16 storage begin = boxLoad Scalar.u16 storage begin := by

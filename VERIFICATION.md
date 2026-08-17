@@ -742,6 +742,10 @@ alias semantics. This removes the one-store restriction that blocked
   arithmetic, generated Lean semantics refines their exact state transformers,
   and `boxLoadU32_after_boxStoreU32` proves the four-byte little-endian
   round trip for every `BitVec 32` value.
+  `box_store_u64` and `box_load_u64` now extend the same checked source path to
+  eight sequential writes/reads; compiler-derived Lean semantics is accepted,
+  and `boxLoadU64_after_boxStoreU64` proves the exact little-endian round trip
+  for every `BitVec 64` value.
   The same monomorphization now covers `vec_push_u16`: its Rust-like Luffs
   source performs every checked 64-bit address calculation and the two
   little-endian writes, while `vecPushU16_refines_generic` connects each

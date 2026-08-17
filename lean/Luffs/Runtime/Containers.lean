@@ -3967,7 +3967,82 @@ def vecPushI128 (storage : List Byte) (offset len capacity : Nat)
     (Scalar.byteAt value 96)).set (offset + len * 16 + 13)
     (Scalar.byteAt value 104)).set (offset + len * 16 + 14)
     (Scalar.byteAt value 112)).set (offset + len * 16 + 15)
-    (Scalar.byteAt value 120)), len + 1)
+      (Scalar.byteAt value 120)), len + 1)
+
+/-- Exact one-byte signed Vec push used by the Luffs source lowering. -/
+def vecPushI8 (storage : List Byte) (offset len capacity : Nat)
+    (value : BitVec 8) : Option (List Byte × Nat) :=
+  if capacity > Luffs.Runtime.TLSF.usizeMax then none
+  else if len ≥ capacity then none
+  else if offset > Luffs.Runtime.TLSF.usizeMax - len then none
+  else if offset + len > Luffs.Runtime.TLSF.usizeMax - 1 then none
+  else if offset + len ≥ storage.length then none
+  else some (storage.set (offset + len) (Scalar.byteAt value 0), len + 1)
+
+theorem vecPushI8_refines_generic {storage next : List Byte}
+    {offset len capacity nextLen : Nat} {value : BitVec 8}
+    (hpush : vecPushI8 storage offset len capacity value =
+      some (next, nextLen)) :
+    vecPush Scalar.i8 storage offset len capacity value =
+      some ⟨next, nextLen⟩ := by
+  unfold vecPushI8 at hpush
+  split at hpush <;> try contradiction
+  next hcapacity =>
+    split at hpush <;> try contradiction
+    next hlen =>
+      split at hpush <;> try contradiction
+      next hoffset =>
+        split at hpush <;> try contradiction
+        next haddress =>
+          split at hpush <;> try contradiction
+          next hstorage =>
+            simp only [Option.some.injEq, Prod.mk.injEq] at hpush
+            rw [← hpush.1, ← hpush.2]
+            have hfit : offset + len < storage.length :=
+              Nat.lt_of_not_ge hstorage
+            have hmul : ¬len > Luffs.Runtime.TLSF.usizeMax := by omega
+            have hbound : ¬storage.length < offset + len + 1 := by omega
+            have hbyte : Scalar.byteAt value 0 = Scalar.byteOfBV8 value := by
+              apply Fin.ext
+              rfl
+            have hwrite := writeBytes_singleton_eq_set storage (offset + len)
+              (Scalar.byteAt value 0) hfit
+            rw [hbyte] at hwrite
+            simp [vecPush, Scalar.i8, Scalar.u8, hcapacity, hlen, hmul,
+              hoffset, haddress, boxStore, hbound, writeBytes, Scalar.encode8]
+            rw [hbyte]
+            simpa using hwrite
+
+theorem vecPushI8_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {storage nextStorage : List Byte}
+    {handle : Luffs.Containers.Vec.Handle} {values : List (BitVec 8)}
+    {value : BitVec 8} {nextLen : Nat}
+    (hlen : values.length = handle.len)
+    (hpush : vecPushI8 storage handle.block.offset handle.len
+      handle.capacity value = some (nextStorage, nextLen)) :
+    ∃ nextHandle,
+      Luffs.Containers.Vec.push handle = some nextHandle ∧
+      nextLen = nextHandle.len ∧
+      nextStorage = writeBytes storage
+        (handle.block.offset +
+          (Luffs.Containers.Vec.encodeValues Scalar.i8 values).length)
+        (Scalar.i8.encode value) ∧
+      ∀ contents : ContentsMap,
+        CanInsertBytes contents
+          ((handle.block.region pool).base +
+            (Luffs.Containers.Vec.encodeValues Scalar.i8 values).length)
+          (Scalar.i8.encode value) →
+        contentsInterp (G := G) contents ∗
+            Luffs.Containers.Vec.Owns Scalar.i8 pool handle values ==∗
+          contentsInterp
+              (insertBytes contents
+                ((handle.block.region pool).base +
+                  (Luffs.Containers.Vec.encodeValues Scalar.i8 values).length)
+                (Scalar.i8.encode value)) ∗
+            Luffs.Containers.Vec.Owns Scalar.i8 pool nextHandle
+              (values ++ [value]) := by
+  exact vecPush_owns Scalar.i8 hlen (vecPushI8_refines_generic hpush)
 
 theorem vecPushI128_eq_u128 (storage : List Byte) (offset len capacity : Nat)
     (value : BitVec 128) :
@@ -4115,6 +4190,8 @@ trusted representation bridge. -/
 def vecPushI16_owns := @vecPushU16_owns
 def vecPushI32_owns := @vecPushU32_owns
 def vecPushI64_owns := @vecPushU64_owns
+def vecPushUsize_owns := @vecPushU64_owns
+def vecPushIsize_owns := @vecPushU64_owns
 
 set_option maxHeartbeats 1200000 in
 /-- End-to-end first push for an allocator-backed `Vec<u16>`. This composes the
@@ -4654,6 +4731,67 @@ def vecGetI128 (storage : List Byte) (offset len index : Nat) :
       Scalar.decode128 [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10,
         b11, b12, b13, b14, b15]
 
+/-- Exact one-byte signed Vec get used by the Luffs source lowering. -/
+def vecGetI8 (storage : List Byte) (offset len index : Nat) :
+    Option (BitVec 8) :=
+  if index ≥ len then none
+  else if index > Luffs.Runtime.TLSF.usizeMax then none
+  else if offset > Luffs.Runtime.TLSF.usizeMax - index then none
+  else if offset + index > Luffs.Runtime.TLSF.usizeMax - 1 then none
+  else if offset + index ≥ storage.length then none
+  else do
+    let byte ← storage[offset + index]?
+    Scalar.decode8 [byte]
+
+theorem vecGetI8_refines_generic {storage : List Byte} {offset len index : Nat}
+    {value : BitVec 8}
+    (hsuccess : vecGetI8 storage offset len index = some value) :
+    vecGet Scalar.i8 storage offset len index = some value := by
+  unfold vecGetI8 at hsuccess
+  split at hsuccess <;> try contradiction
+  next hindex =>
+    split at hsuccess <;> try contradiction
+    next hmul =>
+      split at hsuccess <;> try contradiction
+      next hoffset =>
+        split at hsuccess <;> try contradiction
+        next haddress =>
+          split at hsuccess <;> try contradiction
+          next hstorage =>
+            have hbox : boxLoad Scalar.u8 storage (offset + index) =
+                some value := by
+              rw [← boxLoadI8_eq_generic]
+              simpa [boxLoadI8, hstorage] using hsuccess
+            simpa [vecGet, Scalar.i8, Scalar.u8, hindex, hmul, hoffset,
+              haddress] using hbox
+
+theorem vecGetI8_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {storage : List Byte}
+    {handle : Luffs.Containers.Vec.Handle}
+    {values : List (BitVec 8)} {index : Nat} {value expected : BitVec 8}
+    (hlen : values.length = handle.len)
+    (hsuccess : vecGetI8 storage handle.block.offset handle.len index =
+      some value)
+    (hvalues : values[index]? = some expected)
+    (hencoded :
+      (storage.drop (handle.block.offset + index * Scalar.i8.size)).take
+          Scalar.i8.size = Scalar.i8.encode expected)
+    {contents : ContentsMap} {mem : Memory} (hrep : ContentsRep contents mem) :
+    value = expected ∧
+      (contentsInterp (G := G) contents ∗
+          Luffs.Containers.Vec.Owns Scalar.i8 pool handle values ⊢
+        (contentsInterp contents ∗
+          Luffs.Containers.Vec.Owns Scalar.i8 pool handle values) ∗
+          ⌜ReadSteps
+              ((handle.block.region pool).base + index * Scalar.i8.size)
+              (Scalar.i8.encode expected) mem ∧
+            Scalar.i8.decode (Scalar.i8.encode expected) = some expected⌝) := by
+  have hgeneric : vecGet Scalar.i8 storage handle.block.offset handle.len index =
+      some value := by
+    exact vecGetI8_refines_generic hsuccess
+  exact vecGet_owns Scalar.i8 hlen hgeneric hvalues hencoded hrep
+
 theorem vecGetI128_eq_u128 (storage : List Byte) (offset len index : Nat) :
     vecGetI128 storage offset len index = vecGetU128 storage offset len index := by
   rfl
@@ -4701,6 +4839,8 @@ Iris rules. -/
 def vecGetI16_owns := @vecGetU16_owns
 def vecGetI32_owns := @vecGetU32_owns
 def vecGetI64_owns := @vecGetU64_owns
+def vecGetUsize_owns := @vecGetU64_owns
+def vecGetIsize_owns := @vecGetU64_owns
 
 def vecSliceU8 (storage : List Byte) (len begin end_ : Nat) :
     Option (List Byte) :=

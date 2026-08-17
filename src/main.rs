@@ -367,6 +367,11 @@ fn parse(source: &str) -> Result<Module, String> {
             continue;
         }
         let (rewritten, found) = rewrite_accesses(raw, line_no, &mut auto_proof, &mutable_arrays)?;
+        // The source-level scalar model treats `& 255` uniformly as low-byte
+        // extraction. In Rust, however, an unsuffixed 255 is out of range when
+        // the operand is `i8`; the direct cast has exactly the same low-eight-
+        // bit semantics and is valid for every supported integer width.
+        let rewritten = rewritten.replace("(value & 255) as u8", "value as u8");
         for access in found {
             if access.proof.starts_with("__auto_") {
                 proofs.push(Proof {
@@ -4601,6 +4606,8 @@ mod tests {
         );
         assert!(m.rust.contains("get_unchecked_mut"));
         assert!(m.rust.contains("copy_from_slice"));
+        assert!(m.rust.contains("value as u8"));
+        assert!(!m.rust.contains("(value & 255) as u8"));
         let generated = lean(&m);
         assert!(generated.contains(
             "theorem vec_push_u32_refines : vec_push_u32_model = Luffs.Runtime.Containers.vecPushU32"
@@ -4631,6 +4638,18 @@ mod tests {
         ));
         assert!(generated.contains("theorem vec_push_i64_program_wp"));
         assert!(generated.contains(
+            "theorem vec_push_i8_refines : vec_push_i8_model = Luffs.Runtime.Containers.vecPushI8"
+        ));
+        assert!(generated.contains("theorem vec_push_i8_program_wp"));
+        assert!(generated.contains(
+            "theorem vec_push_usize_refines : vec_push_usize_model = Luffs.Runtime.Containers.vecPushU64"
+        ));
+        assert!(generated.contains("theorem vec_push_usize_program_wp"));
+        assert!(generated.contains(
+            "theorem vec_push_isize_refines : vec_push_isize_model = Luffs.Runtime.Containers.vecPushU64"
+        ));
+        assert!(generated.contains("theorem vec_push_isize_program_wp"));
+        assert!(generated.contains(
             "theorem vec_get_u32_refines : vec_get_u32_model = Luffs.Runtime.Containers.vecGetU32"
         ));
         assert!(generated.contains("theorem vec_get_u32_program_wp"));
@@ -4658,6 +4677,18 @@ mod tests {
             "theorem vec_get_i64_refines : vec_get_i64_model = Luffs.Runtime.Containers.vecGetU64"
         ));
         assert!(generated.contains("theorem vec_get_i64_program_wp"));
+        assert!(generated.contains(
+            "theorem vec_get_i8_refines : vec_get_i8_model = Luffs.Runtime.Containers.vecGetI8"
+        ));
+        assert!(generated.contains("theorem vec_get_i8_program_wp"));
+        assert!(generated.contains(
+            "theorem vec_get_usize_refines : vec_get_usize_model = Luffs.Runtime.Containers.vecGetU64"
+        ));
+        assert!(generated.contains("theorem vec_get_usize_program_wp"));
+        assert!(generated.contains(
+            "theorem vec_get_isize_refines : vec_get_isize_model = Luffs.Runtime.Containers.vecGetU64"
+        ));
+        assert!(generated.contains("theorem vec_get_isize_program_wp"));
         assert!(generated.contains(
             "theorem box_load_u8_refines : box_load_u8_model = Luffs.Runtime.Containers.boxLoadU8"
         ));

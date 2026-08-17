@@ -409,6 +409,57 @@ fn vec_push_i64(storage: &mut [u8], offset: usize, len: usize, capacity: usize, 
     Some(next_len)
 }
 
+// refines Luffs.Runtime.Containers.vecPushI8
+fn vec_push_i8(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: i8) -> Option<usize> {
+    if capacity > usize::MAX { return None; }
+    if len >= capacity { return None; }
+    if offset > usize::MAX - len { return None; }
+    if offset + len > usize::MAX - 1 { return None; }
+    if offset + len >= storage.len() { return None; }
+    storage[offset + len] = (value & 255) as u8;
+    let next_len: usize = len + 1;
+    Some(next_len)
+}
+
+// The current Luffs target fixes pointer-sized integers at 64 bits.
+// refines Luffs.Runtime.Containers.vecPushU64
+fn vec_push_usize(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: usize) -> Option<usize> {
+    if len >= capacity { return None; }
+    if len > usize::MAX / 8 { return None; }
+    if offset > usize::MAX - len * 8 { return None; }
+    if offset + len * 8 > usize::MAX - 8 { return None; }
+    if offset + len * 8 + 7 >= storage.len() { return None; }
+    storage[offset + len * 8] = (value & 255) as u8;
+    storage[offset + len * 8 + 1] = (value >> 8) as u8;
+    storage[offset + len * 8 + 2] = (value >> 16) as u8;
+    storage[offset + len * 8 + 3] = (value >> 24) as u8;
+    storage[offset + len * 8 + 4] = (value >> 32) as u8;
+    storage[offset + len * 8 + 5] = (value >> 40) as u8;
+    storage[offset + len * 8 + 6] = (value >> 48) as u8;
+    storage[offset + len * 8 + 7] = (value >> 56) as u8;
+    let next_len: usize = len + 1;
+    Some(next_len)
+}
+
+// refines Luffs.Runtime.Containers.vecPushU64
+fn vec_push_isize(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: isize) -> Option<usize> {
+    if len >= capacity { return None; }
+    if len > usize::MAX / 8 { return None; }
+    if offset > usize::MAX - len * 8 { return None; }
+    if offset + len * 8 > usize::MAX - 8 { return None; }
+    if offset + len * 8 + 7 >= storage.len() { return None; }
+    storage[offset + len * 8] = (value & 255) as u8;
+    storage[offset + len * 8 + 1] = (value >> 8) as u8;
+    storage[offset + len * 8 + 2] = (value >> 16) as u8;
+    storage[offset + len * 8 + 3] = (value >> 24) as u8;
+    storage[offset + len * 8 + 4] = (value >> 32) as u8;
+    storage[offset + len * 8 + 5] = (value >> 40) as u8;
+    storage[offset + len * 8 + 6] = (value >> 48) as u8;
+    storage[offset + len * 8 + 7] = (value >> 56) as u8;
+    let next_len: usize = len + 1;
+    Some(next_len)
+}
+
 // refines Luffs.Runtime.Containers.vecLastU8
 fn vec_last_u8(storage: &[u8], len: usize) -> Option<u8> {
     if len == 0 { return None; }
@@ -509,6 +560,36 @@ fn vec_get_i64(storage: &[u8], offset: usize, len: usize, index: usize) -> Optio
     if offset + index * 8 > usize::MAX - 8 { return None; }
     if offset + index * 8 + 7 >= storage.len() { return None; }
     Some(i64::from_le_bytes([storage[offset + index * 8], storage[offset + index * 8 + 1], storage[offset + index * 8 + 2], storage[offset + index * 8 + 3], storage[offset + index * 8 + 4], storage[offset + index * 8 + 5], storage[offset + index * 8 + 6], storage[offset + index * 8 + 7]]))
+}
+
+// refines Luffs.Runtime.Containers.vecGetI8
+fn vec_get_i8(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<i8> {
+    if index >= len { return None; }
+    if index > usize::MAX { return None; }
+    if offset > usize::MAX - index { return None; }
+    if offset + index > usize::MAX - 1 { return None; }
+    if offset + index >= storage.len() { return None; }
+    Some(i8::from_le_bytes([storage[offset + index]]))
+}
+
+// refines Luffs.Runtime.Containers.vecGetU64
+fn vec_get_usize(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<usize> {
+    if index >= len { return None; }
+    if index > usize::MAX / 8 { return None; }
+    if offset > usize::MAX - index * 8 { return None; }
+    if offset + index * 8 > usize::MAX - 8 { return None; }
+    if offset + index * 8 + 7 >= storage.len() { return None; }
+    Some(usize::from_le_bytes([storage[offset + index * 8], storage[offset + index * 8 + 1], storage[offset + index * 8 + 2], storage[offset + index * 8 + 3], storage[offset + index * 8 + 4], storage[offset + index * 8 + 5], storage[offset + index * 8 + 6], storage[offset + index * 8 + 7]]))
+}
+
+// refines Luffs.Runtime.Containers.vecGetU64
+fn vec_get_isize(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<isize> {
+    if index >= len { return None; }
+    if index > usize::MAX / 8 { return None; }
+    if offset > usize::MAX - index * 8 { return None; }
+    if offset + index * 8 > usize::MAX - 8 { return None; }
+    if offset + index * 8 + 7 >= storage.len() { return None; }
+    Some(isize::from_le_bytes([storage[offset + index * 8], storage[offset + index * 8 + 1], storage[offset + index * 8 + 2], storage[offset + index * 8 + 3], storage[offset + index * 8 + 4], storage[offset + index * 8 + 5], storage[offset + index * 8 + 6], storage[offset + index * 8 + 7]]))
 }
 
 // refines Luffs.Runtime.Containers.vecSliceU8

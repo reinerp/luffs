@@ -952,6 +952,15 @@ alias semantics. This removes the one-store restriction that blocked
   definitionally their proved two's-complement codecs, direct Iris corollaries
   inherit the exclusive append/read laws without a cast or representation
   axiom.
+  The final scalar cases now have source coverage too. `vec_push_i8` and
+  `vec_get_i8` use an exact signed one-byte model, refine the generic
+  `Scalar.i8` transition, and inherit its framed Iris append/read laws.
+  `vec_push_usize/isize` and `vec_get_usize/isize` emit the exact ordered
+  eight-access programs and refine the proved u64 bit-pattern transition on
+  the declared 64-bit target. Thus construction, in-capacity push, indexed
+  get, generic pop, and generic drop cover every scalar type currently in the
+  Luffs language; growth monomorphization and scoped slices remain before the
+  overall Vec item is complete.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.
   All four checked-in examples are currently accepted by Lean and compile to

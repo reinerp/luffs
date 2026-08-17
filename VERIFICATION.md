@@ -939,7 +939,12 @@ alias semantics. This removes the one-store restriction that blocked
   models refine `vecPush Scalar.u128` and `vecGet Scalar.u128`, so push appends
   one logical value while transferring exclusive ownership and get returns
   only the owned element while preserving that capability and exposing the
-  exact sixteen-step trace.
+  exact sixteen-step trace. Signed `vec_push_i128` and `vec_get_i128` now have
+  the same complete source coverage. Their generated models retain the signed
+  source type while refining the proved two's-complement `Scalar.i128` codec;
+  the Iris push theorem appends exactly that logical bit pattern and the get
+  theorem returns only the owned pattern while preserving exclusive ownership
+  and exposing all sixteen ordered memory accesses.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.
   All four checked-in examples are currently accepted by Lean and compile to

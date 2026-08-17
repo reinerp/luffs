@@ -4615,6 +4615,10 @@ mod tests {
         ));
         assert!(generated.contains("theorem vec_push_u128_program_wp"));
         assert!(generated.contains(
+            "theorem vec_push_i128_refines : vec_push_i128_model = Luffs.Runtime.Containers.vecPushI128"
+        ));
+        assert!(generated.contains("theorem vec_push_i128_program_wp"));
+        assert!(generated.contains(
             "theorem vec_get_u32_refines : vec_get_u32_model = Luffs.Runtime.Containers.vecGetU32"
         ));
         assert!(generated.contains("theorem vec_get_u32_program_wp"));
@@ -4626,6 +4630,10 @@ mod tests {
             "theorem vec_get_u128_refines : vec_get_u128_model = Luffs.Runtime.Containers.vecGetU128"
         ));
         assert!(generated.contains("theorem vec_get_u128_program_wp"));
+        assert!(generated.contains(
+            "theorem vec_get_i128_refines : vec_get_i128_model = Luffs.Runtime.Containers.vecGetI128"
+        ));
+        assert!(generated.contains("theorem vec_get_i128_program_wp"));
         assert!(generated.contains(
             "theorem box_load_u8_refines : box_load_u8_model = Luffs.Runtime.Containers.boxLoadU8"
         ));

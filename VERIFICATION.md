@@ -673,7 +673,9 @@ concurrency are later extensions and are not prerequisites for `Box` and
   preserves that ownership, and exposes its exact four-read trace. A
   successful store exchanges `Box::Owns` of the old value for ownership of the
   new value under arbitrary frames, updates the authoritative contents, and
-  closes the exact four-write program WP. The concrete `u64` load/store path
+  closes the exact four-write program WP. The concrete `u16` path now has the
+  same source-to-Iris guarantee for its exact two-read and two-write programs.
+  The concrete `u64` load/store path
   now has the corresponding source-to-Iris connection over all eight encoded
   bytes: loads retain exclusive ownership and expose the eight-read trace,
   while stores update the logical value and authoritative byte contents and

@@ -2923,6 +2923,67 @@ theorem boxStoreU16_eq_generic (storage : List Byte) (begin : Nat)
         simpa only [List.cons_append, List.nil_append, List.append_assoc] using
           hwrite.symm⟩
 
+/-- A successful concrete two-byte Box load returns the logical value encoded
+in the owned allocation and preserves both authoritative contents and exclusive
+Box ownership while exposing the exact read trace. -/
+theorem boxLoadU16_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {block : Block} {storage : List Byte}
+    {value expected : BitVec 16} (hstorageMax : storage.length ≤
+      Luffs.Runtime.TLSF.usizeMax)
+    (hload : boxLoadU16 storage block.offset = some value)
+    (hencoded : (storage.drop block.offset).take Scalar.u16.size =
+      Scalar.u16.encode expected)
+    {contents : ContentsMap} {mem : Memory} (hrep : ContentsRep contents mem) :
+    value = expected ∧
+      (contentsInterp (G := G) contents ∗
+          Luffs.Containers.Box.Owns Scalar.u16 pool block expected ⊢
+        (contentsInterp contents ∗
+          Luffs.Containers.Box.Owns Scalar.u16 pool block expected) ∗
+          ⌜ReadSteps (block.region pool).base (Scalar.u16.encode expected) mem ∧
+            Scalar.u16.decode (Scalar.u16.encode expected) = some expected⌝) := by
+  have hgeneric : boxLoad Scalar.u16 storage block.offset = some value := by
+    rw [← boxLoadU16_eq_generic storage block.offset hstorageMax]
+    exact hload
+  have hexpected : boxLoad Scalar.u16 storage block.offset = some expected :=
+    boxLoad_of_encoded Scalar.u16 storage block.offset expected
+      (boxLoad_result hgeneric).1 hencoded
+  have hvalue : value = expected := by
+    rw [hgeneric] at hexpected
+    exact Option.some.inj hexpected
+  refine ⟨hvalue, ?_⟩
+  exact Luffs.Containers.Box.deref_read Scalar.u16 hrep
+
+/-- A successful concrete two-byte Box store is exactly the generic codec
+write and inherits its frame-preserving Iris ownership update and closed WP. -/
+theorem boxStoreU16_owns_wp {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {block : Block} {storage nextStorage : List Byte}
+    (oldValue newValue : BitVec 16)
+    (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hstore : boxStoreU16 storage block.offset newValue = some nextStorage)
+    (contents : ContentsMap) (mem : Memory) (hrep : ContentsRep contents mem) :
+    nextStorage = writeBytes storage block.offset (Scalar.u16.encode newValue) ∧
+      (contentsInterp (G := G) contents ∗
+          Luffs.Containers.Box.Owns Scalar.u16 pool block oldValue ==∗
+        (contentsInterp
+            (insertBytes contents (block.region pool).base
+              (Scalar.u16.encode newValue)) ∗
+          Luffs.Containers.Box.Owns Scalar.u16 pool block newValue) ∗
+          ⌜∃ next,
+            WriteSteps (block.region pool).base (Scalar.u16.encode newValue)
+              mem next ∧
+            (⊢@{Iris.IProp GF} Program.wp
+              (Program.writeBytes (block.region pool).base
+                (Scalar.u16.encode newValue))
+              mem (fun final => final = next))⌝) := by
+  have hgeneric : boxStore Scalar.u16 storage block.offset newValue =
+      some nextStorage := by
+    rw [← boxStoreU16_eq_generic storage block.offset newValue hstorageMax]
+    exact hstore
+  exact ⟨(boxStore_result hgeneric).2, Luffs.Containers.Box.store_wp Scalar.u16
+    oldValue newValue contents mem hrep⟩
+
 theorem boxLoadU16_after_boxStoreU16 (storage result : List Byte) (begin : Nat)
     (value : BitVec 16)
     (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax)

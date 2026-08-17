@@ -4616,6 +4616,14 @@ mod tests {
         ));
         assert!(generated.contains("theorem vec_get_u64_program_wp"));
         assert!(generated.contains(
+            "theorem box_load_u16_refines : box_load_u16_model = Luffs.Runtime.Containers.boxLoadU16"
+        ));
+        assert!(generated.contains("theorem box_load_u16_program_wp"));
+        assert!(generated.contains(
+            "theorem box_store_u16_refines : box_store_u16_model = Luffs.Runtime.Containers.boxStoreU16"
+        ));
+        assert!(generated.contains("theorem box_store_u16_program_wp"));
+        assert!(generated.contains(
             "theorem box_load_u32_refines : box_load_u32_model = Luffs.Runtime.Containers.boxLoadU32"
         ));
         assert!(generated.contains("theorem box_load_u32_program_wp"));

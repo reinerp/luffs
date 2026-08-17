@@ -3211,12 +3211,12 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
     }
     for model in &module.tlsf_vec_new_models {
         out.push_str(&format!(
-            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (capacity : Nat) : Option Luffs.Runtime.TLSF.AllocateArraysResult :=\n  {} offsets sizes is_free prev_free count second first heads next previous capacity\n\n",
-            model.name, model.refines
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (capacity : Nat) : Option Luffs.Runtime.TLSF.AllocateArraysResult :=\n  if capacity = 0 ∨ capacity > Luffs.Runtime.TLSF.usizeMax - 7 then none\n  else tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous\n    (Luffs.Containers.Vec.allocationBytes Luffs.Memory.Scalar.u8 capacity)\n\n",
+            model.name
         ));
         out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
-            model.name, model.name, model.refines
+            "theorem {}_refines : {}_model = {} := by\n  unfold {}_model {}\n  rw [tlsf_allocate_refines]\n\n",
+            model.name, model.name, model.refines, model.name, model.refines
         ));
     }
     for model in &module.tlsf_vec_push_models {
@@ -3577,6 +3577,9 @@ mod tests {
         );
         assert!(generated.contains(
             "theorem tlsf_vec_new_u8_refines : tlsf_vec_new_u8_model = Luffs.Runtime.Containers.vecNewU8Arrays"
+        ));
+        assert!(generated.contains(
+            "else tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous\n    (Luffs.Containers.Vec.allocationBytes Luffs.Memory.Scalar.u8 capacity)"
         ));
         assert!(generated.contains(
             "theorem tlsf_vec_push_u8_refines : tlsf_vec_push_u8_model = Luffs.Runtime.Containers.vecPushU8Offset"

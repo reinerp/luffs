@@ -540,6 +540,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   physical-header arrays. The generalized public allocation theorem proves
   the active prefix refines abstract TLSF while framing unused slots, closing
   the previous gap where canonical input arrays could not accommodate a split.
+  Generated Vec-construction semantics now calls the generated TLSF allocator
+  model with the verified byte-capacity request rather than directly aliasing
+  the hand-written Vec constructor transformer. The specialized source checker
+  still recognizes the exact `capacity + 7` and `& !7` Rust expression; a
+  general word-level lowering theorem for that mask remains part of generic
+  Luffs monomorphization.
 
 `stdlib/containers.luffs` now contains the first byte-monomorphized Box and Vec
 lowering: initialization/load/store, push/pop length transitions, indexed get,

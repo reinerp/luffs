@@ -703,7 +703,14 @@ concurrency are later extensions and are not prerequisites for `Box` and
   the Iris `read_element` trace and codec round trip. Generic pop now connects
   the source length transition to `Vec.pop_owns`, deleting exactly the last
   encoding, and concrete TLSF-backed drop is generalized over every codec; the
-  byte theorem delegates to that generic ownership result.
+  byte theorem delegates to that generic ownership result. The concrete
+  `vec_push_u16` lowering now has its own Iris façade, and an end-to-end
+  composition theorem chains `tlsf_vec_new_u16` directly into its first
+  two-byte push. Starting from only TLSF `OwnsFree`, the composed update
+  initializes exactly the little-endian element bytes, returns
+  `Vec.Owns Scalar.u16 ... [value]`, and frames the allocator's remaining free
+  ownership. Existing `vec_get_u16`, generic pop, and codec-generic drop laws
+  operate on that same handle and capability.
   Generated Vec-construction semantics now calls the generated TLSF allocator
   model with the verified byte-capacity request rather than directly aliasing
   the hand-written Vec constructor transformer. The specialized source checker

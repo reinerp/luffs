@@ -2195,6 +2195,124 @@ theorem vecPushU16_refines_generic {storage next : List Byte}
   simpa only [List.cons_append, List.nil_append, List.append_assoc] using
     hwrite
 
+/-- The concrete two-byte Luffs push inherits the generic Vec ownership law:
+exactly one initialized `u16` encoding is appended and exclusive ownership of
+the same allocation is retained. -/
+theorem vecPushU16_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {storage nextStorage : List Byte}
+    {handle : Luffs.Containers.Vec.Handle} {values : List (BitVec 16)}
+    {value : BitVec 16} {nextLen : Nat}
+    (hcapacityMax : handle.capacity ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hlen : values.length = handle.len)
+    (hpush : vecPushU16 storage handle.block.offset handle.len
+      handle.capacity value = some (nextStorage, nextLen)) :
+    ∃ nextHandle,
+      Luffs.Containers.Vec.push handle = some nextHandle ∧
+      nextLen = nextHandle.len ∧
+      nextStorage = writeBytes storage
+        (handle.block.offset +
+          (Luffs.Containers.Vec.encodeValues Scalar.u16 values).length)
+        (Scalar.u16.encode value) ∧
+      ∀ contents : ContentsMap,
+        CanInsertBytes contents
+          ((handle.block.region pool).base +
+            (Luffs.Containers.Vec.encodeValues Scalar.u16 values).length)
+          (Scalar.u16.encode value) →
+        contentsInterp (G := G) contents ∗
+            Luffs.Containers.Vec.Owns Scalar.u16 pool handle values ==∗
+          contentsInterp
+              (insertBytes contents
+                ((handle.block.region pool).base +
+                  (Luffs.Containers.Vec.encodeValues Scalar.u16 values).length)
+                (Scalar.u16.encode value)) ∗
+            Luffs.Containers.Vec.Owns Scalar.u16 pool nextHandle
+              (values ++ [value]) := by
+  have hgeneric : vecPush Scalar.u16 storage handle.block.offset handle.len
+      handle.capacity value = some ⟨nextStorage, nextLen⟩ :=
+    vecPushU16_refines_generic hcapacityMax hpush
+  exact vecPush_owns Scalar.u16 hlen hgeneric
+
+set_option maxHeartbeats 1200000 in
+/-- End-to-end first push for an allocator-backed `Vec<u16>`. This composes the
+concrete TLSF allocation, the empty typed Vec capability, the concrete
+little-endian push, and the generic Iris initialization update. -/
+theorem vecNewPushU16Arrays_owns
+    {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
+    [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {blocks : List Block} {state : Bins.State}
+    {storage nextStorage : List Byte}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {heads next previous : List Nat} {capacity nextLen : Nat}
+    {value : BitVec 16} {allocated : Luffs.Runtime.TLSF.AllocateArraysResult}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins { heads, next, previous } state)
+    (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
+    (hnew : vecNewU16Arrays offsets sizes isFree prevFree count second first
+      heads next previous capacity = some allocated)
+    (hpush : vecPushU16 storage allocated.allocatedOffset 0 capacity value =
+      some (nextStorage, nextLen)) :
+    ∃ (hcapacity : 0 < capacity)
+        (hkeyMax : requestKey
+          (Luffs.Containers.Vec.allocationBytes Scalar.u16 capacity) <
+            2 ^ firstLevelCount)
+        (vecResult : Luffs.Containers.Vec.AllocResult)
+        (nextHandle : Luffs.Containers.Vec.Handle),
+      Luffs.Containers.Vec.allocate Scalar.u16 capacity hcapacity
+          { physical := blocks, bins := state } hkeyMax = some vecResult ∧
+      allocated.allocatedOffset = vecResult.handle.block.offset ∧
+      Luffs.Containers.Vec.push vecResult.handle = some nextHandle ∧
+      nextLen = nextHandle.len ∧
+      nextStorage = writeBytes storage vecResult.handle.block.offset
+        (Scalar.u16.encode value) ∧
+      ∀ contents : ContentsMap,
+        CanInsertBytes contents (vecResult.handle.block.region pool).base
+          (Scalar.u16.encode value) →
+        contentsInterp (G := G) contents ∗ Ownership.OwnsFree pool blocks ==∗
+          contentsInterp
+              (insertBytes contents (vecResult.handle.block.region pool).base
+                (Scalar.u16.encode value)) ∗
+            (Luffs.Containers.Vec.Owns Scalar.u16 pool nextHandle [value] ∗
+              Ownership.OwnsFree pool vecResult.state.physical) := by
+  obtain ⟨hcapacity, hkeyMax, vecResult, halloc, hoffset, _, hlen, hcap,
+      howns⟩ := vecNewU16Arrays_refines_vec (GF := GF) hvalid hsecond hfirst hbins
+    hdisjoint hphysical hnew
+  have hcapacityMax : capacity ≤ Luffs.Runtime.TLSF.usizeMax := by
+    obtain ⟨_, hmul, _, _⟩ := vecNewArrays_result hnew
+    simpa [Scalar.u16] using Nat.le_trans hmul
+      (Nat.div_le_self Luffs.Runtime.TLSF.usizeMax 2)
+  have hpush' : vecPushU16 storage vecResult.handle.block.offset
+      vecResult.handle.len vecResult.handle.capacity value =
+      some (nextStorage, nextLen) := by
+    simpa [hoffset, hlen, hcap] using hpush
+  have hcapacityMax' : vecResult.handle.capacity ≤
+      Luffs.Runtime.TLSF.usizeMax := by simpa [hcap] using hcapacityMax
+  obtain ⟨nextHandle, habstractPush, hnextLen, hstorage, hpushOwns⟩ :=
+    vecPushU16_owns (GF := GF) (pool := pool) hcapacityMax' (values := [])
+      hlen.symm hpush'
+  simp only [Luffs.Containers.Vec.encodeValues, List.flatMap_nil,
+    List.length_nil, Nat.add_zero, List.nil_append] at hpushOwns
+  refine ⟨hcapacity, hkeyMax, vecResult, nextHandle, halloc, hoffset,
+    habstractPush, hnextLen, ?_, ?_⟩
+  · simpa [Luffs.Containers.Vec.encodeValues] using hstorage
+  · intro contents hfresh
+    iintro ⟨Hcontents, Hallocator⟩
+    ihave ⟨Hvec, Hallocator⟩ := howns.mp $$ Hallocator
+    icombine Hcontents Hvec as Hpush
+    imod hpushOwns contents hfresh
+      $$ Hpush with ⟨Hcontents, Hvec⟩
+    imodintro
+    isplitl [Hcontents]
+    · iassumption
+    · isplitl [Hvec]
+      · iassumption
+      · iassumption
+
 def vecLastU8 (storage : List Byte) (len : Nat) : Option Byte :=
   if len = 0 then none
   else if len > storage.length then none

@@ -164,8 +164,12 @@ and the pure effect of Luffs front insertion. Successful insertion is proved to
 preserve all three array lengths and to establish the new bin head, forward
 link, detached-sentinel predecessor, and (when present) old-head back-link.
 `RepresentsBin` states the abstraction relation from these arrays to a logical
-intrusive chain. The tail-frame lemma and compiler-generated multi-array
-semantics are still required before this is a full insertion refinement.
+intrusive chain. A generic linked-chain frame lemma proves that equal lengths
+and pointwise-equal metadata on a chain preserve its representation. Combined
+with freshness and `Nodup`, this yields the full insertion theorem:
+`RepresentsBin state bin chain` becomes
+`RepresentsBin nextState bin (block :: chain)`. Compiler-generated multi-array
+semantics are still required to connect the Luffs body to this transition.
 
 The first target is sequential TLSF with fixed-size pools obtained from `mmap`.
 Growing pools, `realloc`, aligned allocation beyond the base alignment, and

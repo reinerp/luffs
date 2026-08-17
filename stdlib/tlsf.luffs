@@ -1,0 +1,89 @@
+// Fixed-metadata TLSF runtime primitives. The full allocator represents block
+// headers as parallel arrays, keeping Luffs' initial aggregate-free subset.
+// `next.len()` is the detached/end-of-chain sentinel.
+
+fn tlsf_insert(heads: &mut [usize; 256], next: &mut [usize; 4096], previous: &mut [usize; 4096], bin: usize, block: usize) -> Option<()> {
+    if bin >= heads.len() { return None; }
+    if block >= next.len() { return None; }
+    if block >= previous.len() { return None; }
+
+    let old_head: usize = heads[bin];
+    next[block] = old_head;
+    previous[block] = next.len();
+    if old_head < previous.len() {
+        previous[old_head] = block;
+    }
+    heads[bin] = block;
+    Some(())
+}
+
+fn tlsf_remove(heads: &mut [usize; 256], next: &mut [usize; 4096], previous: &mut [usize; 4096], bin: usize, block: usize) -> Option<()> {
+    if bin >= heads.len() { return None; }
+    if block >= next.len() { return None; }
+    if block >= previous.len() { return None; }
+
+    let successor: usize = next[block];
+    let predecessor: usize = previous[block];
+    if predecessor >= next.len() {
+        heads[bin] = successor;
+    }
+    if predecessor < next.len() {
+        next[predecessor] = successor;
+    }
+    if successor < previous.len() {
+        previous[successor] = predecessor;
+    }
+    next[block] = next.len();
+    previous[block] = previous.len();
+    Some(())
+}
+
+fn tlsf_find_fit(sizes: &[usize; 4096], is_free: &[u8; 4096], request: usize) -> Option<usize> {
+    let mut block: usize = 0;
+    while block < sizes.len() {
+        if block >= is_free.len() { return None; }
+        let free: u8 = is_free[block];
+        let bytes: usize = sizes[block];
+        if free != 0 {
+            if request <= bytes {
+                return Some(block);
+            }
+        }
+        if block == usize::MAX { return None; }
+        let next_block: usize = block + 1;
+        block = next_block;
+    }
+    None
+}
+
+// Search a 256-bit nonempty-bin bitmap at or above `start_bin`. Four machine
+// words are examined at most, so this remains a bounded TLSF metadata lookup.
+fn tlsf_find_nonempty_bin(nonempty: &[u64; 4], start_bin: usize) -> Option<usize> {
+    let mut word: usize = start_bin >> 6;
+    let bit = start_bin & 63;
+    if word >= nonempty.len() { return None; }
+
+    let first_bitmap: u64 = nonempty[word];
+    let first_masked = first_bitmap & (u64::MAX << bit);
+    if first_masked != 0 {
+        let offset: usize = first_masked.trailing_zeros() as usize;
+        if offset >= 64 { return None; }
+        let base = word.checked_mul(64)?;
+        let bin = base.checked_add(offset)?;
+        return Some(bin);
+    }
+
+    word = word.checked_add(1)?;
+    while word < nonempty.len() {
+        let bitmap: u64 = nonempty[word];
+        if bitmap != 0 {
+            let offset: usize = bitmap.trailing_zeros() as usize;
+            if offset >= 64 { return None; }
+            let base = word.checked_mul(64)?;
+            let bin = base.checked_add(offset)?;
+            return Some(bin);
+        }
+        word = word.checked_add(1)?;
+    }
+    None
+}

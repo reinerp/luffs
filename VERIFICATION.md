@@ -149,6 +149,16 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   predecessor/successor link-update refinement and Luffs lowering remain.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 
+The first concrete `stdlib/tlsf.luffs` runtime layer now implements bounded
+bitmap search plus intrusive insert/remove over fixed parallel metadata arrays,
+without expanding the initial language with aggregate types. Every metadata
+index is lowered to an unchecked Rust access only after a generated Lean
+obligation succeeds, and potentially overflowing bitmap-index arithmetic uses
+Rust `checked_mul`/`checked_add`. This is not yet claimed to refine the abstract
+TLSF transition: the compiler still needs a function-semantics translation and
+a refinement hook connecting these emitted operations to the existing Lean
+allocator proofs.
+
 The first target is sequential TLSF with fixed-size pools obtained from `mmap`.
 Growing pools, `realloc`, aligned allocation beyond the base alignment, and
 concurrency are later extensions and are not prerequisites for `Box` and

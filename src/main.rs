@@ -28,6 +28,29 @@ struct Module {
     accesses: Vec<Access>,
 }
 
+#[derive(Debug)]
+enum ControlScope {
+    If {
+        condition: Option<String>,
+        diverges: bool,
+        old_fact_count: usize,
+        body_depth: usize,
+    },
+    While {
+        condition: String,
+        old_fact_count: usize,
+        body_depth: usize,
+    },
+}
+
+impl ControlScope {
+    fn body_depth(&self) -> usize {
+        match self {
+            Self::If { body_depth, .. } | Self::While { body_depth, .. } => *body_depth,
+        }
+    }
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -68,26 +91,20 @@ fn parse(source: &str) -> Result<Module, String> {
     let mut facts = Vec::new();
     let mut nat_vars = Vec::new();
     let mut mutable_arrays = BTreeSet::new();
-    let mut pending_if: Option<(Option<String>, bool)> = None;
-    let mut pending_while: Option<(String, usize)> = None;
+    let mut control_scopes = Vec::new();
+    let mut brace_depth = 0usize;
     let mut auto_proof = 0usize;
     let mut overflow_proof = 0usize;
 
     for (line_no, raw) in logical_lines(source)? {
         let raw = raw.as_str();
         let trimmed = raw.trim();
-        if let Some((condition, old_fact_count)) = &pending_while
-            && trimmed == "}"
-            && pending_if.is_none()
-        {
-            facts.truncate(*old_fact_count);
-            facts.push(format!("¬ ({condition})"));
-            pending_while = None;
-        }
         if trimmed.starts_with("fn ") {
             nat_vars.clear();
             mutable_arrays.clear();
             facts.clear();
+            control_scopes.clear();
+            brace_depth = 0;
             for part in trimmed.split(['(', ',', ')']) {
                 if let Some((name, ty)) = part.trim().split_once(':') {
                     if ty.contains("&[") || ty.contains("&mut [") {
@@ -121,16 +138,24 @@ fn parse(source: &str) -> Result<Module, String> {
             }
             nat_vars.push(name.to_owned());
         }
-        if let Some((condition, diverges)) = &mut pending_if {
-            if is_diverging_statement(trimmed) {
-                *diverges = true;
+        if is_diverging_statement(trimmed)
+            && let Some(ControlScope::If { diverges, .. }) = control_scopes.last_mut()
+        {
+            *diverges = true;
+        }
+        if trimmed.starts_with("} else {")
+            && let Some(ControlScope::If {
+                condition,
+                diverges,
+                old_fact_count,
+                ..
+            }) = control_scopes.last_mut()
+        {
+            facts.truncate(*old_fact_count);
+            if let Some(condition) = condition {
+                facts.push(format!("¬ ({condition})"));
             }
-            if trimmed == "}" {
-                if *diverges && let Some(condition) = condition {
-                    facts.push(format!("¬ ({condition})"));
-                }
-                pending_if = None;
-            }
+            *diverges = false;
         } else if let Some(condition) = control_condition(trimmed, "if") {
             if trimmed.contains("{ return ") && trimmed.ends_with('}') {
                 if fact_supported(condition, &nat_vars) {
@@ -139,7 +164,16 @@ fn parse(source: &str) -> Result<Module, String> {
             } else if trimmed.ends_with('{') {
                 let condition =
                     fact_supported(condition, &nat_vars).then(|| to_lean_expr(condition));
-                pending_if = Some((condition, false));
+                let old_fact_count = facts.len();
+                if let Some(condition) = &condition {
+                    facts.push(condition.clone());
+                }
+                control_scopes.push(ControlScope::If {
+                    condition,
+                    diverges: false,
+                    old_fact_count,
+                    body_depth: brace_depth + 1,
+                });
             }
         } else if let Some(condition) = control_condition(trimmed, "while")
             && trimmed.ends_with('{')
@@ -148,7 +182,11 @@ fn parse(source: &str) -> Result<Module, String> {
             let condition = to_lean_expr(condition);
             let old_fact_count = facts.len();
             facts.push(condition.clone());
-            pending_while = Some((condition, old_fact_count));
+            control_scopes.push(ControlScope::While {
+                condition,
+                old_fact_count,
+                body_depth: brace_depth + 1,
+            });
         }
         if let Some(decl) = trimmed.strip_prefix("proof ") {
             let decl = decl.strip_suffix(';').unwrap_or(decl).trim();
@@ -189,6 +227,36 @@ fn parse(source: &str) -> Result<Module, String> {
         }
         rust.push_str(&rewritten);
         rust.push('\n');
+
+        let opens = raw.bytes().filter(|byte| *byte == b'{').count();
+        let closes = raw.bytes().filter(|byte| *byte == b'}').count();
+        brace_depth = brace_depth.saturating_add(opens).saturating_sub(closes);
+        while control_scopes
+            .last()
+            .is_some_and(|scope| scope.body_depth() > brace_depth)
+        {
+            match control_scopes.pop().expect("scope exists") {
+                ControlScope::If {
+                    condition,
+                    diverges,
+                    old_fact_count,
+                    ..
+                } => {
+                    facts.truncate(old_fact_count);
+                    if diverges && let Some(condition) = condition {
+                        facts.push(format!("¬ ({condition})"));
+                    }
+                }
+                ControlScope::While {
+                    condition,
+                    old_fact_count,
+                    ..
+                } => {
+                    facts.truncate(old_fact_count);
+                    facts.push(format!("¬ ({condition})"));
+                }
+            }
+        }
     }
     Ok(Module {
         rust,
@@ -405,12 +473,12 @@ fn rewrite_accesses(
             };
             out.push_str(&format!("unsafe {{ {array}.{method}({rust_subscript}) }}"));
         } else {
-            let method = if mutable {
-                "get_unchecked_mut"
+            let access = if mutable {
+                format!("*unsafe {{ {array}.get_unchecked_mut({rust_subscript}) }}")
             } else {
-                "get_unchecked"
+                format!("unsafe {{ *{array}.get_unchecked({rust_subscript}) }}")
             };
-            out.push_str(&format!("unsafe {{ *{array}.{method}({rust_subscript}) }}"));
+            out.push_str(&access);
         }
         found.push(Access {
             array: array.into(),
@@ -571,6 +639,16 @@ mod tests {
     }
 
     #[test]
+    fn mutable_access_is_parenthesized_for_assignment() {
+        let m = parse(
+            "fn f(a: &mut [u8], i: usize) -> Option<()> {\nif i >= a.len() { return None; }\na[i] = 1;\nSome(())\n}",
+        )
+        .unwrap();
+        validate(&m).unwrap();
+        assert!(m.rust.contains("*unsafe { a.get_unchecked_mut(i) } = 1;"));
+    }
+
+    #[test]
     fn distinguishes_slice_conventions() {
         let a = Access {
             array: "a".into(),
@@ -592,6 +670,15 @@ mod tests {
     fn loop_condition_is_a_fact_inside_the_body() {
         let m = parse(
             "fn f(input: &[u8]) -> Option<()> {\nlet mut i: usize = 0;\nwhile i < input.len() {\nlet _x = input[i];\ni += 1;\n}\nSome(())\n}",
+        )
+        .unwrap();
+        assert!(m.proofs[0].facts.iter().any(|fact| fact == "i < input_len"));
+    }
+
+    #[test]
+    fn if_condition_is_a_fact_inside_the_body() {
+        let m = parse(
+            "fn f(input: &[u8], i: usize) -> Option<u8> {\nif i < input.len() {\nreturn Some(input[i]);\n}\nNone\n}",
         )
         .unwrap();
         assert!(m.proofs[0].facts.iter().any(|fact| fact == "i < input_len"));
@@ -620,5 +707,21 @@ mod tests {
         .unwrap();
         assert_eq!(m.proofs[0].name, "p");
         assert_eq!(m.proofs[0].body, "omega");
+    }
+
+    #[test]
+    fn tlsf_runtime_source_has_only_proved_accesses() {
+        let m = parse(include_str!("../stdlib/tlsf.luffs")).unwrap();
+        validate(&m).unwrap();
+        assert!(m.accesses.len() >= 16);
+        assert_eq!(
+            m.accesses.len(),
+            m.proofs
+                .iter()
+                .filter(|p| p.name.starts_with("__auto_"))
+                .count()
+        );
+        assert!(m.rust.contains("get_unchecked_mut"));
+        assert!(m.rust.contains("checked_mul"));
     }
 }

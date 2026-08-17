@@ -219,8 +219,12 @@ points to a set class bit, proves every result decodes to an in-range
 class whose intrusive chain is nonempty. The candidate-removal body now also
 has a compiler-recognized exact semantic model covering intrusive removal and
 both conditional bitmap clears. Lean proves its result equation and that
-clearing a selected class bit preserves every other class bit. Preservation of
-the combined concrete-to-abstract bitmap and chain relation remains.
+clearing a selected class bit preserves every other class bit. It also proves
+the second-level abstraction step in both cases: clearing the bit represents
+replacing the selected abstract chain by the empty list, while an unchanged
+bitmap represents replacement by any nonempty remainder. Connecting the
+intrusive successor sentinel to those two cases and preserving the first-level
+cache relation remain.
 The logical 2048-bit search is also proved equal to a chunked search that
 examines only the suffix of the starting `u32` and then the remaining complete
 second-level words. For each `u32`, masked `ctz` is proved exactly equal to its

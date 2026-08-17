@@ -1112,6 +1112,18 @@ def RepresentsSecondBitmap (second : List (BitVec 32))
       (classBits second)[cls.fl.val * secondLevelCount + cls.sl.val]? =
         some (state.slSet cls.fl cls.sl)
 
+theorem slSet_eq_decide_nonempty {state : Bins.State}
+    (hvalid : Bins.Valid state) (cls : SizeClass) :
+    state.slSet cls.fl cls.sl = decide (state.chains cls ≠ []) := by
+  by_cases hne : state.chains cls ≠ []
+  · have hbit := (hvalid.2.2.1 cls.fl cls.sl).2 hne
+    simp [hbit, hne]
+  · have hbit : state.slSet cls.fl cls.sl = false := by
+      cases hvalue : state.slSet cls.fl cls.sl with
+      | false => rfl
+      | true => exact (hne ((hvalid.2.2.1 cls.fl cls.sl).1 hvalue)).elim
+    simp [hbit, hne]
+
 theorem findNonemptyClassLowered_selects_nonempty
     {second : List (BitVec 32)} {first : BitVec 64}
     {state : Bins.State} (hrep : RepresentsSecondBitmap second state)
@@ -1283,6 +1295,87 @@ theorem clearClassBit_preserves_other {second : List (BitVec 32)}
     have heq := hnewBit.trans holdBit.symm
     rw [Nat.mul_comm (other / 32) 32, Nat.div_add_mod] at heq
     exact heq
+
+theorem clearClassBit_represents_replace_empty
+    {second : List (BitVec 32)} {state : Bins.State}
+    (hrep : RepresentsSecondBitmap second state) (hvalid : Bins.Valid state)
+    (target : SizeClass) :
+    RepresentsSecondBitmap
+      (clearClassBit second
+        (target.fl.val * secondLevelCount + target.sl.val))
+      (state.replaceChain target []) := by
+  let bin := target.fl.val * secondLevelCount + target.sl.val
+  have hbinFl : bin / 32 = target.fl.val := by
+    dsimp [bin]
+    have hsl := target.sl.isLt
+    simp only [secondLevelCount] at hsl ⊢
+    omega
+  have hbinBound : bin < second.length * 32 := by
+    rw [hrep.1]
+    dsimp [bin]
+    have hfl := target.fl.isLt
+    have hsl := target.sl.isLt
+    simp only [firstLevelCount, secondLevelCount] at hfl hsl ⊢
+    omega
+  refine ⟨by simp [clearClassBit_length, hrep.1], ?_⟩
+  intro query
+  by_cases hquery : query = target
+  · subst query
+    have hfalse := clearClassBit_selected_false
+      (second := second) (bin := bin) (by simpa [hbinFl, hrep.1])
+    simpa [Bins.State.replaceChain, Bins.State.fromChains,
+      Bins.Chains.replace, bin] using hfalse
+  · have hindexNe :
+        query.fl.val * secondLevelCount + query.sl.val ≠ bin := by
+      intro heq
+      apply hquery
+      have hqsl := query.sl.isLt
+      have htsl := target.sl.isLt
+      have hflVal : query.fl.val = target.fl.val := by
+        dsimp [bin] at heq
+        simp only [secondLevelCount] at heq hqsl htsl
+        have hdiv := congrArg (fun value : Nat => value / 32) heq
+        omega
+      have hslVal : query.sl.val = target.sl.val := by
+        dsimp [bin] at heq
+        simp only [secondLevelCount] at heq hqsl htsl
+        omega
+      have hfl : query.fl = target.fl := Fin.ext hflVal
+      have hsl : query.sl = target.sl := Fin.ext hslVal
+      cases query
+      cases target
+      simp_all
+    have hqueryBound :
+        query.fl.val * secondLevelCount + query.sl.val < second.length * 32 := by
+      rw [hrep.1]
+      have hfl := query.fl.isLt
+      have hsl := query.sl.isLt
+      simp only [firstLevelCount, secondLevelCount] at hfl hsl ⊢
+      omega
+    rw [clearClassBit_preserves_other
+      (by simpa [hbinFl, hrep.1]) hqueryBound hindexNe, hrep.2 query]
+    rw [slSet_eq_decide_nonempty hvalid query]
+    simp [Bins.State.replaceChain, Bins.State.fromChains,
+      Bins.Chains.replace, hquery]
+
+theorem representsSecondBitmap_replace_nonempty
+    {second : List (BitVec 32)} {state : Bins.State}
+    (hrep : RepresentsSecondBitmap second state) (hvalid : Bins.Valid state)
+    (target : SizeClass) {rest : List Block} (hrest : rest ≠ [])
+    (hold : state.chains target ≠ []) :
+    RepresentsSecondBitmap second (state.replaceChain target rest) := by
+  refine ⟨hrep.1, ?_⟩
+  intro query
+  by_cases hquery : query = target
+  · subst query
+    rw [hrep.2 target]
+    have holdSet := (hvalid.2.2.1 target.fl target.sl).2 hold
+    simp [Bins.State.replaceChain, Bins.State.fromChains,
+      Bins.Chains.replace, holdSet, hrest]
+  · rw [hrep.2 query]
+    rw [slSet_eq_decide_nonempty hvalid query]
+    simp [Bins.State.replaceChain, Bins.State.fromChains,
+      Bins.Chains.replace, hquery]
 
 structure ClassCandidateResult where
   block : Nat

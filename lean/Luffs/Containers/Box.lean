@@ -195,6 +195,49 @@ theorem deref_read {GF : BundledGFunctors}
   · ipureintro
     exact ⟨hsteps, codec.decode_encode value⟩
 
+theorem store {GF : BundledGFunctors}
+    [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
+    (codec : Codec α) {pool : Region} {block : Block} (oldValue newValue : α)
+    (contents : ContentsMap) (mem : Memory) (hrep : ContentsRep contents mem) :
+    contentsInterp (G := G) contents ∗ Owns codec pool block oldValue ==∗
+      (contentsInterp
+          (insertBytes contents (block.region pool).base
+            (codec.encode newValue)) ∗
+        Owns codec pool block newValue) ∗
+        ⌜∃ next, WriteSteps (block.region pool).base
+          (codec.encode newValue) mem next⌝ := by
+  simp only [Owns]
+  iintro ⟨Hcontents, Hbox⟩
+  icases Hbox with ⟨Hregion, HoldPoints⟩
+  icombine Hcontents HoldPoints as Hinitialized
+  ihave ⟨Hinitialized, %hagreement⟩ := pointsToBytes_agreement contents
+    (block.region pool).base (codec.encode oldValue) $$ Hinitialized
+  have hwrite : ∃ next, WriteSteps (block.region pool).base
+      (codec.encode newValue) mem next := by
+    apply writeSteps_exists
+    intro i hi
+    have hiOld : i < (codec.encode oldValue).length := by
+      simpa [codec.encode_length] using hi
+    let oldByte := (codec.encode oldValue)[i]
+    have hget : (codec.encode oldValue)[i]? = some oldByte := by
+      exact List.getElem?_eq_getElem hiOld
+    have hmem := hrep ((block.region pool).base + i) oldByte
+      (hagreement i oldByte hget)
+    unfold Memory.mapped
+    simp [hmem]
+  imod pointsToBytes_update contents (block.region pool).base
+    (codec.encode oldValue) (codec.encode newValue)
+    (by simp [codec.encode_length]) $$ Hinitialized with ⟨Hcontents, HnewPoints⟩
+  imodintro
+  isplitl [Hcontents Hregion HnewPoints]
+  · isplitl [Hcontents]
+    · iassumption
+    · isplitl [Hregion]
+      · iassumption
+      · iassumption
+  · ipureintro
+    exact hwrite
+
 theorem drop_owns {GF : BundledGFunctors}
     [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
     (codec : Codec α) {pool : Region} {state next : Alloc.State}

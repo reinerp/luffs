@@ -172,9 +172,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   values plus 64-bit `usize`/`isize`, with bit-blasted round-trip proofs.
   Box byte dereference produces exact operational load steps. Whole-value Box
   reads now retain the Iris ownership resources, execute a load step for every
-  encoded byte, and return the codec's proved decoded value. Whole-value store
-  sequencing, target-width parameterization, and Luffs lowering remain before
-  this item is complete.
+  encoded byte, and return the codec's proved decoded value. Whole-value stores
+  now prove every destination is mapped from the old encoded ownership,
+  execute an explicit store step for every new byte, update the authoritative
+  content map and all fragments, and preserve exclusive Box ownership of the
+  new logical value. Target-width parameterization and Luffs lowering remain
+  before this item is complete.
 - [ ] `Vec<T>`: invariant `len <= capacity`, initialized prefix ownership,
   spare-capacity ownership, checked layout arithmetic, growth without loss or
   double-drop, `push`, `pop`, indexing, shared/mutable slices, and drop.

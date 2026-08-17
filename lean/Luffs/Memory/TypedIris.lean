@@ -222,4 +222,44 @@ theorem pointsToBytes_insert {GF : BundledGFunctors} [G : ByteContentsGS GF]
         · iassumption
         · iassumption
 
+theorem pointsToBytes_update {GF : BundledGFunctors} [G : ByteContentsGS GF]
+    (contents : ContentsMap) (base : Addr) (oldValues newValues : List Byte)
+    (hlength : oldValues.length = newValues.length) :
+    contentsInterp (G := G) contents ∗ PointsToBytes base oldValues ==∗
+      contentsInterp (insertBytes contents base newValues) ∗
+        PointsToBytes base newValues := by
+  induction oldValues generalizing contents base newValues with
+  | nil =>
+      have : newValues = [] :=
+        List.eq_nil_of_length_eq_zero (by simpa using hlength.symm)
+      subst newValues
+      simp only [insertBytes, PointsToBytes, contentsInterp]
+      iintro ⟨Hauth, _⟩
+      imodintro
+      isplitl [Hauth]
+      · iassumption
+      · itrivial
+  | cons oldValue oldRest ih =>
+      cases newValues with
+      | nil => simp at hlength
+      | cons newValue newRest =>
+          have htailLength : oldRest.length = newRest.length := by
+            simpa using hlength
+          simp only [insertBytes, PointsToBytes, contentsInterp]
+          iintro ⟨Hauth, Hold⟩
+          icases Hold with ⟨HoldValue, HoldRest⟩
+          imod ghost_map_update newValue $$ Hauth HoldValue with
+            ⟨Hauth, HnewValue⟩
+          icombine Hauth HoldRest as Htail
+          have hih := ih (Std.PartialMap.insert contents base newValue)
+            (base + 1) newRest htailLength
+          unfold contentsInterp at hih
+          imod hih $$ Htail with ⟨Hauth, HnewRest⟩
+          imodintro
+          isplitl [Hauth]
+          · iassumption
+          · isplitl [HnewValue]
+            · iassumption
+            · iassumption
+
 end Luffs.Memory

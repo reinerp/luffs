@@ -78,6 +78,15 @@ inductive ReadSteps : Addr -> List Byte -> Memory -> Prop where
       (htail : ReadSteps (base + 1) rest mem) :
       ReadSteps base (value :: rest) mem
 
+/-- Sequential stores of a complete encoded value. -/
+inductive WriteSteps : Addr -> List Byte -> Memory -> Memory -> Prop where
+  | nil {base mem} : WriteSteps base [] mem mem
+  | cons {base value rest mem next old}
+      (hstore : PrimStep (.store base value) mem .unit (mem.write base value))
+      (hold : mem base = some old)
+      (htail : WriteSteps (base + 1) rest (mem.write base value) next) :
+      WriteSteps base (value :: rest) mem next
+
 theorem readSteps_exists (base : Addr) (values : List Byte) (mem : Memory)
     (hsrc : ∀ i value, values[i]? = some value →
       mem (base + i) = some value) :
@@ -93,6 +102,32 @@ theorem readSteps_exists (base : Addr) (values : List Byte) (mem : Memory)
         have h := hsrc (i + 1) tailValue (by simpa using hget)
         simpa [Nat.add_assoc, Nat.add_comm 1 i] using h
       exact ReadSteps.cons hload htail
+
+theorem writeSteps_exists (base : Addr) (values : List Byte) (mem : Memory)
+    (hmapped : ∀ i, i < values.length → mem.mapped (base + i)) :
+    ∃ next, WriteSteps base values mem next := by
+  induction values generalizing base mem with
+  | nil => exact ⟨mem, .nil⟩
+  | cons value rest ih =>
+      obtain ⟨old, hold⟩ : ∃ old, mem base = some old := by
+        have h := hmapped 0 (by simp)
+        unfold Memory.mapped at h
+        cases hmem : mem base with
+        | none => simp [hmem] at h
+        | some old => exact ⟨old, rfl⟩
+      have htailMapped : ∀ i, i < rest.length →
+          (mem.write base value).mapped (base + 1 + i) := by
+        intro i hi
+        have h := hmapped (i + 1)
+          (by simpa only [List.length_cons] using Nat.succ_lt_succ hi)
+        unfold Memory.mapped at h ⊢
+        simp only [Memory.write]
+        split
+        · simp
+        · rw [Nat.add_assoc, Nat.add_comm 1 i]
+          exact h
+      obtain ⟨next, htail⟩ := ih (base + 1) (mem.write base value) htailMapped
+      exact ⟨next, .cons (.store hold) hold htail⟩
 
 
 /-- A bytewise copy has an operational execution whenever every source byte

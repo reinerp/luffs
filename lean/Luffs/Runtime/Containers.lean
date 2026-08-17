@@ -1912,6 +1912,64 @@ def vecPushU8 (storage : List Byte) (len capacity : Nat) (value : Byte) :
   else if capacity > storage.length then none
   else some (storage.set len value, len + 1)
 
+def vecPushU16 (storage : List Byte) (offset len capacity : Nat)
+    (value : BitVec 16) : Option (List Byte × Nat) :=
+  if len ≥ capacity then none
+  else if len > Luffs.Runtime.TLSF.usizeMax / 2 then none
+  else if offset > Luffs.Runtime.TLSF.usizeMax - len * 2 then none
+  else if offset + len * 2 > Luffs.Runtime.TLSF.usizeMax - 2 then none
+  else if offset + len * 2 + 1 ≥ storage.length then none
+  else some ((storage.set (offset + len * 2) (Scalar.byteAt value 0)).set
+    (offset + len * 2 + 1) (Scalar.byteAt value 8), len + 1)
+
+theorem vecPushU16_result {storage next : List Byte}
+    {offset len capacity nextLen : Nat} {value : BitVec 16}
+    (hpush : vecPushU16 storage offset len capacity value = some (next, nextLen)) :
+    len < capacity ∧ len ≤ Luffs.Runtime.TLSF.usizeMax / 2 ∧
+      offset ≤ Luffs.Runtime.TLSF.usizeMax - len * 2 ∧
+      offset + len * 2 ≤ Luffs.Runtime.TLSF.usizeMax - 2 ∧
+      offset + len * 2 + 2 ≤ storage.length ∧
+      next = (storage.set (offset + len * 2) (Scalar.byteAt value 0)).set
+        (offset + len * 2 + 1) (Scalar.byteAt value 8) ∧
+      nextLen = len + 1 := by
+  unfold vecPushU16 at hpush
+  split at hpush
+  next => contradiction
+  next hlen =>
+    split at hpush
+    next => contradiction
+    next hmul =>
+      split at hpush
+      next => contradiction
+      next hoffset =>
+        split at hpush
+        next => contradiction
+        next haddress =>
+          split at hpush
+          next => contradiction
+          next hstorage =>
+            simp only [Option.some.injEq, Prod.mk.injEq] at hpush
+            exact ⟨Nat.lt_of_not_ge hlen, Nat.le_of_not_gt hmul,
+              Nat.le_of_not_gt hoffset, Nat.le_of_not_gt haddress,
+              by omega, hpush.1.symm, hpush.2.symm⟩
+
+theorem vecPushU16_refines_generic {storage next : List Byte}
+    {offset len capacity nextLen : Nat} {value : BitVec 16}
+    (hcapacityMax : capacity ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hpush : vecPushU16 storage offset len capacity value = some (next, nextLen)) :
+    vecPush Scalar.u16 storage offset len capacity value =
+      some ⟨next, nextLen⟩ := by
+  obtain ⟨hlen, hmul, hoffset, haddress, hstorage, hnext, hnextLen⟩ :=
+    vecPushU16_result hpush
+  have hwrite := writeBytes_pair_eq_set storage (offset + len * 2)
+    (Scalar.byteAt value 0) (Scalar.byteAt value 8) hstorage
+  have hstoreBound : ¬storage.length < offset + len * 2 + 2 := by omega
+  rw [hnext, hnextLen]
+  simp [vecPush, Scalar.u16, hcapacityMax, hlen, hmul, hoffset, haddress,
+    boxStore, hstoreBound, writeBytes, Scalar.encode16]
+  simpa only [List.cons_append, List.nil_append, List.append_assoc] using
+    hwrite
+
 def vecLastU8 (storage : List Byte) (len : Nat) : Option Byte :=
   if len = 0 then none
   else if len > storage.length then none

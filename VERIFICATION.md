@@ -622,5 +622,10 @@ alias semantics. This removes the one-store restriction that blocked
   encoding. Its generated state transformer refines `boxStoreU16`, which is
   separately proved equal to codec-generic `boxStore Scalar.u16` for a
   64-bit-addressable backing store.
+  The same monomorphization now covers `vec_push_u16`: its Rust-like Luffs
+  source performs every checked 64-bit address calculation and the two
+  little-endian writes, while `vecPushU16_refines_generic` connects each
+  successful execution to the codec-generic `vecPush Scalar.u16` transition
+  used by the Iris ownership theorem.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.

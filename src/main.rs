@@ -3169,12 +3169,12 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
     }
     for model in &module.tlsf_box_new_models {
         out.push_str(&format!(
-            "def {}_model (storage : List (Fin 256)) (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (value : Fin 256) : Option Luffs.Runtime.Containers.BoxNewU8ArraysResult :=\n  {} storage offsets sizes is_free prev_free count second first heads next previous value\n\n",
-            model.name, model.refines
+            "def {}_model (storage : List (Fin 256)) (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (value : Fin 256) : Option Luffs.Runtime.Containers.BoxNewU8ArraysResult := do\n  let allocated ← tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous 8\n  if allocated.allocatedOffset ≥ storage.length then none else\n  pure {{\n    offsets := allocated.offsets\n    sizes := allocated.sizes\n    isFree := allocated.isFree\n    prevFree := allocated.prevFree\n    count := allocated.count\n    second := allocated.second\n    first := allocated.first\n    heads := allocated.heads\n    next := allocated.next\n    previous := allocated.previous\n    allocatedOffset := allocated.allocatedOffset\n    allocatedBytes := allocated.allocatedBytes\n    storage := storage.set allocated.allocatedOffset value }}\n\n",
+            model.name
         ));
         out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
-            model.name, model.name, model.refines
+            "theorem {}_refines : {}_model = {} := by\n  unfold {}_model\n  rw [tlsf_allocate_refines]\n  rfl\n\n",
+            model.name, model.name, model.refines, model.name
         ));
     }
     for model in &module.tlsf_box_drop_models {
@@ -3561,6 +3561,9 @@ mod tests {
         ));
         assert!(generated.contains(
             "theorem tlsf_box_new_u8_refines : tlsf_box_new_u8_model = Luffs.Runtime.Containers.boxNewU8Arrays"
+        ));
+        assert!(generated.contains(
+            "let allocated ← tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous 8"
         ));
         assert!(generated.contains(
             "theorem tlsf_box_drop_u8_refines : tlsf_box_drop_u8_model = Luffs.Runtime.Containers.boxDropU8Arrays"

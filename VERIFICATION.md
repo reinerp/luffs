@@ -468,7 +468,10 @@ concurrency are later extensions and are not prerequisites for `Box` and
   Constructor and drop refinement now accept the actual fixed-capacity header
   arrays through `RepresentsPhysicalArrays`; they no longer require canonical
   arrays with no spare slots, so splitting allocation is included in the
-  end-to-end theorem.
+  end-to-end theorem. Generated constructor semantics now compositionally call
+  the generated public allocator model, perform the source bounds branch, and
+  construct the exact initialized-storage result rather than directly aliasing
+  the hand-written constructor transformer.
   Generic Luffs monomorphization and target-width parameterization remain
   before this item is complete.
 - [ ] `Vec<T>`: invariant `len <= capacity`, initialized prefix ownership,

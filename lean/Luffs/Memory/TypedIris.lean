@@ -50,6 +50,11 @@ def CanInsertBytes (contents : ContentsMap) (base : Addr) : List Byte -> Prop
       Std.PartialMap.get? contents base = none ∧
         CanInsertBytes (Std.PartialMap.insert contents base value) (base + 1) rest
 
+def BytesInContents (contents : ContentsMap) (base : Addr)
+    (values : List Byte) : Prop :=
+  ∀ i value, values[i]? = some value →
+    Std.PartialMap.get? contents (base + i) = some value
+
 theorem pointsToBytes_append {GF : BundledGFunctors} [G : ByteContentsGS GF]
     (base : Addr) (left right : List Byte) :
     PointsToBytes (G := G) base (left ++ right) ⊣⊢
@@ -91,6 +96,70 @@ theorem pointsToBytes_lookup {GF : BundledGFunctors} [G : ByteContentsGS GF]
           have hih := ih (base := base + 1) hj
           unfold contentsInterp at hih
           iapply hih $$ H
+
+/-- Agreement for an entire initialized slice, while retaining both the
+authoritative map and every linear fragment. The pure fact can therefore be
+used to justify an operational read/copy without consuming ownership. -/
+theorem pointsToBytes_agreement {GF : BundledGFunctors}
+    [G : ByteContentsGS GF] (contents : ContentsMap) (base : Addr)
+    (values : List Byte) :
+    contentsInterp (G := G) contents ∗ PointsToBytes base values ⊢
+      (contentsInterp contents ∗ PointsToBytes base values) ∗
+        ⌜BytesInContents contents base values⌝ := by
+  induction values generalizing base with
+  | nil =>
+      simp only [PointsToBytes, BytesInContents]
+      iintro H
+      isplitl [H]
+      · iassumption
+      · ipureintro
+        intro i value hget
+        simp at hget
+  | cons head rest ih =>
+      iintro H
+      ihave ⟨H, %hhead⟩ := persistent_entails_left
+        (pointsToBytes_lookup (G := G) (contents := contents)
+          (base := base) (values := head :: rest) (i := 0) (by simp)) $$ H
+      iunfold PointsToBytes in H
+      icases H with ⟨Hauth, Hvalues⟩
+      icases Hvalues with ⟨Hhead, Hrest⟩
+      icombine Hauth Hrest as Htail
+      ihave ⟨Htail, %htail⟩ := ih (base + 1) $$ Htail
+      icases Htail with ⟨Hauth, Hrest⟩
+      isplitl [Hauth Hhead Hrest]
+      · iunfold PointsToBytes
+        isplitl [Hauth]
+        · iassumption
+        · isplitl [Hhead]
+          · iassumption
+          · iassumption
+      · ipureintro
+        intro i value hget
+        cases i with
+        | zero =>
+            simp only [List.getElem?_cons_zero, Option.some.injEq] at hget
+            subst value
+            simpa using hhead
+        | succ j =>
+            simp only [List.getElem?_cons_succ] at hget
+            have hlookup := htail j value hget
+            simpa [Nat.add_assoc, Nat.add_comm 1 j] using hlookup
+
+theorem pointsToBytes_read_steps {GF : BundledGFunctors}
+    [G : ByteContentsGS GF] {contents : ContentsMap} {mem : Memory}
+    (hrep : ContentsRep contents mem) (base : Addr) (values : List Byte) :
+    contentsInterp (G := G) contents ∗ PointsToBytes base values ⊢
+      (contentsInterp contents ∗ PointsToBytes base values) ∗
+        ⌜ReadSteps base values mem⌝ := by
+  iintro H
+  ihave ⟨H, %hagreement⟩ :=
+    pointsToBytes_agreement contents base values $$ H
+  isplitl [H]
+  · iassumption
+  · ipureintro
+    apply readSteps_exists
+    intro i value hget
+    exact hrep (base + i) value (hagreement i value hget)
 
 theorem pointsToBytes_load_exact {GF : BundledGFunctors}
     [G : ByteContentsGS GF] {contents : ContentsMap} {mem : Memory}

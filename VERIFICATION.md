@@ -170,9 +170,11 @@ concurrency are later extensions and are not prerequisites for `Box` and
   contents and the allocation while restoring TLSF ownership. Concrete integer
   codecs now cover 8/16/32/64/128-bit unsigned and two's-complement signed
   values plus 64-bit `usize`/`isize`, with bit-blasted round-trip proofs.
-  Box byte dereference now produces exact operational load steps. Whole-value
-  load/store sequencing, target-width parameterization, and Luffs lowering
-  remain before this item is complete.
+  Box byte dereference produces exact operational load steps. Whole-value Box
+  reads now retain the Iris ownership resources, execute a load step for every
+  encoded byte, and return the codec's proved decoded value. Whole-value store
+  sequencing, target-width parameterization, and Luffs lowering remain before
+  this item is complete.
 - [ ] `Vec<T>`: invariant `len <= capacity`, initialized prefix ownership,
   spare-capacity ownership, checked layout arithmetic, growth without loss or
   double-drop, `push`, `pop`, indexing, shared/mutable slices, and drop.
@@ -199,7 +201,9 @@ concurrency are later extensions and are not prerequisites for `Box` and
   exists from exact source bytes, mapped destination bytes, and non-overlap,
   and derives the old/new non-overlap from the allocator partition invariant.
   Connecting the entire trace to the Iris authoritative maps in one framed
-  weakest-precondition rule, decoded element reads, slices, and Luffs lowering
-  remain.
+  weakest-precondition rule remains for growth. Reading a Vec's initialized
+  prefix is now a framed Iris rule producing the complete operational load
+  trace and the codec round-trip for every logical element. Element-focused
+  decoded reads, slices, and Luffs lowering remain.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.

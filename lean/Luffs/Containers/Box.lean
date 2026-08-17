@@ -171,6 +171,30 @@ theorem decoded_value {α : Type} (codec : Codec α) (value : α) :
     codec.decode (codec.encode value) = some value :=
   codec.decode_encode value
 
+theorem deref_read {GF : BundledGFunctors}
+    [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
+    (codec : Codec α) {pool : Region} {block : Block} {value : α}
+    {contents : ContentsMap} {mem : Memory} (hrep : ContentsRep contents mem) :
+    contentsInterp (G := G) contents ∗ Owns codec pool block value ⊢
+      (contentsInterp contents ∗ Owns codec pool block value) ∗
+        ⌜ReadSteps (block.region pool).base (codec.encode value) mem ∧
+          codec.decode (codec.encode value) = some value⌝ := by
+  simp only [Owns]
+  iintro ⟨Hcontents, Hbox⟩
+  icases Hbox with ⟨Hregion, Hpoints⟩
+  icombine Hcontents Hpoints as Hread
+  ihave ⟨Hread, %hsteps⟩ := pointsToBytes_read_steps hrep
+    (block.region pool).base (codec.encode value) $$ Hread
+  icases Hread with ⟨Hcontents, Hpoints⟩
+  isplitl [Hcontents Hregion Hpoints]
+  · isplitl [Hcontents]
+    · iassumption
+    · isplitl [Hregion]
+      · iassumption
+      · iassumption
+  · ipureintro
+    exact ⟨hsteps, codec.decode_encode value⟩
+
 theorem drop_owns {GF : BundledGFunctors}
     [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
     (codec : Codec α) {pool : Region} {state next : Alloc.State}

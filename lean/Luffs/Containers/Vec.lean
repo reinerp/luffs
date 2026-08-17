@@ -495,6 +495,31 @@ theorem index_byte {GF : BundledGFunctors}
   have hflat := index_flat_lt codec hlen hi hbyte
   iapply pointsToBytes_load_exact hrep hflat $$ H
 
+theorem read_initialized_prefix {GF : BundledGFunctors}
+    [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
+    (codec : Codec α) {pool : Region} {handle : Handle} {values : List α}
+    {contents : ContentsMap} {mem : Memory} (hrep : ContentsRep contents mem) :
+    contentsInterp (G := G) contents ∗ Owns codec pool handle values ⊢
+      (contentsInterp contents ∗ Owns codec pool handle values) ∗
+        ⌜ReadSteps (handle.block.region pool).base
+          (encodeValues codec values) mem ∧
+          ∀ value ∈ values, codec.decode (codec.encode value) = some value⌝ := by
+  simp only [Owns]
+  iintro ⟨Hcontents, Hvec⟩
+  icases Hvec with ⟨Hregion, Hpoints⟩
+  icombine Hcontents Hpoints as Hread
+  ihave ⟨Hread, %hsteps⟩ := pointsToBytes_read_steps hrep
+    (handle.block.region pool).base (encodeValues codec values) $$ Hread
+  icases Hread with ⟨Hcontents, Hpoints⟩
+  isplitl [Hcontents Hregion Hpoints]
+  · isplitl [Hcontents]
+    · iassumption
+    · isplitl [Hregion]
+      · iassumption
+      · iassumption
+  · ipureintro
+    exact ⟨hsteps, fun value _ => codec.decode_encode value⟩
+
 theorem push_owns {GF : BundledGFunctors}
     [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
     (codec : Codec α) {pool : Region} {handle next : Handle}

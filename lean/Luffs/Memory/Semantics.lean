@@ -70,6 +70,30 @@ inductive CopySteps : Addr -> Addr -> List Byte -> Memory -> Memory -> Prop wher
         (mem.write dst value) next) :
       CopySteps src dst (value :: rest) mem next
 
+/-- Sequential loads of a complete encoded value. -/
+inductive ReadSteps : Addr -> List Byte -> Memory -> Prop where
+  | nil {base mem} : ReadSteps base [] mem
+  | cons {base value rest mem}
+      (hload : PrimStep (.load base) mem (.byte value) mem)
+      (htail : ReadSteps (base + 1) rest mem) :
+      ReadSteps base (value :: rest) mem
+
+theorem readSteps_exists (base : Addr) (values : List Byte) (mem : Memory)
+    (hsrc : ∀ i value, values[i]? = some value →
+      mem (base + i) = some value) :
+    ReadSteps base values mem := by
+  induction values generalizing base with
+  | nil => exact .nil
+  | cons value rest ih =>
+      have hload : PrimStep (.load base) mem (.byte value) mem :=
+        .load (by simpa using hsrc 0 value (by simp))
+      have htail : ReadSteps (base + 1) rest mem := by
+        apply ih
+        intro i tailValue hget
+        have h := hsrc (i + 1) tailValue (by simpa using hget)
+        simpa [Nat.add_assoc, Nat.add_comm 1 i] using h
+      exact ReadSteps.cons hload htail
+
 
 /-- A bytewise copy has an operational execution whenever every source byte
 has the specified value, every destination byte is mapped, and the ranges do

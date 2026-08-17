@@ -191,8 +191,15 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   representation and the concrete free entry point rejects selectors outside
   `block_count`; inactive capacity can no longer masquerade as a live header.
   This count is also the basis for the compaction required when coalescing
-  deletes a neighbor. Pointer-to-offset validation belongs at the mmap-backed
-  pool boundary.
+  deletes a neighbor. Luffs now has that checked physical compaction primitive:
+  it validates active adjacent free headers, uses checked arithmetic for both
+  adjacency and merged size, shifts all four physical metadata arrays, and
+  decrements the active count. The compiler source-shape gate connects it to
+  an exact Lean array transformer; success proves the removed neighbor was
+  active, both free flags were set, adjacency was exact, and the count drops by
+  one. Proving that the compacted active prefix represents abstract
+  `coalesceAt`, then composing bin removal/reinsertion, remains. Pointer-to-offset
+  validation belongs at the mmap-backed pool boundary.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 
 The first concrete `stdlib/tlsf.luffs` runtime layer now implements bounded

@@ -283,3 +283,33 @@ fn tlsf_deallocate_uncoalesced(offsets: &[usize; 4096], sizes: &[usize; 4096], i
     tlsf_insert_class(second_nonempty, first_nonempty, heads, next, previous, bin, returned_offset)?;
     Some(())
 }
+
+// Merge adjacent free physical headers and compact the active prefix.
+// All checks, including both arithmetic operations, precede the first write.
+// refines Luffs.Runtime.TLSF.coalescePhysicalArrays
+fn tlsf_coalesce_physical(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], block_count: usize, left: usize) -> Option<usize> {
+    if block_count > offsets.len() { return None; }
+    if block_count > sizes.len() { return None; }
+    if block_count > is_free.len() { return None; }
+    if block_count > prev_free.len() { return None; }
+    if left == usize::MAX { return None; }
+    let right: usize = left + 1;
+    if right >= block_count { return None; }
+    if is_free[left] == 0 { return None; }
+    if is_free[right] == 0 { return None; }
+    let left_end: usize = offsets[left].checked_add(sizes[left])?;
+    if left_end != offsets[right] { return None; }
+    let merged_size: usize = sizes[left].checked_add(sizes[right])?;
+
+    sizes[left] = merged_size;
+    let mut cursor: usize = right;
+    while cursor < block_count - 1 {
+        let source: usize = cursor + 1;
+        offsets[cursor] = offsets[source];
+        sizes[cursor] = sizes[source];
+        is_free[cursor] = is_free[source];
+        prev_free[cursor] = prev_free[source];
+        cursor = source;
+    }
+    Some(block_count - 1)
+}

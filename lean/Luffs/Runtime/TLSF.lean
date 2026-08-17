@@ -3235,6 +3235,94 @@ structure DeallocateUncoalescedResult where
   insertion : InsertClassResult
 deriving DecidableEq, Repr
 
+def compactActive {α : Type} [Inhabited α] (values : List α) (count removed : Nat) :
+    List α :=
+  (List.range (count - removed - 1)).foldl
+    (fun current step =>
+      let target := removed + step
+      current.set target (values[target + 1]?.getD default)) values
+
+structure CoalescePhysicalResult where
+  offsets : List Nat
+  sizes : List Nat
+  isFree : List (Fin 256)
+  prevFree : List (Fin 256)
+  count : Nat
+deriving DecidableEq, Repr
+
+/-- Exact fixed-array effect of `tlsf_coalesce_physical`. The active right
+header is deleted by left-compacting the suffix; the final array slot is spare
+capacity and therefore need not be cleared. -/
+def coalescePhysicalArrays (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count left : Nat) :
+    Option CoalescePhysicalResult :=
+  if count ≤ offsets.length ∧ count ≤ sizes.length ∧
+      count ≤ isFree.length ∧ count ≤ prevFree.length then
+    let right := left + 1
+    if right ≥ count then none
+    else if isFree[left]? = some 0 then none
+    else if isFree[right]? = some 0 then none
+    else match offsets[left]?, sizes[left]?, offsets[right]?, sizes[right]? with
+      | some leftOffset, some leftSize, some rightOffset, some rightSize =>
+          if leftOffset + leftSize != rightOffset then none
+          else
+            let sizes := sizes.set left (leftSize + rightSize)
+            some {
+              offsets := compactActive offsets count right
+              sizes := compactActive sizes count right
+              isFree := compactActive isFree count right
+              prevFree := compactActive prevFree count right
+              count := count - 1 }
+      | _, _, _, _ => none
+  else none
+
+theorem coalescePhysicalArrays_result {offsets sizes : List Nat}
+    {isFree prevFree : List (Fin 256)} {count left : Nat}
+    {result : CoalescePhysicalResult}
+    (hsuccess : coalescePhysicalArrays offsets sizes isFree prevFree count left =
+      some result) :
+    result.count = count - 1 ∧ left + 1 < count ∧
+      isFree[left]? ≠ some 0 ∧ isFree[left + 1]? ≠ some 0 ∧
+      ∃ leftOffset leftSize rightSize,
+        offsets[left]? = some leftOffset ∧ sizes[left]? = some leftSize ∧
+        offsets[left + 1]? = some (leftOffset + leftSize) ∧
+        sizes[left + 1]? = some rightSize := by
+  unfold coalescePhysicalArrays at hsuccess
+  split at hsuccess <;> try contradiction
+  next =>
+    dsimp only at hsuccess
+    split at hsuccess <;> try contradiction
+    next hright =>
+      split at hsuccess <;> try contradiction
+      next hleftFree =>
+        split at hsuccess <;> try contradiction
+        next hrightFree =>
+          cases hleftOffset : offsets[left]? with
+          | none => simp [hleftOffset] at hsuccess
+          | some leftOffset =>
+            cases hleftSize : sizes[left]? with
+            | none => simp [hleftOffset, hleftSize] at hsuccess
+            | some leftSize =>
+              cases hrightOffset : offsets[left + 1]? with
+              | none => simp [hleftOffset, hleftSize, hrightOffset] at hsuccess
+              | some rightOffset =>
+                cases hrightSize : sizes[left + 1]? with
+                | none =>
+                    simp [hleftOffset, hleftSize, hrightOffset,
+                      hrightSize] at hsuccess
+                | some rightSize =>
+                  simp only [hleftOffset, hleftSize, hrightOffset,
+                    hrightSize, Option.getD_some] at hsuccess
+                  split at hsuccess <;> try contradiction
+                  next hadjacent =>
+                    simp only [Option.some.injEq] at hsuccess
+                    subst result
+                    have hoffset : leftOffset + leftSize = rightOffset := by
+                      simpa using hadjacent
+                    exact ⟨rfl, Nat.lt_of_not_ge hright, hleftFree,
+                      hrightFree, leftOffset, leftSize, rightSize,
+                      rfl, rfl, by simpa [hoffset], rfl⟩
+
 /-- Exact all-or-nothing array semantics of the first deallocation stage.
 The source lowering preflights the same three component operations before its
 first write; this pure model makes their successful composition explicit. -/

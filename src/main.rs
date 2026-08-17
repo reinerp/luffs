@@ -41,6 +41,7 @@ struct Module {
     tlsf_classify_size_models: Vec<TlsfClassifySizeModel>,
     tlsf_insert_class_models: Vec<TlsfInsertClassModel>,
     tlsf_deallocate_uncoalesced_models: Vec<TlsfDeallocateUncoalescedModel>,
+    tlsf_coalesce_physical_models: Vec<TlsfCoalescePhysicalModel>,
 }
 
 #[derive(Debug)]
@@ -143,6 +144,12 @@ struct TlsfInsertClassModel {
 
 #[derive(Debug)]
 struct TlsfDeallocateUncoalescedModel {
+    name: String,
+    refines: String,
+}
+
+#[derive(Debug)]
+struct TlsfCoalescePhysicalModel {
     name: String,
     refines: String,
 }
@@ -396,6 +403,7 @@ fn parse(source: &str) -> Result<Module, String> {
         tlsf_classify_size_models: parse_tlsf_classify_size_models(source),
         tlsf_insert_class_models: parse_tlsf_insert_class_models(source),
         tlsf_deallocate_uncoalesced_models: parse_tlsf_deallocate_uncoalesced_models(source),
+        tlsf_coalesce_physical_models: parse_tlsf_coalesce_physical_models(source),
     })
 }
 
@@ -1531,6 +1539,59 @@ fn parse_tlsf_deallocate_uncoalesced_models(source: &str) -> Vec<TlsfDeallocateU
     }
 }
 
+fn parse_tlsf_coalesce_physical_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
+    let lines = source.lines().collect::<Vec<_>>();
+    let Some(index) = lines
+        .iter()
+        .position(|line| line.trim().starts_with("fn tlsf_coalesce_physical("))
+    else {
+        return Vec::new();
+    };
+    let Some(target) = index
+        .checked_sub(1)
+        .and_then(|i| lines.get(i))
+        .and_then(|line| line.trim().strip_prefix("// refines "))
+    else {
+        return Vec::new();
+    };
+    let body = lines[index + 1..]
+        .iter()
+        .map(|line| line.trim())
+        .collect::<Vec<_>>();
+    let required = [
+        "if block_count > offsets.len() { return None; }",
+        "if left == usize::MAX { return None; }",
+        "let right: usize = left + 1;",
+        "if right >= block_count { return None; }",
+        "if is_free[left] == 0 { return None; }",
+        "if is_free[right] == 0 { return None; }",
+        "let left_end: usize = offsets[left].checked_add(sizes[left])?;",
+        "if left_end != offsets[right] { return None; }",
+        "let merged_size: usize = sizes[left].checked_add(sizes[right])?;",
+        "sizes[left] = merged_size;",
+        "while cursor < block_count - 1 {",
+        "offsets[cursor] = offsets[source];",
+        "prev_free[cursor] = prev_free[source];",
+        "Some(block_count - 1)",
+    ];
+    let mut position = 0;
+    if required.iter().all(|expected| {
+        if let Some(offset) = body[position..].iter().position(|line| line == expected) {
+            position += offset + 1;
+            true
+        } else {
+            false
+        }
+    }) {
+        vec![TlsfCoalescePhysicalModel {
+            name: "tlsf_coalesce_physical".to_owned(),
+            refines: target.trim().to_owned(),
+        }]
+    } else {
+        Vec::new()
+    }
+}
+
 fn logical_lines(source: &str) -> Result<Vec<(usize, String)>, String> {
     let lines: Vec<&str> = source.lines().collect();
     let mut result = Vec::new();
@@ -1834,6 +1895,7 @@ fn lean(module: &Module) -> String {
         || !module.tlsf_classify_size_models.is_empty()
         || !module.tlsf_insert_class_models.is_empty()
         || !module.tlsf_deallocate_uncoalesced_models.is_empty()
+        || !module.tlsf_coalesce_physical_models.is_empty()
     {
         out.push_str("import Luffs.Runtime.TLSF\n");
     }
@@ -2192,6 +2254,16 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
             model.name, model.name, model.refines
         ));
     }
+    for model in &module.tlsf_coalesce_physical_models {
+        out.push_str(&format!(
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count left : Nat) : Option Luffs.Runtime.TLSF.CoalescePhysicalResult :=\n  {} offsets sizes is_free prev_free count left\n\n",
+            model.name, model.refines
+        ));
+        out.push_str(&format!(
+            "theorem {}_refines : {}_model = {} := by rfl\n\n",
+            model.name, model.name, model.refines
+        ));
+    }
     out.push_str("end LuffsGenerated\n");
     out
 }
@@ -2376,6 +2448,7 @@ mod tests {
         assert_eq!(m.tlsf_classify_size_models.len(), 1);
         assert_eq!(m.tlsf_insert_class_models.len(), 1);
         assert_eq!(m.tlsf_deallocate_uncoalesced_models.len(), 1);
+        assert_eq!(m.tlsf_coalesce_physical_models.len(), 1);
         let generated = lean(&m);
         assert!(generated.contains(
             "theorem tlsf_insert_refines : tlsf_insert_model = Luffs.Runtime.TLSF.insertArrays"
@@ -2407,6 +2480,9 @@ mod tests {
         ));
         assert!(generated.contains(
             "theorem tlsf_deallocate_uncoalesced_refines : tlsf_deallocate_uncoalesced_model = Luffs.Runtime.TLSF.deallocateUncoalescedArrays"
+        ));
+        assert!(generated.contains(
+            "theorem tlsf_coalesce_physical_refines : tlsf_coalesce_physical_model = Luffs.Runtime.TLSF.coalescePhysicalArrays"
         ));
     }
 

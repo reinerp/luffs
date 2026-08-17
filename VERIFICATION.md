@@ -682,8 +682,13 @@ concurrency are later extensions and are not prerequisites for `Box` and
   checks both multiplication and TLSF rounding, and the concrete copy/frame
   law covers exactly `len * codec.size` bytes. Its refinement theorem targets
   abstract `Vec.grow codec`, and its Iris theorem transfers the generic typed
-  `Vec.Owns codec` capability while framing allocator ownership. Connecting
-  non-byte Luffs growth bodies to this transformer remains.
+  `Vec.Owns codec` capability while framing allocator ownership. The first
+  non-byte source connection is now checked: `tlsf_vec_grow_u16` uses checked
+  `len * 2` and `new_capacity * 2`, checked TLSF rounding, and copies exactly
+  the initialized byte prefix. Generated Lean identifies it with
+  `vecGrowArrays Scalar.u16`, so the generic refinement and Iris ownership law
+  apply directly. The source-shape regression rejects omission of the element-
+  to-byte multiplication.
   New, growth, and drop now all quantify over represented fixed-capacity
   physical-header arrays. The generalized public allocation theorem proves
   the active prefix refines abstract TLSF while framing unused slots, closing

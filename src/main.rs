@@ -2266,53 +2266,70 @@ fn parse_tlsf_vec_drop_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
 
 fn parse_tlsf_vec_grow_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
     let lines = source.lines().collect::<Vec<_>>();
-    let Some(index) = lines
-        .iter()
-        .position(|line| line.trim().starts_with("fn tlsf_vec_grow_u8("))
-    else {
-        return Vec::new();
-    };
-    let Some(target) = index
-        .checked_sub(1)
-        .and_then(|i| lines.get(i))
-        .and_then(|line| line.trim().strip_prefix("// refines "))
-    else {
-        return Vec::new();
-    };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
-    let required = [
-        "if len > old_capacity { return None; }",
-        "if new_capacity <= old_capacity { return None; }",
-        "let old_end: usize = old_offset.checked_add(len)?;",
-        "let new_offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)?;",
-        "let new_end: usize = new_offset.checked_add(len)?;",
-        "while cursor < len {",
-        "let source: usize = old_offset.checked_add(cursor)?;",
-        "let destination: usize = new_offset.checked_add(cursor)?;",
-        "let byte: u8 = pool[source];",
-        "pool[destination] = byte;",
-        "tlsf_box_drop_u8(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, old_offset)?;",
-        "Some(new_offset)",
+    let variants = [
+        ("tlsf_vec_grow_u8", "len", Vec::<&str>::new()),
+        (
+            "tlsf_vec_grow_u16",
+            "initialized_bytes",
+            vec![
+                "let initialized_bytes: usize = len.checked_mul(2)?;",
+                "let allocation_bytes: usize = new_capacity.checked_mul(2)?;",
+                "let rounded: usize = allocation_bytes.checked_add(7)?;",
+            ],
+        ),
     ];
-    let mut position = 0;
-    if required.iter().all(|expected| {
-        if let Some(offset) = body[position..].iter().position(|line| line == expected) {
-            position += offset + 1;
-            true
-        } else {
-            false
+    let mut models = Vec::new();
+    for (name, copied_len, arithmetic) in variants {
+        let Some(index) = lines
+            .iter()
+            .position(|line| line.trim().starts_with(&format!("fn {name}(")))
+        else {
+            continue;
+        };
+        let Some(target) = index
+            .checked_sub(1)
+            .and_then(|i| lines.get(i))
+            .and_then(|line| line.trim().strip_prefix("// refines "))
+        else {
+            continue;
+        };
+        let body = lines[index + 1..]
+            .iter()
+            .map(|line| line.trim())
+            .collect::<Vec<_>>();
+        let mut required = vec![
+            "if len > old_capacity { return None; }".to_owned(),
+            "if new_capacity <= old_capacity { return None; }".to_owned(),
+        ];
+        required.extend(arithmetic.into_iter().map(str::to_owned));
+        required.extend([
+            format!("let old_end: usize = old_offset.checked_add({copied_len})?;"),
+            "let new_offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)?;".to_owned(),
+            format!("let new_end: usize = new_offset.checked_add({copied_len})?;"),
+            format!("while cursor < {copied_len} {{"),
+            "let source: usize = old_offset.checked_add(cursor)?;".to_owned(),
+            "let destination: usize = new_offset.checked_add(cursor)?;".to_owned(),
+            "let byte: u8 = pool[source];".to_owned(),
+            "pool[destination] = byte;".to_owned(),
+            "tlsf_box_drop_u8(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, old_offset)?;".to_owned(),
+            "Some(new_offset)".to_owned(),
+        ]);
+        let mut position = 0;
+        if required.iter().all(|expected| {
+            if let Some(offset) = body[position..].iter().position(|line| line == expected) {
+                position += offset + 1;
+                true
+            } else {
+                false
+            }
+        }) {
+            models.push(TlsfCoalescePhysicalModel {
+                name: name.to_owned(),
+                refines: target.trim().to_owned(),
+            });
         }
-    }) {
-        vec![TlsfCoalescePhysicalModel {
-            name: "tlsf_vec_grow_u8".to_owned(),
-            refines: target.trim().to_owned(),
-        }]
-    } else {
-        Vec::new()
     }
+    models
 }
 
 fn parse_tlsf_deallocate_uncoalesced_models(source: &str) -> Vec<TlsfDeallocateUncoalescedModel> {
@@ -3796,6 +3813,9 @@ mod tests {
             "theorem tlsf_vec_grow_u8_refines : tlsf_vec_grow_u8_model = Luffs.Runtime.Containers.vecGrowU8Arrays"
         ));
         assert!(generated.contains(
+            "theorem tlsf_vec_grow_u16_refines : tlsf_vec_grow_u16_model = Luffs.Runtime.Containers.vecGrowU16Arrays"
+        ));
+        assert!(generated.contains(
             "theorem tlsf_remove_class_refines : tlsf_remove_class_model = Luffs.Runtime.TLSF.removeClassArrays"
         ));
         assert!(generated.contains(
@@ -3977,6 +3997,20 @@ mod tests {
             .replace("pool[destination] = byte;", "pool[destination] = 0;");
         let m = parse(&source).unwrap();
         assert!(m.tlsf_vec_grow_models.is_empty());
+    }
+
+    #[test]
+    fn tlsf_vec_grow_u16_refinement_rejects_missing_byte_multiply() {
+        let source = include_str!("../stdlib/tlsf.luffs").replace(
+            "let initialized_bytes: usize = len.checked_mul(2)?;",
+            "let initialized_bytes: usize = len;",
+        );
+        let m = parse(&source).unwrap();
+        assert!(
+            !m.tlsf_vec_grow_models
+                .iter()
+                .any(|model| model.name == "tlsf_vec_grow_u16")
+        );
     }
 
     #[test]

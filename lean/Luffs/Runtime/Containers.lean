@@ -1822,6 +1822,9 @@ theorem vecGrowArrays_owns {α : Type} {codec : Codec α}
   exact Luffs.Containers.Vec.grow_owns_step codec hvalid halloc hdrop
     values contents hfresh
 
+/-- The first non-byte source specialization of codec-generic Vec growth. -/
+def vecGrowU16Arrays := vecGrowArrays Scalar.u16
+
 /-- Exact state transformer for `tlsf_vec_grow_u8`: validate the old live
 prefix, allocate a replacement, copy from the old prefix snapshot, and only
 then return the old block to TLSF. -/

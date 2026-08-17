@@ -931,7 +931,15 @@ alias semantics. This removes the one-store restriction that blocked
   `vec_get_u64` path checks the same eight-byte element address, generates an
   eight-load program, and refines `vecGet Scalar.u64`. Its Iris theorem returns
   the codec-decoded logical element together with the unchanged exclusive Vec
-  capability and the exact eight-step `ReadSteps` witness.
+  capability and the exact eight-step `ReadSteps` witness. Concrete
+  `vec_push_u128` and `vec_get_u128` now complete the unsigned Vec scalar
+  widths. Their Luffs bodies prove checked multiplication, base addition, and
+  the full sixteen-byte end address before every access; generated programs
+  contain the exact ordered sixteen stores or loads. The concrete runtime
+  models refine `vecPush Scalar.u128` and `vecGet Scalar.u128`, so push appends
+  one logical value while transferring exclusive ownership and get returns
+  only the owned element while preserving that capability and exposing the
+  exact sixteen-step trace.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.
   All four checked-in examples are currently accepted by Lean and compile to

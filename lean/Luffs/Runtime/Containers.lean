@@ -3823,6 +3823,124 @@ def vecPushU64 (storage : List Byte) (offset len capacity : Nat)
     (offset + len * 8 + 6) (Scalar.byteAt value 48)).set
     (offset + len * 8 + 7) (Scalar.byteAt value 56)), len + 1)
 
+def vecPushU128 (storage : List Byte) (offset len capacity : Nat)
+    (value : BitVec 128) : Option (List Byte × Nat) :=
+  if len ≥ capacity then none
+  else if len > Luffs.Runtime.TLSF.usizeMax / 16 then none
+  else if offset > Luffs.Runtime.TLSF.usizeMax - len * 16 then none
+  else if offset + len * 16 > Luffs.Runtime.TLSF.usizeMax - 16 then none
+  else if offset + len * 16 + 15 ≥ storage.length then none
+  else some (((((((((((((((((storage.set (offset + len * 16)
+    (Scalar.byteAt value 0)).set (offset + len * 16 + 1)
+    (Scalar.byteAt value 8)).set (offset + len * 16 + 2)
+    (Scalar.byteAt value 16)).set (offset + len * 16 + 3)
+    (Scalar.byteAt value 24)).set (offset + len * 16 + 4)
+    (Scalar.byteAt value 32)).set (offset + len * 16 + 5)
+    (Scalar.byteAt value 40)).set (offset + len * 16 + 6)
+    (Scalar.byteAt value 48)).set (offset + len * 16 + 7)
+    (Scalar.byteAt value 56)).set (offset + len * 16 + 8)
+    (Scalar.byteAt value 64)).set (offset + len * 16 + 9)
+    (Scalar.byteAt value 72)).set (offset + len * 16 + 10)
+    (Scalar.byteAt value 80)).set (offset + len * 16 + 11)
+    (Scalar.byteAt value 88)).set (offset + len * 16 + 12)
+    (Scalar.byteAt value 96)).set (offset + len * 16 + 13)
+    (Scalar.byteAt value 104)).set (offset + len * 16 + 14)
+    (Scalar.byteAt value 112)).set (offset + len * 16 + 15)
+    (Scalar.byteAt value 120)), len + 1)
+
+theorem vecPushU128_result {storage next : List Byte}
+    {offset len capacity nextLen : Nat} {value : BitVec 128}
+    (hpush : vecPushU128 storage offset len capacity value =
+      some (next, nextLen)) :
+    len < capacity ∧ len ≤ Luffs.Runtime.TLSF.usizeMax / 16 ∧
+      offset ≤ Luffs.Runtime.TLSF.usizeMax - len * 16 ∧
+      offset + len * 16 ≤ Luffs.Runtime.TLSF.usizeMax - 16 ∧
+      offset + len * 16 + 16 ≤ storage.length ∧
+      next = writeBytes storage (offset + len * 16) (Scalar.u128.encode value) ∧
+      nextLen = len + 1 := by
+  unfold vecPushU128 at hpush
+  split at hpush <;> try contradiction
+  next hlen =>
+    split at hpush <;> try contradiction
+    next hmul =>
+      split at hpush <;> try contradiction
+      next hoffset =>
+        split at hpush <;> try contradiction
+        next haddress =>
+          split at hpush <;> try contradiction
+          next hstorage =>
+            simp only [Option.some.injEq, Prod.mk.injEq] at hpush
+            have hfit : offset + len * 16 + 16 ≤ storage.length := by omega
+            have hwrite := writeBytes_sixteen_eq_set storage
+              (offset + len * 16) (Scalar.byteAt value 0)
+              (Scalar.byteAt value 8) (Scalar.byteAt value 16)
+              (Scalar.byteAt value 24) (Scalar.byteAt value 32)
+              (Scalar.byteAt value 40) (Scalar.byteAt value 48)
+              (Scalar.byteAt value 56) (Scalar.byteAt value 64)
+              (Scalar.byteAt value 72) (Scalar.byteAt value 80)
+              (Scalar.byteAt value 88) (Scalar.byteAt value 96)
+              (Scalar.byteAt value 104) (Scalar.byteAt value 112)
+              (Scalar.byteAt value 120) hfit
+            have hnext : next = writeBytes storage (offset + len * 16)
+                (Scalar.u128.encode value) := by
+              rw [hpush.1.symm]
+              simpa [writeBytes, Scalar.u128, Scalar.encode128,
+                List.append_assoc] using hwrite.symm
+            exact ⟨Nat.lt_of_not_ge hlen, Nat.le_of_not_gt hmul,
+              Nat.le_of_not_gt hoffset, Nat.le_of_not_gt haddress, hfit,
+              hnext, hpush.2.symm⟩
+
+theorem vecPushU128_refines_generic {storage next : List Byte}
+    {offset len capacity nextLen : Nat} {value : BitVec 128}
+    (hcapacityMax : capacity ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hpush : vecPushU128 storage offset len capacity value =
+      some (next, nextLen)) :
+    vecPush Scalar.u128 storage offset len capacity value =
+      some ⟨next, nextLen⟩ := by
+  obtain ⟨hlen, hmul, hoffset, haddress, hstorage, hnext, hnextLen⟩ :=
+    vecPushU128_result hpush
+  have hstoreBound : ¬storage.length < offset + len * 16 + 16 := by omega
+  rw [hnext, hnextLen]
+  simp [vecPush, Scalar.u128, hcapacityMax, hlen, hmul, hoffset, haddress,
+    boxStore, hstoreBound]
+
+/-- The concrete sixteen-byte Luffs push appends exactly one initialized u128
+encoding and transfers the same exclusive Vec capability to the next handle. -/
+theorem vecPushU128_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {storage nextStorage : List Byte}
+    {handle : Luffs.Containers.Vec.Handle} {values : List (BitVec 128)}
+    {value : BitVec 128} {nextLen : Nat}
+    (hcapacityMax : handle.capacity ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hlen : values.length = handle.len)
+    (hpush : vecPushU128 storage handle.block.offset handle.len
+      handle.capacity value = some (nextStorage, nextLen)) :
+    ∃ nextHandle,
+      Luffs.Containers.Vec.push handle = some nextHandle ∧
+      nextLen = nextHandle.len ∧
+      nextStorage = writeBytes storage
+        (handle.block.offset +
+          (Luffs.Containers.Vec.encodeValues Scalar.u128 values).length)
+        (Scalar.u128.encode value) ∧
+      ∀ contents : ContentsMap,
+        CanInsertBytes contents
+          ((handle.block.region pool).base +
+            (Luffs.Containers.Vec.encodeValues Scalar.u128 values).length)
+          (Scalar.u128.encode value) →
+        contentsInterp (G := G) contents ∗
+            Luffs.Containers.Vec.Owns Scalar.u128 pool handle values ==∗
+          contentsInterp
+              (insertBytes contents
+                ((handle.block.region pool).base +
+                  (Luffs.Containers.Vec.encodeValues Scalar.u128 values).length)
+                (Scalar.u128.encode value)) ∗
+            Luffs.Containers.Vec.Owns Scalar.u128 pool nextHandle
+              (values ++ [value]) := by
+  have hgeneric : vecPush Scalar.u128 storage handle.block.offset handle.len
+      handle.capacity value = some ⟨nextStorage, nextLen⟩ :=
+    vecPushU128_refines_generic hcapacityMax hpush
+  exact vecPush_owns Scalar.u128 hlen hgeneric
+
 theorem vecPushU64_result {storage next : List Byte}
     {offset len capacity nextLen : Nat} {value : BitVec 64}
     (hpush : vecPushU64 storage offset len capacity value =
@@ -4251,6 +4369,35 @@ def vecGetU64 (storage : List Byte) (offset len index : Nat) :
       let b7 ← storage[address + 7]?
       Scalar.decode64 [b0, b1, b2, b3, b4, b5, b6, b7]
 
+def vecGetU128 (storage : List Byte) (offset len index : Nat) :
+    Option (BitVec 128) :=
+  if index ≥ len then none
+  else if index > Luffs.Runtime.TLSF.usizeMax / 16 then none
+  else if offset > Luffs.Runtime.TLSF.usizeMax - index * 16 then none
+  else if offset + index * 16 > Luffs.Runtime.TLSF.usizeMax - 16 then none
+  else
+    let address := offset + index * 16
+    if address + 15 ≥ storage.length then none
+    else do
+      let b0 ← storage[address]?
+      let b1 ← storage[address + 1]?
+      let b2 ← storage[address + 2]?
+      let b3 ← storage[address + 3]?
+      let b4 ← storage[address + 4]?
+      let b5 ← storage[address + 5]?
+      let b6 ← storage[address + 6]?
+      let b7 ← storage[address + 7]?
+      let b8 ← storage[address + 8]?
+      let b9 ← storage[address + 9]?
+      let b10 ← storage[address + 10]?
+      let b11 ← storage[address + 11]?
+      let b12 ← storage[address + 12]?
+      let b13 ← storage[address + 13]?
+      let b14 ← storage[address + 14]?
+      let b15 ← storage[address + 15]?
+      Scalar.decode128 [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10,
+        b11, b12, b13, b14, b15]
+
 theorem vecGetU64_eq_generic (storage : List Byte) (offset len index : Nat)
     (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax) :
     vecGetU64 storage offset len index =
@@ -4313,6 +4460,81 @@ theorem vecGetU64_owns {GF : Iris.BundledGFunctors}
       hstorageMax]
     exact hsuccess
   exact vecGet_owns Scalar.u64 hlen hgeneric hvalues hencoded hrep
+
+theorem vecGetU128_eq_generic (storage : List Byte) (offset len index : Nat)
+    (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax) :
+    vecGetU128 storage offset len index =
+      vecGet Scalar.u128 storage offset len index := by
+  by_cases hindex : index ≥ len
+  · simp [vecGetU128, vecGet, hindex]
+  · by_cases hmul : index > Luffs.Runtime.TLSF.usizeMax / 16
+    · simp [vecGetU128, vecGet, Scalar.u128, hindex, hmul]
+    · by_cases hoffset : offset > Luffs.Runtime.TLSF.usizeMax - index * 16
+      · simp [vecGetU128, vecGet, Scalar.u128, hindex, hmul, hoffset]
+      · by_cases haddress : offset + index * 16 >
+          Luffs.Runtime.TLSF.usizeMax - 16
+        · simp [vecGetU128, vecGet, Scalar.u128, hindex, hmul, hoffset, haddress]
+        · simp only [vecGetU128, hindex, ↓reduceIte, hmul, hoffset, haddress,
+            vecGet, Scalar.u128, ↓reduceIte]
+          have hword : ¬offset + index * 16 >
+              Luffs.Runtime.TLSF.usizeMax - 15 := by omega
+          calc
+            (if offset + index * 16 + 15 ≥ storage.length then none
+              else do
+                let b0 ← storage[offset + index * 16]?
+                let b1 ← storage[offset + index * 16 + 1]?
+                let b2 ← storage[offset + index * 16 + 2]?
+                let b3 ← storage[offset + index * 16 + 3]?
+                let b4 ← storage[offset + index * 16 + 4]?
+                let b5 ← storage[offset + index * 16 + 5]?
+                let b6 ← storage[offset + index * 16 + 6]?
+                let b7 ← storage[offset + index * 16 + 7]?
+                let b8 ← storage[offset + index * 16 + 8]?
+                let b9 ← storage[offset + index * 16 + 9]?
+                let b10 ← storage[offset + index * 16 + 10]?
+                let b11 ← storage[offset + index * 16 + 11]?
+                let b12 ← storage[offset + index * 16 + 12]?
+                let b13 ← storage[offset + index * 16 + 13]?
+                let b14 ← storage[offset + index * 16 + 14]?
+                let b15 ← storage[offset + index * 16 + 15]?
+                Scalar.decode128 [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9,
+                  b10, b11, b12, b13, b14, b15]) =
+                boxLoadU128 storage (offset + index * 16) := by
+                  simp [boxLoadU128, hword]
+            _ = boxLoad Scalar.u128 storage (offset + index * 16) :=
+              boxLoadU128_eq_generic storage (offset + index * 16) hstorageMax
+
+/-- The concrete sixteen-byte get returns only the owned logical u128,
+preserves exclusive Vec ownership, and exposes the exact sixteen-read trace. -/
+theorem vecGetU128_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {storage : List Byte}
+    {handle : Luffs.Containers.Vec.Handle}
+    {values : List (BitVec 128)} {index : Nat} {value expected : BitVec 128}
+    (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hlen : values.length = handle.len)
+    (hsuccess : vecGetU128 storage handle.block.offset handle.len index =
+      some value)
+    (hvalues : values[index]? = some expected)
+    (hencoded :
+      (storage.drop (handle.block.offset + index * Scalar.u128.size)).take
+          Scalar.u128.size = Scalar.u128.encode expected)
+    {contents : ContentsMap} {mem : Memory} (hrep : ContentsRep contents mem) :
+    value = expected ∧
+      (contentsInterp (G := G) contents ∗
+          Luffs.Containers.Vec.Owns Scalar.u128 pool handle values ⊢
+        (contentsInterp contents ∗
+          Luffs.Containers.Vec.Owns Scalar.u128 pool handle values) ∗
+          ⌜ReadSteps
+              ((handle.block.region pool).base + index * Scalar.u128.size)
+              (Scalar.u128.encode expected) mem ∧
+            Scalar.u128.decode (Scalar.u128.encode expected) = some expected⌝) := by
+  have hgeneric : vecGet Scalar.u128 storage handle.block.offset handle.len index =
+      some value := by
+    rw [← vecGetU128_eq_generic storage handle.block.offset handle.len index
+      hstorageMax]
+    exact hsuccess
+  exact vecGet_owns Scalar.u128 hlen hgeneric hvalues hencoded hrep
 
 def vecSliceU8 (storage : List Byte) (len begin end_ : Nat) :
     Option (List Byte) :=

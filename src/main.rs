@@ -4655,6 +4655,22 @@ mod tests {
             "theorem box_store_u128_refines : box_store_u128_model = Luffs.Runtime.Containers.boxStoreU128"
         ));
         assert!(generated.contains("theorem box_store_u128_program_wp"));
+        assert!(generated.contains(
+            "theorem box_load_i128_refines : box_load_i128_model = Luffs.Runtime.Containers.boxLoadU128"
+        ));
+        assert!(generated.contains("theorem box_load_i128_program_wp"));
+        assert!(generated.contains(
+            "theorem box_store_i128_refines : box_store_i128_model = Luffs.Runtime.Containers.boxStoreU128"
+        ));
+        assert!(generated.contains("theorem box_store_i128_program_wp"));
+        assert!(generated.contains(
+            "theorem box_load_i8_refines : box_load_i8_model = Luffs.Runtime.Containers.boxLoadI8"
+        ));
+        assert!(generated.contains("theorem box_load_i8_program_wp"));
+        assert!(generated.contains(
+            "theorem box_store_i8_refines : box_store_i8_model = Luffs.Runtime.Containers.boxStoreI8"
+        ));
+        assert!(generated.contains("theorem box_store_i8_program_wp"));
     }
 
     #[test]

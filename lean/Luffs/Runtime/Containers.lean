@@ -2680,6 +2680,16 @@ def boxStoreU8 (storage : List Byte) (begin : Nat) (value : Byte) :
     Option (List Byte) :=
   if begin ≥ storage.length then none else some (storage.set begin value)
 
+def boxLoadI8 (storage : List Byte) (begin : Nat) : Option (BitVec 8) := do
+  if begin ≥ storage.length then none
+  let byte ← storage[begin]?
+  Scalar.decode8 [byte]
+
+def boxStoreI8 (storage : List Byte) (begin : Nat) (value : BitVec 8) :
+    Option (List Byte) :=
+  if begin ≥ storage.length then none
+  else some (storage.set begin (Scalar.byteAt value 0))
+
 def boxStoreU16 (storage : List Byte) (begin : Nat) (value : BitVec 16) :
     Option (List Byte) :=
   if begin = Luffs.Runtime.TLSF.usizeMax then none
@@ -3427,6 +3437,111 @@ theorem boxLoadU8_eq_generic (storage : List Byte) (begin : Nat) :
     have hget : storage[begin]? = none :=
       List.getElem?_eq_none (Nat.le_of_not_gt hbound)
     simp [boxLoadU8, hget, boxLoad, hgeneric]
+
+theorem boxLoadI8_eq_generic (storage : List Byte) (begin : Nat) :
+    boxLoadI8 storage begin = boxLoad Scalar.u8 storage begin := by
+  by_cases hbound : begin < storage.length
+  · have hgeneric : ¬begin + Scalar.u8.size > storage.length := by
+      simp only [Scalar.u8]
+      omega
+    have hget : storage[begin]? = some storage[begin] :=
+      List.getElem?_eq_getElem hbound
+    have hslice : (storage.drop begin).take 1 = [storage[begin]] := by
+      rw [List.drop_eq_getElem_cons hbound]
+      rfl
+    rw [boxLoadI8, if_neg (Nat.not_le.mpr hbound), hget, boxLoad,
+      if_neg hgeneric]
+    change Scalar.decode8 [storage[begin]] =
+      Scalar.decode8 ((storage.drop begin).take 1)
+    rw [hslice]
+  · have hgeneric : begin + Scalar.u8.size > storage.length := by
+      simp only [Scalar.u8]
+      omega
+    have hget : storage[begin]? = none :=
+      List.getElem?_eq_none (Nat.le_of_not_gt hbound)
+    simp [boxLoadI8, hget, boxLoad, hgeneric]
+
+theorem boxStoreI8_eq_generic (storage : List Byte) (begin : Nat)
+    (value : BitVec 8) :
+    boxStoreI8 storage begin value = boxStore Scalar.u8 storage begin value := by
+  by_cases hbound : begin ≥ storage.length
+  · have hgeneric : begin + Scalar.u8.size > storage.length := by
+      simp only [Scalar.u8]
+      omega
+    simp [boxStoreI8, boxStore, hbound, hgeneric]
+  · have hlt : begin < storage.length := Nat.lt_of_not_ge hbound
+    have hgeneric : ¬begin + Scalar.u8.size > storage.length := by
+      simp only [Scalar.u8]
+      omega
+    have hbyte : Scalar.byteAt value 0 = Scalar.byteOfBV8 value := by
+      apply Fin.ext
+      rfl
+    have hwrite := writeBytes_singleton_eq_set storage begin
+      (Scalar.byteAt value 0) hlt
+    rw [hbyte] at hwrite
+    simp [boxStoreI8, boxStore, hbound, hgeneric, writeBytes, Scalar.u8,
+      Scalar.encode8, hbyte]
+    exact ⟨by omega, by
+      simpa only [List.cons_append, List.nil_append, List.append_assoc] using
+        hwrite.symm⟩
+
+/-- Signed one-byte loads use the generic `Scalar.u8` representation, return
+the exclusively owned bits, and expose exactly one operational read. -/
+theorem boxLoadI8_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {block : Block} {storage : List Byte}
+    {value expected : BitVec 8}
+    (hload : boxLoadI8 storage block.offset = some value)
+    (hencoded : (storage.drop block.offset).take Scalar.u8.size =
+      Scalar.u8.encode expected)
+    {contents : ContentsMap} {mem : Memory} (hrep : ContentsRep contents mem) :
+    value = expected ∧
+      (contentsInterp (G := G) contents ∗
+          Luffs.Containers.Box.Owns Scalar.u8 pool block expected ⊢
+        (contentsInterp contents ∗
+          Luffs.Containers.Box.Owns Scalar.u8 pool block expected) ∗
+          ⌜ReadSteps (block.region pool).base (Scalar.u8.encode expected) mem ∧
+            Scalar.u8.decode (Scalar.u8.encode expected) = some expected⌝) := by
+  have hgeneric : boxLoad Scalar.u8 storage block.offset = some value := by
+    rw [← boxLoadI8_eq_generic storage block.offset]
+    exact hload
+  have hexpected : boxLoad Scalar.u8 storage block.offset = some expected :=
+    boxLoad_of_encoded Scalar.u8 storage block.offset expected
+      (boxLoad_result hgeneric).1 hencoded
+  have hvalue : value = expected := by
+    rw [hgeneric] at hexpected
+    exact Option.some.inj hexpected
+  refine ⟨hvalue, ?_⟩
+  exact Luffs.Containers.Box.deref_read Scalar.u8 hrep
+
+/-- Signed one-byte stores update the generic bit representation and inherit
+the exact frame-preserving one-write WP. -/
+theorem boxStoreI8_owns_wp {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {block : Block} {storage nextStorage : List Byte}
+    (oldValue newValue : BitVec 8)
+    (hstore : boxStoreI8 storage block.offset newValue = some nextStorage)
+    (contents : ContentsMap) (mem : Memory) (hrep : ContentsRep contents mem) :
+    nextStorage = writeBytes storage block.offset (Scalar.u8.encode newValue) ∧
+      (contentsInterp (G := G) contents ∗
+          Luffs.Containers.Box.Owns Scalar.u8 pool block oldValue ==∗
+        (contentsInterp
+            (insertBytes contents (block.region pool).base
+              (Scalar.u8.encode newValue)) ∗
+          Luffs.Containers.Box.Owns Scalar.u8 pool block newValue) ∗
+          ⌜∃ next,
+            WriteSteps (block.region pool).base (Scalar.u8.encode newValue)
+              mem next ∧
+            (⊢@{Iris.IProp GF} Program.wp
+              (Program.writeBytes (block.region pool).base
+                (Scalar.u8.encode newValue))
+              mem (fun final => final = next))⌝) := by
+  have hgeneric : boxStore Scalar.u8 storage block.offset newValue =
+      some nextStorage := by
+    rw [← boxStoreI8_eq_generic storage block.offset newValue]
+    exact hstore
+  exact ⟨(boxStore_result hgeneric).2, Luffs.Containers.Box.store_wp Scalar.u8
+    oldValue newValue contents mem hrep⟩
 
 /-- A successful concrete byte Box load returns the logical byte encoded in the
 owned allocation and preserves ownership while exposing its one-read trace. -/

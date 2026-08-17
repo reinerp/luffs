@@ -689,7 +689,14 @@ concurrency are later extensions and are not prerequisites for `Box` and
   those models are proved equal to `Scalar.u128` load/store. Successful loads
   therefore return exactly the exclusively owned logical value with the
   sixteen-read trace; successful stores exchange old ownership for the new
-  value and close the sixteen-write WP.
+  value and close the sixteen-write WP. `Box<i128>` now has matching Luffs
+  load/store bodies and generated exact WPs; its two's-complement `BitVec 128`
+  model refines those same runtime operations, so it inherits the identical
+  sixteen-byte Iris ownership contract without a second representation axiom.
+  The formerly implicit `Box<i8>` case now also has concrete Luffs load/store
+  bodies, generated one-byte programs, and direct equivalence to `Scalar.u8`;
+  its Iris rules return the owned signed bit pattern or update it with exactly
+  one framed byte write.
   The compositional source translator now assigns Lean `BitVec` models to all
   signed and unsigned scalar widths and lowers arbitrary 8/16/32/64/128-bit
   `from_le_bytes` expressions plus byte-extraction stores. `usize`/`isize` are

@@ -666,7 +666,14 @@ concurrency are later extensions and are not prerequisites for `Box` and
   Codec-generic executable load/store semantics now checks the whole encoded
   range; successful loads expose the exact decoded byte slice, and an exact
   codec encoding decodes to the original value. The existing `u8` store model
-  is proved equal to the generic `Scalar.u8` store specialization.
+  is proved equal to the generic `Scalar.u8` store specialization. Concrete
+  `box_load_u32` and `box_store_u32` now connect their generated source
+  semantics and operational WPs to exclusive Iris ownership as well. A
+  successful load can return only the logical value encoded by `Box::Owns`,
+  preserves that ownership, and exposes its exact four-read trace. A
+  successful store exchanges `Box::Owns` of the old value for ownership of the
+  new value under arbitrary frames, updates the authoritative contents, and
+  closes the exact four-write program WP.
   The compositional source translator now assigns Lean `BitVec` models to all
   signed and unsigned scalar widths and lowers arbitrary 8/16/32/64/128-bit
   `from_le_bytes` expressions plus byte-extraction stores. `usize`/`isize` are

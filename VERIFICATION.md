@@ -245,7 +245,10 @@ verified runtime model; source/model drift therefore fails `luffs check`.
 The same translation now covers one mutable byte slice, scalar parameters, one
 proved array update, and `Option<usize>` or `Option<()>` results. Both Box byte
 initialization and replacement are checked against `boxStoreU8`, so their
-updated storage semantics now come from the Luffs bodies. `vec_push_u8` is translated
+updated storage semantics now come from the Luffs bodies. Immutable byte-slice
+translation also derives Box load and Vec last/get semantics from their Luffs
+bodies; successful Vec reads are proved inside the logical length and backing
+storage. `vec_push_u8` is translated
 from its two early-return guards and mutation into executable Lean semantics,
 then checked extensionally against `vecPushU8`; its result theorem connects that
 model to the abstract verified Vec handle transition. Multiple mutations,

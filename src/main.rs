@@ -28,6 +28,7 @@ struct Module {
     accesses: Vec<Access>,
     scalar_models: Vec<ScalarModel>,
     array_models: Vec<ArrayModel>,
+    read_models: Vec<ReadModel>,
 }
 
 #[derive(Debug)]
@@ -50,6 +51,16 @@ struct ArrayModel {
     assignment: (String, String),
     result: String,
     returns_unit: bool,
+    refines: Option<String>,
+}
+
+#[derive(Debug)]
+struct ReadModel {
+    name: String,
+    params: Vec<(String, String)>,
+    guards: Vec<String>,
+    lets: Vec<(String, String)>,
+    result: String,
     refines: Option<String>,
 }
 
@@ -289,6 +300,7 @@ fn parse(source: &str) -> Result<Module, String> {
         accesses,
         scalar_models: parse_scalar_models(source),
         array_models: parse_array_models(source),
+        read_models: parse_read_models(source),
     })
 }
 
@@ -540,6 +552,132 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
                     assignment,
                     result,
                     returns_unit: model.returns_unit,
+                    refines: model.refines,
+                });
+            }
+        }
+    }
+    models
+}
+
+fn read_result_expr(expr: &str, array: &str) -> String {
+    let expression = model_expr(expr, array);
+    if expression.starts_with(&format!("{array}[")) && expression.ends_with(']') {
+        format!("{expression}?")
+    } else {
+        format!("some ({expression})")
+    }
+}
+
+fn parse_read_models(source: &str) -> Vec<ReadModel> {
+    #[derive(Default)]
+    struct Pending {
+        name: String,
+        array: String,
+        params: Vec<(String, String)>,
+        guards: Vec<String>,
+        lets: Vec<(String, String)>,
+        result: Option<String>,
+        refines: Option<String>,
+        depth: usize,
+        eligible: bool,
+    }
+
+    let mut models = Vec::new();
+    let mut pending: Option<Pending> = None;
+    let mut next_refinement = None;
+    for raw in source.lines() {
+        let trimmed = raw.trim();
+        if pending.is_none()
+            && let Some(target) = trimmed.strip_prefix("// refines ")
+        {
+            next_refinement = Some(target.trim().to_owned());
+            continue;
+        }
+        if pending.is_none() && trimmed.starts_with("fn ") {
+            let Some(open) = trimmed.find('(') else {
+                continue;
+            };
+            let Some(close) = trimmed[open + 1..].find(')').map(|n| open + 1 + n) else {
+                continue;
+            };
+            if !trimmed[close + 1..].contains("-> Option<u8>") {
+                next_refinement = None;
+                continue;
+            }
+            let mut array = None;
+            let mut params = Vec::new();
+            let mut eligible = true;
+            for param in trimmed[open + 1..close].split(',') {
+                let Some((name, ty)) = param.split_once(':') else {
+                    eligible = false;
+                    break;
+                };
+                let name = name.trim().to_owned();
+                match ty.trim() {
+                    "&[u8]" => {
+                        if array.replace(name.clone()).is_some() {
+                            eligible = false;
+                        }
+                        params.push((name, "List (Fin 256)".to_owned()));
+                    }
+                    "usize" => params.push((name, "Nat".to_owned())),
+                    _ => eligible = false,
+                }
+            }
+            let Some(array) = array else {
+                next_refinement = None;
+                continue;
+            };
+            pending = Some(Pending {
+                name: trimmed[3..open].trim().to_owned(),
+                array,
+                params,
+                refines: next_refinement.take(),
+                depth: 1,
+                eligible,
+                ..Pending::default()
+            });
+            continue;
+        }
+
+        let Some(model) = pending.as_mut() else {
+            continue;
+        };
+        if trimmed.starts_with("//") || trimmed.is_empty() {
+            continue;
+        }
+        if let Some(condition) = control_condition(trimmed, "if")
+            && trimmed.contains("{ return None; }")
+        {
+            model.guards.push(model_expr(condition, &model.array));
+        } else if let Some((name, expression)) = usize_let(trimmed) {
+            model
+                .lets
+                .push((lean_ident(name), model_expr(expression, &model.array)));
+        } else if let Some(result) = trimmed
+            .strip_prefix("Some(")
+            .and_then(|rest| rest.strip_suffix(')'))
+        {
+            model.result = Some(read_result_expr(result, &model.array));
+        } else if trimmed != "}" {
+            model.eligible = false;
+        }
+
+        let opens = raw.bytes().filter(|byte| *byte == b'{').count();
+        let closes = raw.bytes().filter(|byte| *byte == b'}').count();
+        model.depth = model.depth.saturating_add(opens).saturating_sub(closes);
+        if model.depth == 0 {
+            let model = pending.take().expect("pending model exists");
+            if model.eligible
+                && let Some(result) = model.result
+            {
+                models.push(ReadModel {
+                    name: model.name,
+                    params: model.params,
+                    guards: model.guards,
+                    lets: model.lets,
+                    result,
                     refines: model.refines,
                 });
             }
@@ -829,6 +967,10 @@ fn lean(module: &Module) -> String {
             .array_models
             .iter()
             .any(|model| model.refines.is_some())
+        || module
+            .read_models
+            .iter()
+            .any(|model| model.refines.is_some())
     {
         out.push_str("import Luffs.Runtime.Containers\n");
     }
@@ -953,6 +1095,39 @@ fn lean(module: &Module) -> String {
             out.push_str("_model, ");
             out.push_str(target);
             out.push_str("]\n\n");
+        }
+    }
+    for model in &module.read_models {
+        out.push_str("def ");
+        out.push_str(&model.name);
+        out.push_str("_model");
+        for (name, ty) in &model.params {
+            out.push_str(&format!(" ({name} : {ty})"));
+        }
+        out.push_str(" : Option (Fin 256) :=\n  ");
+        for guard in &model.guards {
+            out.push_str(&format!("if {guard} then none else\n  "));
+        }
+        for (name, expression) in &model.lets {
+            out.push_str(&format!("let {name} := {expression}\n  "));
+        }
+        out.push_str(&model.result);
+        out.push_str("\n\n");
+        if let Some(target) = &model.refines {
+            out.push_str(&format!(
+                "theorem {}_refines : {}_model = {} := by\n  funext {}\n  simp [{}, {}]\n\n",
+                model.name,
+                model.name,
+                target,
+                model
+                    .params
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                format!("{}_model", model.name),
+                target
+            ));
         }
     }
     out.push_str("end LuffsGenerated\n");
@@ -1199,5 +1374,23 @@ mod tests {
             "def store_model (storage : List (Fin 256)) (begin : Nat) (value : Fin 256) : Option (List (Fin 256))"
         ));
         assert!(generated.contains("some (storage)"));
+    }
+
+    #[test]
+    fn emits_immutable_byte_array_read_semantics() {
+        let m = parse(
+            "// refines Luffs.Runtime.Containers.boxLoadU8\nfn load(storage: &[u8], begin: usize) -> Option<u8> {\nif begin >= storage.len() { return None; }\nSome(storage[begin])\n}",
+        )
+        .unwrap();
+        assert_eq!(m.read_models.len(), 1);
+        let generated = lean(&m);
+        assert!(generated.contains(
+            "def load_model (storage : List (Fin 256)) (begin : Nat) : Option (Fin 256)"
+        ));
+        assert!(generated.contains("storage[begin]?"));
+        assert!(
+            generated
+                .contains("theorem load_refines : load_model = Luffs.Runtime.Containers.boxLoadU8")
+        );
     }
 }

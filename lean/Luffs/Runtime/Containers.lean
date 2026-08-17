@@ -25,13 +25,17 @@ def vecPushU8 (storage : List Byte) (len capacity : Nat) (value : Byte) :
   else some (storage.set len value, len + 1)
 
 def vecLastU8 (storage : List Byte) (len : Nat) : Option Byte :=
-  if 0 < len ∧ len ≤ storage.length then storage[len - 1]? else none
+  if len = 0 then none
+  else if len > storage.length then none
+  else storage[len - 1]?
 
 def vecLenAfterPop (len : Nat) : Option Nat :=
   if 0 < len then some (len - 1) else none
 
 def vecGetU8 (storage : List Byte) (len index : Nat) : Option Byte :=
-  if index < len ∧ len ≤ storage.length then storage[index]? else none
+  if index ≥ len then none
+  else if len > storage.length then none
+  else storage[index]?
 
 def vecSliceU8 (storage : List Byte) (len begin end_ : Nat) :
     Option (List Byte) :=
@@ -97,9 +101,12 @@ theorem vecLastU8_result {storage : List Byte} {len : Nat} {value : Byte}
     0 < len ∧ len ≤ storage.length ∧ storage[len - 1]? = some value := by
   unfold vecLastU8 at hlast
   split at hlast
-  next hbounds =>
-    exact ⟨hbounds.1, hbounds.2, hlast⟩
   next => contradiction
+  next hpositive =>
+    split at hlast
+    next => contradiction
+    next hbound =>
+      exact ⟨Nat.pos_of_ne_zero hpositive, Nat.le_of_not_gt hbound, hlast⟩
 
 theorem vecLenAfterPop_refines_handle {handle : Luffs.Containers.Vec.Handle}
     {nextLen : Nat} (hpop : vecLenAfterPop handle.len = some nextLen) :
@@ -111,6 +118,18 @@ theorem vecLenAfterPop_refines_handle {handle : Luffs.Containers.Vec.Handle}
     subst nextLen
     simp [Luffs.Containers.Vec.pop, hpositive]
   next => contradiction
+
+theorem vecGetU8_result {storage : List Byte} {len index : Nat} {value : Byte}
+    (hget : vecGetU8 storage len index = some value) :
+    index < len ∧ len ≤ storage.length ∧ storage[index]? = some value := by
+  unfold vecGetU8 at hget
+  split at hget
+  next => contradiction
+  next hindex =>
+    split at hget
+    next => contradiction
+    next hlen =>
+      exact ⟨Nat.lt_of_not_ge hindex, Nat.le_of_not_gt hlen, hget⟩
 
 theorem vecSliceU8_result {storage slice : List Byte} {len begin end_ : Nat}
     (hslice : vecSliceU8 storage len begin end_ = some slice) :

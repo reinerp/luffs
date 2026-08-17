@@ -183,3 +183,20 @@ fn tlsf_take_candidate_class(second_nonempty: &mut [u32; 64], first_nonempty: &m
     }
     Some(block)
 }
+
+// Restore the allocation-state bit and the following block's boundary tag.
+// All possible failure occurs before either write.
+// refines Luffs.Runtime.TLSF.markFreeArrays
+fn tlsf_mark_free(is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], block: usize) -> Option<()> {
+    if block >= is_free.len() { return None; }
+    if block >= prev_free.len() { return None; }
+    if is_free[block] != 0 { return None; }
+    if block == usize::MAX { return None; }
+    let successor: usize = block + 1;
+
+    is_free[block] = 1;
+    if successor < prev_free.len() {
+        prev_free[successor] = 1;
+    }
+    Some(())
+}

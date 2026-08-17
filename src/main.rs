@@ -37,6 +37,7 @@ struct Module {
     tlsf_take_candidate_models: Vec<TlsfTakeCandidateModel>,
     tlsf_find_nonempty_class_models: Vec<TlsfFindNonemptyClassModel>,
     tlsf_take_candidate_class_models: Vec<TlsfTakeCandidateModel>,
+    tlsf_mark_free_models: Vec<TlsfMarkFreeModel>,
 }
 
 #[derive(Debug)]
@@ -115,6 +116,12 @@ struct TlsfTakeCandidateModel {
 
 #[derive(Debug)]
 struct TlsfFindNonemptyClassModel {
+    name: String,
+    refines: String,
+}
+
+#[derive(Debug)]
+struct TlsfMarkFreeModel {
     name: String,
     refines: String,
 }
@@ -364,6 +371,7 @@ fn parse(source: &str) -> Result<Module, String> {
         tlsf_take_candidate_models: parse_tlsf_take_candidate_models(source),
         tlsf_find_nonempty_class_models: parse_tlsf_find_nonempty_class_models(source),
         tlsf_take_candidate_class_models: parse_tlsf_take_candidate_class_models(source),
+        tlsf_mark_free_models: parse_tlsf_mark_free_models(source),
     })
 }
 
@@ -1287,6 +1295,54 @@ fn parse_tlsf_take_candidate_class_models(source: &str) -> Vec<TlsfTakeCandidate
     }
 }
 
+fn parse_tlsf_mark_free_models(source: &str) -> Vec<TlsfMarkFreeModel> {
+    let lines = source.lines().collect::<Vec<_>>();
+    let Some(index) = lines
+        .iter()
+        .position(|line| line.trim().starts_with("fn tlsf_mark_free("))
+    else {
+        return Vec::new();
+    };
+    let Some(target) = index
+        .checked_sub(1)
+        .and_then(|i| lines.get(i))
+        .and_then(|line| line.trim().strip_prefix("// refines "))
+    else {
+        return Vec::new();
+    };
+    let body = lines[index + 1..]
+        .iter()
+        .map(|line| line.trim())
+        .collect::<Vec<_>>();
+    let required = [
+        "if block >= is_free.len() { return None; }",
+        "if block >= prev_free.len() { return None; }",
+        "if is_free[block] != 0 { return None; }",
+        "if block == usize::MAX { return None; }",
+        "let successor: usize = block + 1;",
+        "is_free[block] = 1;",
+        "if successor < prev_free.len() {",
+        "prev_free[successor] = 1;",
+        "Some(())",
+    ];
+    let mut position = 0;
+    if required.iter().all(|expected| {
+        if let Some(offset) = body[position..].iter().position(|line| line == expected) {
+            position += offset + 1;
+            true
+        } else {
+            false
+        }
+    }) {
+        vec![TlsfMarkFreeModel {
+            name: "tlsf_mark_free".to_owned(),
+            refines: target.trim().to_owned(),
+        }]
+    } else {
+        Vec::new()
+    }
+}
+
 fn logical_lines(source: &str) -> Result<Vec<(usize, String)>, String> {
     let lines: Vec<&str> = source.lines().collect();
     let mut result = Vec::new();
@@ -1586,6 +1642,7 @@ fn lean(module: &Module) -> String {
         || !module.tlsf_take_candidate_models.is_empty()
         || !module.tlsf_find_nonempty_class_models.is_empty()
         || !module.tlsf_take_candidate_class_models.is_empty()
+        || !module.tlsf_mark_free_models.is_empty()
     {
         out.push_str("import Luffs.Runtime.TLSF\n");
     }
@@ -1903,6 +1960,17 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
             model.name, model.name, model.refines
         ));
     }
+    for model in &module.tlsf_mark_free_models {
+        out.push_str(&format!(
+            "def {}_model (is_free prev_free : List (Fin 256)) (block : Nat) : Option (List (Fin 256) × List (Fin 256)) :=\n  \
+{} is_free prev_free block\n\n",
+            model.name, model.refines
+        ));
+        out.push_str(&format!(
+            "theorem {}_refines : {}_model = {} := by rfl\n\n",
+            model.name, model.name, model.refines
+        ));
+    }
     out.push_str("end LuffsGenerated\n");
     out
 }
@@ -2083,6 +2151,7 @@ mod tests {
         assert_eq!(m.tlsf_take_candidate_models.len(), 1);
         assert_eq!(m.tlsf_find_nonempty_class_models.len(), 1);
         assert_eq!(m.tlsf_take_candidate_class_models.len(), 1);
+        assert_eq!(m.tlsf_mark_free_models.len(), 1);
         let generated = lean(&m);
         assert!(generated.contains(
             "theorem tlsf_insert_refines : tlsf_insert_model = Luffs.Runtime.TLSF.insertArrays"
@@ -2102,6 +2171,9 @@ mod tests {
         assert!(generated.contains("theorem tlsf_find_nonempty_class_refines"));
         assert!(generated.contains(
             "theorem tlsf_take_candidate_class_refines : tlsf_take_candidate_class_model = Luffs.Runtime.TLSF.takeCandidateClassArrays"
+        ));
+        assert!(generated.contains(
+            "theorem tlsf_mark_free_refines : tlsf_mark_free_model = Luffs.Runtime.TLSF.markFreeArrays"
         ));
     }
 

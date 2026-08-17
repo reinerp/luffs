@@ -146,7 +146,16 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   also proved complete: for a valid pool smaller than the supported TLSF size
   range, returning the exact live region cannot fail at classification,
   arbitrary unlink, or either conditional coalescing step. The O(1)
-  predecessor/successor link-update refinement and Luffs lowering remain.
+  predecessor/successor link-update refinement and the rest of the Luffs
+  lowering remain. The first concrete deallocation stage is now lowered from
+  Luffs: it rejects out-of-range headers and double-free before mutation,
+  marks the selected allocation free, and updates the successor's `prev_free`
+  boundary tag. Its generated Lean semantics is source-shape checked against
+  the exact parallel-array model. That model is proved to be precisely the
+  free-bit and boundary-tag projection of the abstract `markFreeAt`
+  transition, framing every other physical header. Exact-region validation,
+  bin insertion, and executable neighbor coalescing still remain to be
+  composed around it.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 
 The first concrete `stdlib/tlsf.luffs` runtime layer now implements bounded

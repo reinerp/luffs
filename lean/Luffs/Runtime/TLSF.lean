@@ -2577,4 +2577,88 @@ theorem remove_second_represents {state : Metadata} {bin head block : Nat}
           · exact htailLinked
   · exact List.nodup_cons.mpr ⟨hheadNotRest, hrestNodup⟩
 
+/-- Exact parallel-array effect of the Luffs deallocation marking stage.
+All validation precedes both writes, matching the generated Rust operation. -/
+def markFreeArrays (isFree prevFree : List (Fin 256)) (block : Nat) :
+    Option (List (Fin 256) × List (Fin 256)) :=
+  if block ≥ isFree.length then none
+  else if block ≥ prevFree.length then none
+  else if isFree[block]? != some 0 then none
+  else
+    let nextIsFree := isFree.set block 1
+    let successor := block + 1
+    let nextPrevFree :=
+      if successor < prevFree.length then prevFree.set successor 1 else prevFree
+    some (nextIsFree, nextPrevFree)
+
+theorem markFreeArrays_result {isFree prevFree nextIsFree nextPrevFree : List (Fin 256)}
+    {block : Nat}
+    (hmark : markFreeArrays isFree prevFree block =
+      some (nextIsFree, nextPrevFree)) :
+    block < isFree.length ∧ block < prevFree.length ∧
+      isFree[block]? = some 0 ∧
+    nextIsFree = isFree.set block 1 ∧
+      nextPrevFree = if block + 1 < prevFree.length then
+        prevFree.set (block + 1) 1 else prevFree := by
+  unfold markFreeArrays at hmark
+  split at hmark <;> simp_all
+
+theorem markFreeArrays_lengths {isFree prevFree nextIsFree nextPrevFree : List (Fin 256)}
+    {block : Nat}
+    (hmark : markFreeArrays isFree prevFree block =
+      some (nextIsFree, nextPrevFree)) :
+    nextIsFree.length = isFree.length ∧
+      nextPrevFree.length = prevFree.length := by
+  obtain ⟨_, _, _, rfl, rfl⟩ := markFreeArrays_result hmark
+  split <;> simp_all
+
+def freeFlags (blocks : List Block) : List (Fin 256) :=
+  blocks.map fun block => if block.free then 1 else 0
+
+def prevFreeFlags (blocks : List Block) : List (Fin 256) :=
+  blocks.map fun block => if block.prevFree then 1 else 0
+
+/-- The concrete flag writes are exactly the projection of the abstract
+`markFreeAt` physical-header transition. This includes the successor boundary
+tag and frames every other physical header. -/
+theorem markFreeArrays_refines_markFreeAt {blocks : List Block} {i : Nat}
+    {selected : Block} (hget : blocks[i]? = some selected)
+    (hallocated : selected.free = false) :
+    markFreeArrays (freeFlags blocks) (prevFreeFlags blocks) i =
+      some (freeFlags (markFreeAt blocks i),
+        prevFreeFlags (markFreeAt blocks i)) := by
+  induction blocks generalizing i selected with
+  | nil => simp at hget
+  | cons head rest ih =>
+      cases i with
+      | zero =>
+          simp only [List.getElem?_cons_zero, Option.some.injEq] at hget
+          subst selected
+          cases rest <;>
+            simp [markFreeArrays, freeFlags, prevFreeFlags, markFreeAt,
+              hallocated]
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at hget
+          have htail := ih hget hallocated
+          obtain ⟨hj, _, _, hfree, hprev⟩ := markFreeArrays_result htail
+          have hj' : j < rest.length := by simpa [freeFlags] using hj
+          have hfree' : (freeFlags rest).set j 1 =
+              freeFlags (markFreeAt rest j) := hfree.symm
+          have hprev' :
+              (if j + 1 < rest.length then
+                (prevFreeFlags rest).set (j + 1) 1 else prevFreeFlags rest) =
+                prevFreeFlags (markFreeAt rest j) := by
+            simpa [prevFreeFlags] using hprev.symm
+          have hjblock : rest[j].free = false := by
+            rw [(List.getElem?_eq_some_iff.mp hget).2]
+            exact hallocated
+          simp [markFreeArrays, freeFlags, prevFreeFlags, markFreeAt,
+            hget, hallocated, hj', hjblock, hfree',
+            show j + 1 + 1 < rest.length + 1 ↔
+              j + 1 < rest.length by omega]
+          by_cases hs : j + 1 < rest.length <;>
+            simp [hs, prevFreeFlags] at hprev' ⊢
+          all_goals
+            exact ⟨by simpa [freeFlags] using hfree', hprev'⟩
+
 end Luffs.Runtime.TLSF

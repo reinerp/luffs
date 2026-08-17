@@ -514,9 +514,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   deallocator was generalized to fixed-capacity arrays represented by an
   active prefix, including framed boundary-tag writes into spare capacity, so
   this composition no longer assumes canonical arrays after allocation.
-  Connecting the source-derived byte-copy state transformer to the operational
-  copy trace and Iris content-map update, plus generic Luffs monomorphization,
-  remains before this item is complete.
+  A framed Iris growth rule now also retains authoritative agreement for the
+  initialized prefix and produces an explicit `CopySteps` load/store witness
+  for exactly that encoding, using allocator-derived non-overlap and mapped
+  replacement bytes. Connecting the source-derived `copyByteRange` result to
+  this combined rule, plus generic Luffs monomorphization, remains before this
+  item is complete.
 
 `stdlib/containers.luffs` now contains the first byte-monomorphized Box and Vec
 lowering: initialization/load/store, push/pop length transitions, indexed get,

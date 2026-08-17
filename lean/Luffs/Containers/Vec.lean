@@ -800,6 +800,89 @@ theorem grow_owns_step {GF : BundledGFunctors}
       · iassumption
     · iassumption
 
+/-- Exact Vec ownership exposes authoritative agreement for its initialized
+prefix without consuming either the Vec or the authoritative map. -/
+theorem owns_agreement {GF : BundledGFunctors}
+    [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
+    (codec : Codec α) (pool : Region) (handle : Handle) (values : List α)
+    (contents : ContentsMap) :
+    contentsInterp (G := G) contents ∗ Owns codec pool handle values ⊢
+      (contentsInterp contents ∗ Owns codec pool handle values) ∗
+        ⌜BytesInContents contents (handle.block.region pool).base
+          (encodeValues codec values)⌝ := by
+  unfold Owns
+  iintro ⟨Hcontents, Howns⟩
+  icases Howns with ⟨Hregion, Hpoints⟩
+  icombine Hcontents Hpoints as Hagreement
+  ihave ⟨Hagreement, %hbytes⟩ := pointsToBytes_agreement contents
+    (handle.block.region pool).base (encodeValues codec values) $$ Hagreement
+  icases Hagreement with ⟨Hcontents, Hpoints⟩
+  isplitl [Hcontents Hregion Hpoints]
+  · isplitl [Hcontents]
+    · iassumption
+    · isplitl [Hregion]
+      · iassumption
+      · iassumption
+  · ipureintro
+    exact hbytes
+
+/-- Framed growth rule with the operational byte-copy witness. Agreement with
+the authoritative content map supplies every source load; allocation validity
+supplies non-overlap, and mapped replacement bytes supply every destination
+store. The ownership update and execution trace describe the same encoding. -/
+theorem grow_owns_step_with_copy {GF : BundledGFunctors}
+    [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
+    (codec : Codec α) {pool : Region} {handle : Handle}
+    (hhandle : Valid codec handle) {newCapacity : Nat}
+    {hcapacity : 0 < newCapacity} (hlenCapacity : handle.len ≤ newCapacity)
+    {state : Alloc.State} (hvalid : Alloc.Valid pool state)
+    (hmember : handle.block ∈ state.physical)
+    (hallocated : handle.block.free = false)
+    {hkeyMax : requestKey (allocationBytes codec newCapacity) <
+      2 ^ firstLevelCount} {allocated : AllocResult} {next : Alloc.State}
+    (halloc : allocate codec newCapacity hcapacity state hkeyMax =
+      some allocated)
+    (hdrop : drop pool allocated.state handle = some next)
+    (values : List α) (hlen : values.length = handle.len)
+    (contents : ContentsMap) (mem : Memory) (hrep : ContentsRep contents mem)
+    (hdst : ∀ i, i < (encodeValues codec values).length →
+      mem.mapped ((allocated.handle.block.region pool).base + i))
+    (hfresh : CanInsertBytes contents
+      (allocated.handle.block.region pool).base (encodeValues codec values)) :
+    contentsInterp (G := G) contents ∗
+        (Owns codec pool handle values ∗
+          Ownership.OwnsFree pool state.physical) ==∗
+      (contentsInterp
+          (deleteBytes
+            (insertBytes contents (allocated.handle.block.region pool).base
+              (encodeValues codec values))
+            (handle.block.region pool).base (encodeValues codec values)) ∗
+        (Owns codec pool
+            ⟨allocated.handle.block, handle.len, newCapacity⟩ values ∗
+          Ownership.OwnsFree pool next.physical)) ∗
+        ⌜∃ memNext, CopySteps (handle.block.region pool).base
+          (allocated.handle.block.region pool).base
+          (encodeValues codec values) mem memNext⌝ := by
+  iintro ⟨Hcontents, Hrest⟩
+  icases Hrest with ⟨Hold, Hallocator⟩
+  icombine Hcontents Hold as Hagreement
+  ihave ⟨Hagreement, %hbytes⟩ := owns_agreement codec pool handle values
+    contents $$ Hagreement
+  icases Hagreement with ⟨Hcontents, Hold⟩
+  have hsrc : ∀ i value, (encodeValues codec values)[i]? = some value →
+      mem ((handle.block.region pool).base + i) = some value := by
+    intro i value hget
+    exact hrep _ _ (hbytes i value hget)
+  obtain ⟨memNext, hcopy⟩ := grow_copy_steps hhandle hlen hlenCapacity hvalid
+    hmember hallocated halloc mem hsrc hdst
+  isplitl [Hcontents Hold Hallocator]
+  ·
+    icombine Hold Hallocator as Hrest
+    icombine Hcontents Hrest as Hinput
+    iapply grow_owns_step codec hvalid halloc hdrop values contents hfresh $$ Hinput
+  · ipureintro
+    exact ⟨memNext, hcopy⟩
+
 theorem owns_exclusive {GF : BundledGFunctors}
     [ByteRegionGS GF] [ByteContentsGS GF] {α : Type}
     (codec : Codec α) (pool : Region) (handle : Handle)

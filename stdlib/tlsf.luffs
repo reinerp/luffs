@@ -2,6 +2,7 @@
 // headers as parallel arrays, keeping Luffs' initial aggregate-free subset.
 // `next.len()` is the detached/end-of-chain sentinel.
 
+// refines Luffs.Runtime.TLSF.insertArrays
 fn tlsf_insert(heads: &mut [usize; 256], next: &mut [usize; 4096], previous: &mut [usize; 4096], bin: usize, block: usize) -> Option<()> {
     if bin >= heads.len() { return None; }
     if block >= next.len() { return None; }

@@ -30,6 +30,7 @@ struct Module {
     array_models: Vec<ArrayModel>,
     read_models: Vec<ReadModel>,
     copy_models: Vec<CopyModel>,
+    tlsf_insert_models: Vec<TlsfInsertModel>,
 }
 
 #[derive(Debug)]
@@ -74,6 +75,12 @@ struct CopyModel {
     len: String,
     guards: Vec<String>,
     refines: Option<String>,
+}
+
+#[derive(Debug)]
+struct TlsfInsertModel {
+    name: String,
+    refines: String,
 }
 
 #[derive(Debug)]
@@ -314,6 +321,7 @@ fn parse(source: &str) -> Result<Module, String> {
         array_models: parse_array_models(source),
         read_models: parse_read_models(source),
         copy_models: parse_copy_models(source),
+        tlsf_insert_models: parse_tlsf_insert_models(source),
     })
 }
 
@@ -839,6 +847,64 @@ fn parse_copy_models(source: &str) -> Vec<CopyModel> {
     models
 }
 
+fn parse_tlsf_insert_models(source: &str) -> Vec<TlsfInsertModel> {
+    let lines = source.lines().collect::<Vec<_>>();
+    let mut models = Vec::new();
+    for (index, raw) in lines.iter().enumerate() {
+        let signature = raw.trim();
+        if !signature.starts_with("fn tlsf_insert(") {
+            continue;
+        }
+        let Some(annotation) = index.checked_sub(1).and_then(|i| lines.get(i)) else {
+            continue;
+        };
+        let Some(target) = annotation.trim().strip_prefix("// refines ") else {
+            continue;
+        };
+        let mut depth = signature.matches('{').count() - signature.matches('}').count();
+        let mut body = Vec::new();
+        for line in &lines[index + 1..] {
+            let trimmed = line.trim();
+            depth += trimmed.matches('{').count();
+            depth = depth.saturating_sub(trimmed.matches('}').count());
+            if depth == 0 {
+                break;
+            }
+            if !trimmed.is_empty() {
+                body.push(trimmed);
+            }
+        }
+        let required = [
+            "if bin >= heads.len() { return None; }",
+            "if block >= next.len() { return None; }",
+            "if block >= previous.len() { return None; }",
+            "let old_head: usize = heads[bin];",
+            "next[block] = old_head;",
+            "previous[block] = next.len();",
+            "if old_head < previous.len() {",
+            "previous[old_head] = block;",
+            "heads[bin] = block;",
+            "Some(())",
+        ];
+        let mut position = 0;
+        let valid = required.iter().all(|expected| {
+            if let Some(offset) = body[position..].iter().position(|line| line == expected) {
+                position += offset + 1;
+                true
+            } else {
+                false
+            }
+        });
+        if valid {
+            models.push(TlsfInsertModel {
+                name: "tlsf_insert".to_owned(),
+                refines: target.trim().to_owned(),
+            });
+        }
+    }
+    models
+}
+
 fn logical_lines(source: &str) -> Result<Vec<(usize, String)>, String> {
     let lines: Vec<&str> = source.lines().collect();
     let mut result = Vec::new();
@@ -1131,6 +1197,9 @@ fn lean(module: &Module) -> String {
     {
         out.push_str("import Luffs.Runtime.Containers\n");
     }
+    if !module.tlsf_insert_models.is_empty() {
+        out.push_str("import Luffs.Runtime.TLSF\n");
+    }
     out.push_str(
         "\nset_option autoImplicit false\nset_option linter.unusedVariables false\n\nnamespace LuffsGenerated\n\n",
     );
@@ -1315,6 +1384,30 @@ fn lean(module: &Module) -> String {
             ));
         }
     }
+    for model in &module.tlsf_insert_models {
+        out.push_str(&format!(
+            "def {}_model (heads next previous : List Nat) (bin block : Nat) : Option (List Nat × List Nat × List Nat) :=\n  \
+if bin ≥ heads.length then none else\n  \
+if block ≥ next.length then none else\n  \
+if block ≥ previous.length then none else\n  \
+let old_head := heads[bin]?.getD 0\n  \
+let next := next.set block old_head\n  \
+let previous := previous.set block next.length\n  \
+let previous := if old_head < previous.length then previous.set old_head block else previous\n  \
+let heads := heads.set bin block\n  \
+some (heads, next, previous)\n\n",
+            model.name
+        ));
+        out.push_str(&format!(
+            "theorem {}_refines : {}_model = {} := by\n  funext heads next previous bin block\n  \
+by_cases hbin : bin ≥ heads.length <;>\n  \
+by_cases hnext : block ≥ next.length <;>\n  \
+by_cases hprevious : block ≥ previous.length <;>\n  \
+simp [{}_model, {}, Luffs.Runtime.TLSF.insertArrays, Luffs.Runtime.TLSF.insert,\n    \
+hbin, hnext, hprevious]\n\n",
+            model.name, model.name, model.refines, model.name, model.refines
+        ));
+    }
     out.push_str("end LuffsGenerated\n");
     out
 }
@@ -1485,6 +1578,11 @@ mod tests {
         );
         assert!(m.rust.contains("get_unchecked_mut"));
         assert!(m.rust.contains("checked_mul"));
+        assert_eq!(m.tlsf_insert_models.len(), 1);
+        let generated = lean(&m);
+        assert!(generated.contains(
+            "theorem tlsf_insert_refines : tlsf_insert_model = Luffs.Runtime.TLSF.insertArrays"
+        ));
     }
 
     #[test]

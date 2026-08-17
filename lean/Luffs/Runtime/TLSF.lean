@@ -27,6 +27,13 @@ def insert (state : Metadata) (bin block : Nat) : Option Metadata :=
       else previous
     some { heads := state.heads.set bin block, next, previous }
 
+/-- Array-tuple facade used by compiler-generated Luffs semantics. -/
+def insertArrays (heads next previous : List Nat) (bin block : Nat) :
+    Option (List Nat × List Nat × List Nat) :=
+  match insert { heads, next, previous } bin block with
+  | none => none
+  | some state => some (state.heads, state.next, state.previous)
+
 /-- Exact pure effect of `tlsf_remove` in `stdlib/tlsf.luffs`. -/
 def remove (state : Metadata) (bin block : Nat) : Option Metadata :=
   if bin ≥ state.heads.length then none

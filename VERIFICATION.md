@@ -169,7 +169,11 @@ and pointwise-equal metadata on a chain preserve its representation. Combined
 with freshness and `Nodup`, this yields the full insertion theorem:
 `RepresentsBin state bin chain` becomes
 `RepresentsBin nextState bin (block :: chain)`. Compiler-generated multi-array
-semantics are still required to connect the Luffs body to this transition.
+semantics now translate the three mutable arrays and ordered writes in
+`tlsf_insert` into an executable Lean state transformer. Its `refines`
+declaration is checked extensionally against `insertArrays`, connecting the
+Luffs body directly to the represented-chain insertion theorem; source drift
+fails `luffs check`.
 The exact parallel-array removal transition is now defined in the same layer,
 including head replacement, predecessor/successor bypass writes, and final
 detachment. Successful removal proves all input indices were valid, preserves

@@ -63,14 +63,15 @@ The checked-in foundation currently contains:
 - a two-level bin invariant tying cached bitmap bits to nonempty intrusive
   chains and proving every selected chain head is free and correctly classified.
 
-It does **not** yet constitute a fully verified TLSF, `Box`, or `Vec`. The
-current Lean development does instantiate `OwnsBytes` with Iris authoritative
-ghost-map resources and proves the allocator's main allocation/deallocation
-ownership paths plus allocator-backed byte Box and Vec clients. The Luffs Vec
-growth loop now has checked addresses and an exact generated allocation/copy/
-deallocation model. Remaining work includes composing that concrete growth
-model with its Iris ownership theorem, generic lowering, weakest-precondition
-integration, borrowing syntax, and the allocator's O(1) link-update refinement. See
+It does **not** yet constitute a fully verified generic TLSF-backed `Box` or
+`Vec`. The current Lean development instantiates `OwnsBytes` with Iris
+authoritative ghost-map resources and proves the allocator's main allocation/
+deallocation ownership paths plus allocator-backed byte Box and Vec clients.
+The Luffs Vec growth loop has checked addresses and an exact generated
+allocation/copy/deallocation model, now composed with abstract `Vec.grow`, its
+Iris ownership update, and an operational byte-copy trace. Remaining work
+includes generic lowering, weakest-precondition integration, borrowing syntax,
+and the allocator's O(1) link-update refinement. See
 [`VERIFICATION.md`](VERIFICATION.md) for the precise proof boundary and
 completion criteria.
 

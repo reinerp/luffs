@@ -77,7 +77,6 @@ theorem boxNewU8Arrays_refines_box
     {pool : Region} {blocks : List Block} {state : Bins.State}
     {storage : List Byte} {second : List (BitVec 32)} {first : BitVec 64}
     {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
-    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
     {heads next previous : List Nat} {value : Byte}
     {result : BoxNewU8ArraysResult}
     (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
@@ -202,6 +201,34 @@ def boxDropU8Arrays (offsets sizes : List Nat)
   Luffs.Runtime.TLSF.deallocateArrays offsets sizes isFree prevFree second
     first heads next previous count block returnedOffset returnedBytes
 
+def boxDropPointerU8Arrays (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (poolBase poolBytes pointer : Nat) :
+    Option Luffs.Runtime.TLSF.CoalesceClassResult := do
+  let offset ← Luffs.Runtime.TLSF.pointerToOffset poolBase poolBytes pointer
+  boxDropU8Arrays offsets sizes isFree prevFree count second first heads next
+    previous offset
+
+theorem boxDropPointerU8Arrays_result
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count : Nat} {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {poolBase poolBytes pointer : Nat}
+    {result : Luffs.Runtime.TLSF.CoalesceClassResult}
+    (hsuccess : boxDropPointerU8Arrays offsets sizes isFree prevFree count
+      second first heads next previous poolBase poolBytes pointer = some result) :
+    ∃ offset,
+      pointer = poolBase + offset ∧ offset < poolBytes ∧
+      boxDropU8Arrays offsets sizes isFree prevFree count second first heads
+        next previous offset = some result := by
+  unfold boxDropPointerU8Arrays at hsuccess
+  cases hoffset : Luffs.Runtime.TLSF.pointerToOffset poolBase poolBytes pointer with
+  | none => simp [hoffset] at hsuccess
+  | some offset =>
+      have hpointer := Luffs.Runtime.TLSF.pointerToOffset_result hoffset
+      simp only [hoffset, Option.bind_some] at hsuccess
+      exact ⟨offset, hpointer.1, hpointer.2, hsuccess⟩
+
 theorem boxDropU8Arrays_result
     {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
     {count : Nat} {second : List (BitVec 32)} {first : BitVec 64}
@@ -241,7 +268,7 @@ theorem boxDropU8Arrays_result
 
 set_option maxHeartbeats 1200000 in
 theorem boxDropU8Arrays_refines_box
-    {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
+    {PROP : Type} [Iris.BI PROP] [Luffs.Memory.ByteRegionLogic PROP]
     {pool : Region} {blocks : List Block} {state : Bins.State}
     {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
     {second : List (BitVec 32)} {first : BitVec 64}
@@ -265,9 +292,9 @@ theorem boxDropU8Arrays_refines_box
       selected ∈ blocks ∧
       Luffs.Containers.Box.drop pool
           { physical := blocks, bins := state } selected = some abstractNext ∧
-      (OwnsBytes (PROP := Iris.IProp GF) (selected.region pool) ∗
-          Ownership.OwnsFree pool blocks ⊣⊢
-        Ownership.OwnsFree pool abstractNext.physical) := by
+      (OwnsBytes (PROP := PROP) (selected.region pool) ∗
+          Ownership.OwnsFree (PROP := PROP) pool blocks ⊣⊢
+        Ownership.OwnsFree (PROP := PROP) pool abstractNext.physical) := by
   obtain ⟨i, returnedBytes, hfind, hfree, hbytes, hdealloc⟩ :=
     boxDropU8Arrays_result hsuccess
   have hscan := Luffs.Runtime.TLSF.findOffsetIndex_sound hfind
@@ -298,11 +325,11 @@ theorem boxDropU8Arrays_refines_box
     hallocated
   obtain ⟨abstractNext, habstract, howns⟩ :=
     Luffs.Runtime.TLSF.deallocateArrays_ownsFree
-      (PROP := Iris.IProp GF) hget hallocated hphysical hvalid hpoolMax
+      (PROP := PROP) hget hallocated hphysical hvalid hpoolMax
       hcountMax hsecond hfirst hbins hdisjoint hfresh hdealloc'
   have hfindPhysical : Bins.findPhysicalIndex blocks selected = some i := by
-    rw [← Luffs.Runtime.TLSF.findOffsetIndex_refines_findPhysicalIndex
-      (target := selected) (actual := selected) hvalid.1
+    rw [← Luffs.Runtime.TLSF.findOffsetIndex_refines_findPhysicalIndex_represented
+      (target := selected) (actual := selected) hphysical hvalid.1
       (List.mem_iff_getElem?.2 ⟨i, hget⟩) (Bins.samePhysical_refl selected)]
     simpa [hselectedOffset] using hfind
   have hboxDrop : Luffs.Containers.Box.drop pool
@@ -310,6 +337,41 @@ theorem boxDropU8Arrays_refines_box
     simp [Luffs.Containers.Box.drop, hfindPhysical, habstract]
   exact ⟨selected, abstractNext, hselectedOffset,
     List.mem_iff_getElem?.2 ⟨i, hget⟩, hboxDrop, howns⟩
+
+set_option maxHeartbeats 1200000 in
+theorem boxDropPointerU8Arrays_refines_box
+    {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
+    {pool : Region} {blocks : List Block} {state : Bins.State}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {pointer : Nat}
+    {result : Luffs.Runtime.TLSF.CoalesceClassResult}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hcountMax : count ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins
+      { heads, next, previous } state)
+    (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
+    (hsuccess : boxDropPointerU8Arrays offsets sizes isFree prevFree count
+      second first heads next previous pool.base pool.bytes pointer = some result) :
+    ∃ (selected : Block) (abstractNext : Alloc.State),
+      pointer = pool.base + selected.offset ∧ selected ∈ blocks ∧
+      Luffs.Containers.Box.drop pool
+          { physical := blocks, bins := state } selected = some abstractNext ∧
+      (OwnsBytes (PROP := Iris.IProp GF) (selected.region pool) ∗
+          Ownership.OwnsFree pool blocks ⊣⊢
+        Ownership.OwnsFree pool abstractNext.physical) := by
+  obtain ⟨offset, hpointer, _, hdrop⟩ :=
+    boxDropPointerU8Arrays_result hsuccess
+  obtain ⟨selected, abstractNext, hselectedOffset, hmember, habstract, howns⟩ :=
+    boxDropU8Arrays_refines_box (PROP := Iris.IProp GF) hvalid hpoolMax hcountMax hsecond
+      hfirst hbins hdisjoint hphysical hdrop
+  exact ⟨selected, abstractNext, by rw [hpointer, ← hselectedOffset], hmember,
+    habstract, howns⟩
 
 theorem boxDropU8Arrays_owns
     {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
@@ -343,7 +405,7 @@ theorem boxDropU8Arrays_owns
                 (Scalar.u8.encode value)) ∗
             Ownership.OwnsFree pool abstractNext.physical := by
   obtain ⟨selected, abstractNext, hoffset, _, hdrop, _⟩ :=
-    boxDropU8Arrays_refines_box (GF := GF) hvalid hpoolMax hcountMax hsecond
+    boxDropU8Arrays_refines_box (PROP := Iris.IProp GF) hvalid hpoolMax hcountMax hsecond
       hfirst hbins hdisjoint hphysical hsuccess
   refine ⟨selected, abstractNext, hoffset, ?_⟩
   intro value contents
@@ -574,7 +636,7 @@ theorem vecDropU8Arrays_owns
                 (Luffs.Containers.Vec.encodeValues Scalar.u8 values)) ∗
             Ownership.OwnsFree pool abstractNext.physical := by
   obtain ⟨selected, abstractNext, hoffset, _, hdrop, _⟩ :=
-    boxDropU8Arrays_refines_box (GF := GF) hvalid hpoolMax hcountMax hsecond
+    boxDropU8Arrays_refines_box (PROP := Iris.IProp GF) hvalid hpoolMax hcountMax hsecond
       hfirst hbins hdisjoint hphysical hsuccess
   let handle : Luffs.Containers.Vec.Handle := ⟨selected, len, capacity⟩
   have hvecDrop : Luffs.Containers.Vec.drop pool
@@ -611,7 +673,7 @@ theorem copyByteRange_result
       simp only [copyByteRange] at hcopy
       cases hprefix : copyByteRange storage source destination n with
       | none => simp [hprefix] at hcopy
-      | some prefix =>
+      | some copiedPrefix =>
         cases hbyte : storage[source + n]? with
         | none => simp [hprefix, hbyte] at hcopy
         | some byte =>
@@ -620,7 +682,7 @@ theorem copyByteRange_result
           · simp [hprefix, hbyte, hbound] at hcopy
             subst copied
             obtain ⟨hlength, hpref, houtside⟩ := ih hprefix
-            have hdest : destination + n < prefix.length := by
+            have hdest : destination + n < copiedPrefix.length := by
               rw [hlength]
               exact Nat.lt_of_not_ge hbound
             refine ⟨by simp [hlength], ?_, ?_⟩
@@ -630,12 +692,12 @@ theorem copyByteRange_result
                 simp [List.getElem?_set_self hdest, hbyte]
               · have hin : i < n := by omega
                 have hne : destination + i ≠ destination + n := by omega
-                rw [List.getElem?_set_ne hne]
+                rw [List.getElem?_set_ne (Ne.symm hne)]
                 exact hpref i hin
             · intro j hj
               have hne : j ≠ destination + n := by
                 rcases hj with hleft | hright <;> omega
-              rw [List.getElem?_set_ne hne]
+              rw [List.getElem?_set_ne (Ne.symm hne)]
               apply houtside j
               rcases hj with hleft | hright
               · exact Or.inl hleft
@@ -775,9 +837,10 @@ block, the copied destination is the newly allocated block, and the final
 deallocation targets the preserved old block even if its intrusive links were
 updated by allocation. -/
 theorem vecGrowU8Arrays_refines_vec
-    {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
+    {PROP : Type} [Iris.BI PROP] [Luffs.Memory.ByteRegionLogic PROP]
     {pool : Region} {blocks : List Block} {state : Bins.State}
     {storage : List Byte} {second : List (BitVec 32)} {first : BitVec 64}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
     {heads next previous : List Nat}
     {handle : Luffs.Containers.Vec.Handle} {newCapacity : Nat}
     {result : VecGrowU8ArraysResult}
@@ -814,12 +877,14 @@ theorem vecGrowU8Arrays_refines_vec
       hphysical, hbinsValid, hpostBins, hpostDisjoint, hpostSecond,
       hpostFirst, _⟩ :=
     Luffs.Runtime.TLSF.allocateArrays_ownsFree
-      (PROP := Iris.IProp GF) hvalid hsecond hfirst hbins hdisjoint
+      (PROP := PROP) hvalid hsecond hfirst hbins hdisjoint
       hphysicalInput
       hconcreteAlloc
   have hcapacity : 0 < newCapacity := by omega
   have hpostValid : Alloc.Valid pool abstractAllocated.state :=
-    Alloc.allocate_preserves_valid hvalid habstractAlloc
+    Alloc.allocate_preserves_valid hvalid
+      (Luffs.Containers.Box.requestBytes_aligned (newCapacity * Scalar.u8.size))
+      habstractAlloc
   have hpostCountMax : concreteAllocated.count ≤
       Luffs.Runtime.TLSF.usizeMax := by
     have hcount := Luffs.Runtime.TLSF.allocateArrays_count_le_offsets
@@ -831,7 +896,7 @@ theorem vecGrowU8Arrays_refines_vec
     (Bins.samePhysical_free hsame).trans hallocated
   obtain ⟨selected, abstractNext, hselectedOffset, hselectedMember,
       hdropSelected, _⟩ :=
-    boxDropU8Arrays_refines_box (GF := GF) hpostValid hpoolMax
+    boxDropU8Arrays_refines_box (PROP := PROP) hpostValid hpoolMax
       hpostCountMax hpostSecond hpostFirst
       hpostBins hpostDisjoint hphysical hconcreteDrop
   have hupdatedOffset : updated.offset = handle.block.offset := hsame.1
@@ -843,7 +908,8 @@ theorem vecGrowU8Arrays_refines_vec
       handle = some abstractNext := by
     unfold Luffs.Containers.Vec.drop
     unfold Luffs.Containers.Box.drop at hdropSelected ⊢
-    have hfind := Bins.findPhysicalIndex_congr_target hsame
+    have hfind := Bins.findPhysicalIndex_congr_target
+      (physical := abstractAllocated.state.physical) hsame
     have hregion := Bins.samePhysical_region hsame pool
     rw [← hfind, ← hregion]
     exact hdropSelected
@@ -918,7 +984,7 @@ theorem vecGrowU8Arrays_owns
             (Luffs.Containers.Vec.Owns Scalar.u8 pool growResult.handle values ∗
               Ownership.OwnsFree pool growResult.state.physical) := by
   obtain ⟨hcapacity, hkeyMax, growResult, hgrow, hoffset, _, _⟩ :=
-    vecGrowU8Arrays_refines_vec (GF := GF) hvalid hpoolMax hsecond hfirst
+    vecGrowU8Arrays_refines_vec (PROP := Iris.IProp GF) hvalid hpoolMax hsecond hfirst
       hbins hdisjoint hphysicalInput hmember hallocated harrayMax hsuccess
   refine ⟨hcapacity, hkeyMax, growResult, hgrow, hoffset, ?_⟩
   intro values contents hfresh
@@ -999,7 +1065,7 @@ theorem vecGrowU8Arrays_owns_with_copy
     vecGrowU8Arrays_result hsuccess
   have hlenCapacity : handle.len ≤ newCapacity := by omega
   obtain ⟨hcapacity, hkeyMax, growResult, hgrow, hoffset, _, _⟩ :=
-    vecGrowU8Arrays_refines_vec (GF := GF) hvalid hpoolMax hsecond hfirst
+    vecGrowU8Arrays_refines_vec (PROP := Iris.IProp GF) hvalid hpoolMax hsecond hfirst
       hbins hdisjoint hphysicalInput hmember hallocated harrayMax hsuccess
   obtain ⟨vecAllocated, abstractNext, hvecAlloc, hdrop, hresult⟩ :=
     Luffs.Containers.Vec.grow_result hgrow

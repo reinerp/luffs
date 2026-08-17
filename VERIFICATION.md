@@ -292,8 +292,12 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   the complete allocator invariant for a positive aligned supported-size
   `mmap` region, and uses Iris-Lean to identify ownership of that initial free
   block with the exclusive byte capability returned by `mmap`.
-  Pointer-to-offset validation for the public pointer API still belongs at the
-  mmap-backed pool boundary.
+  The public pointer boundary now validates `pointer >= pool.base`, computes
+  the pool-relative offset with proved subtraction safety, and rejects offsets
+  outside `pool.bytes`. The pointer-facing `Box<u8>` drop is source-refined to
+  that exact conversion followed by the verified offset-based deallocator;
+  success identifies the live physical block and consumes its exact Iris byte
+  capability.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 
 The first concrete `stdlib/tlsf.luffs` runtime layer now implements bounded
@@ -521,9 +525,11 @@ concurrency are later extensions and are not prerequisites for `Box` and
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped
-  replacement bytes. Connecting the source-derived `copyByteRange` result to
-  this combined rule, plus generic Luffs monomorphization, remains before this
-  item is complete.
+  replacement bytes. The source-derived `copyByteRange` result is now connected
+  to this combined rule: the same theorem carries the concrete copied-prefix/
+  frame equations, the abstract `Vec.grow` transition, the Iris ownership
+  update, and an exact `CopySteps` witness. Generic Luffs monomorphization
+  remains before this item is complete.
   New, growth, and drop now all quantify over represented fixed-capacity
   physical-header arrays. The generalized public allocation theorem proves
   the active prefix refines abstract TLSF while framing unused slots, closing

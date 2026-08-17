@@ -8,6 +8,33 @@ set_option autoImplicit false
 namespace Luffs.Runtime.TLSF
 
 open Luffs.Allocator.TLSF
+
+/-- Checked conversion at the public mmap-backed pool boundary. Internal TLSF
+metadata stores offsets; a raw address becomes usable only after this check. -/
+def pointerToOffset (poolBase poolBytes pointer : Nat) : Option Nat :=
+  if pointer < poolBase then none
+  else
+    let offset := pointer - poolBase
+    if offset ≥ poolBytes then none else some offset
+
+theorem pointerToOffset_result {poolBase poolBytes pointer offset : Nat}
+    (hsuccess : pointerToOffset poolBase poolBytes pointer = some offset) :
+    pointer = poolBase + offset ∧ offset < poolBytes := by
+  by_cases hbelow : pointer < poolBase
+  · simp [pointerToOffset, hbelow] at hsuccess
+  · by_cases houtside : pointer - poolBase ≥ poolBytes
+    · simp [pointerToOffset, hbelow, houtside] at hsuccess
+    · simp [pointerToOffset, hbelow, houtside] at hsuccess
+      subst offset
+      exact ⟨(Nat.add_sub_of_le (Nat.le_of_not_gt hbelow)).symm,
+        Nat.lt_of_not_ge houtside⟩
+
+theorem pointerToOffset_complete {poolBase poolBytes pointer : Nat}
+    (hcontains : poolBase ≤ pointer ∧ pointer < poolBase + poolBytes) :
+    pointerToOffset poolBase poolBytes pointer = some (pointer - poolBase) := by
+  have hbelow : ¬pointer < poolBase := Nat.not_lt.mpr hcontains.1
+  have hoffset : pointer - poolBase < poolBytes := by omega
+  simp [pointerToOffset, hbelow, Nat.not_le.mpr hoffset]
 open Luffs.Allocator.TLSF.Bins
 
 def usizeMax : Nat := 2 ^ 64 - 1
@@ -5055,7 +5082,7 @@ theorem findOffsetIndex_refines_findPhysicalIndex_represented
     (hwell : wellFormed pool blocks) (hactual : actual ∈ blocks)
     (hsame : SamePhysical actual target) :
     findOffsetIndex offsets count target.offset = findPhysicalIndex blocks target := by
-  rw [findOffsetIndex_take, hrep.1, hrep.2.2.2.2.2.1]
+  rw [findOffsetIndex_take, hrep.2.2.2.2.2.1, hrep.1]
   exact findOffsetIndex_refines_findPhysicalIndex hwell hactual hsame
 
 structure AllocateArraysResult where
@@ -5310,11 +5337,9 @@ theorem allocateArrays_count_le_offsets
     hfinishPhysical.2.2.2.2.1
   obtain ⟨_, hcountBound, _, _, _, _, _, _, _, _, _, _, _, hcases⟩ :=
     allocatePhysicalArrays_result hphysical
-  rcases hcases with hsplit | hwhole
-  · rw [hcountEq, hsplit.2.2.2.2.2.1]
-    exact Nat.succ_le_of_lt hsplit.2.1
-  · rw [hcountEq, hwhole.2.1]
-    exact hcountBound
+  rcases hcases with
+    ⟨_, hcapacity, _, _, _, hphysicalCount, _⟩ |
+    ⟨_, hphysicalCount, _⟩ <;> omega
 
 set_option maxHeartbeats 1000000 in
 /-- A successful concrete public allocation witnesses the corresponding
@@ -6218,6 +6243,62 @@ theorem mmap_success_ownsInitialAllocator
     (Iris.BI.sep_mono_right
       (initialAllocator_ownsMappedPool (PROP := PROP) pool).mpr)
 
+/-- End-to-end trusted-boundary handoff. A successful mmap and successful
+concrete Luffs metadata initialization jointly establish the full represented
+TLSF invariant and transfer the mapped bytes into `OwnsFree`. -/
+theorem mmap_success_initializeArrays
+    {PROP : Type} [Iris.BI PROP] [Luffs.Memory.ByteRegionLogic PROP]
+    [Luffs.Memory.MMapSpec PROP]
+    {pool : Luffs.Memory.Region} {bytes : Nat}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {result : InitializeArraysResult}
+    (hoffsets : offsets.length = 4096) (hsizes : sizes.length = 4096)
+    (hisFree : isFree.length = 4096) (hprevFree : prevFree.length = 4096)
+    (hsecondLength : second.length = firstLevelCount)
+    (hheads : heads.length = 2048) (hnext : next.length = 4096)
+    (hprevious : previous.length = 4096)
+    (hpositive : 0 < bytes) (haligned : alignment ∣ bytes)
+    (hmax : bytes < 2 ^ firstLevelCount)
+    (hsuccess : initializeArrays offsets sizes isFree prevFree second first
+      heads next previous pool.bytes = some result) :
+    Luffs.Memory.MMapSpec.mmapPost (PROP := PROP) bytes (some pool) ⊢
+      ⌜∃ cls,
+        RepresentsPhysicalArrays result.offsets result.sizes result.isFree
+            result.prevFree result.count [initialBlock pool.bytes] ∧
+        Alloc.Valid pool {
+          physical := [initialBlock pool.bytes]
+          bins := emptyBins.insert cls (initialBlock pool.bytes) } ∧
+        RepresentsBins (Metadata.mk result.heads result.next result.previous)
+            (emptyBins.insert cls (initialBlock pool.bytes)) ∧
+        BinsOffsetsDisjoint (emptyBins.insert cls (initialBlock pool.bytes)) ∧
+        RepresentsSecondBitmap result.second
+            (emptyBins.insert cls (initialBlock pool.bytes)) ∧
+        FirstBitmapRep result.first result.second⌝ ∗
+      Luffs.Allocator.TLSF.Ownership.OwnsFree (PROP := PROP) pool
+        [initialBlock pool.bytes] := by
+  iintro Hmapped
+  ihave Hsuccess :
+      (⌜pool.bytes = bytes ∧
+        pool.base % Luffs.Memory.MMapSpec.pageSize (PROP := PROP) = 0⌝ ∗
+      Luffs.Memory.OwnsBytes pool) $$ [Hmapped]
+  · iapply Luffs.Memory.MMapSpec.success bytes hpositive pool
+    iassumption
+  icases Hsuccess with ⟨Hfacts, Hpool⟩
+  ipure Hfacts
+  have hpoolBytes : pool.bytes = bytes := Hfacts.1
+  have hpoolPositive : 0 < pool.bytes := by omega
+  have hpoolAligned : alignment ∣ pool.bytes := by simpa [hpoolBytes] using haligned
+  have hpoolMax : pool.bytes < 2 ^ firstLevelCount := by omega
+  obtain ⟨cls, hphysical, hvalid, hbins, hdisjoint, hsecond, hfirst⟩ :=
+    initializeArrays_constructs_valid_pool hoffsets hsizes hisFree hprevFree
+      hsecondLength hheads hnext hprevious hpoolPositive hpoolAligned hpoolMax
+      hsuccess
+  isplitl []
+  · ipureintro
+    exact ⟨cls, hphysical, hvalid, hbins, hdisjoint, hsecond, hfirst⟩
+  · iapply (initialAllocator_ownsMappedPool (PROP := PROP) pool).mpr $$ Hpool
+
 
 theorem coalesceClassArrays_result
     {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
@@ -7067,6 +7148,36 @@ theorem marked_representsPhysicalArrays (blocks : List Block) (i : Nat) :
   · simpa [markFreeAt_length] using
       (canonical_representsPhysicalArrays (markFreeAt blocks i)).2.2.2.2.2.2.2.2
 
+theorem take_set_of_lt {α : Type} (values : List α) (value : α)
+    {count i : Nat} (hi : i < count) :
+    (values.set i value).take count = (values.take count).set i value := by
+  induction values generalizing count i with
+  | nil => simp
+  | cons head tail ih =>
+      cases count with
+      | zero => omega
+      | succ count =>
+          cases i with
+          | zero => simp
+          | succ i =>
+              simp only [List.set, List.take_succ_cons]
+              rw [ih (by omega)]
+
+theorem take_set_of_ge {α : Type} (values : List α) (value : α)
+    {count i : Nat} (hi : count ≤ i) :
+    (values.set i value).take count = values.take count := by
+  induction values generalizing count i with
+  | nil => simp
+  | cons head tail ih =>
+      cases count with
+      | zero => simp
+      | succ count =>
+          cases i with
+          | zero => omega
+          | succ i =>
+              simp only [List.set, List.take_succ_cons, List.cons.injEq, true_and]
+              exact ih (by omega)
+
 /-- `markFreeArrays` respects the active-prefix representation used by the
 fixed-capacity runtime arrays. A successor boundary-tag write into spare
 capacity is intentionally framed out by `take count`. -/
@@ -7090,28 +7201,32 @@ theorem markFreeArrays_refines_represented
   obtain ⟨_, _, _, _, _, _, _, hcanonicalFree, hcanonicalPrev⟩ :=
     markFreeArrays_result hcanonical
   refine ⟨by simpa [markFreeAt_length] using hrep.1, hrep.2.1,
-    hrep.2.2.1, ?_, ?_, hrep.2.2.2.2.2.1,
-    hrep.2.2.2.2.2.2.1, ?_, ?_⟩
+    hrep.2.2.1, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · simpa [hnextFree] using hrep.2.2.2.1
-  · simpa [hnextPrev] using hrep.2.2.2.2.1
-  · rw [hnextFree, List.take_set_of_lt hiCount,
+  · rw [hnextPrev]
+    split <;> simpa using hrep.2.2.2.2.1
+  · simpa [blockOffsets_markFreeAt] using hrep.2.2.2.2.2.1
+  · simpa [blockSizes_markFreeAt] using hrep.2.2.2.2.2.2.1
+  · rw [hnextFree, take_set_of_lt isFree 1 hiCount,
       hrep.2.2.2.2.2.2.2.1]
-    exact hcanonicalFree
+    exact hcanonicalFree.symm
   · rw [hnextPrev]
     by_cases hsuccessor : i + 1 < count
     · have hsuccessorArray : i + 1 < prevFree.length :=
         Nat.lt_of_lt_of_le hsuccessor hrep.2.2.2.2.1
-      rw [if_pos hsuccessorArray, List.take_set_of_lt hsuccessor,
+      rw [if_pos hsuccessorArray, take_set_of_lt prevFree 1 hsuccessor,
         hrep.2.2.2.2.2.2.2.2]
-      rw [if_pos (by simpa [hrep.1] using hsuccessor)] at hcanonicalPrev
-      exact hcanonicalPrev
+      rw [if_pos (by simpa [prevFreeFlags, hrep.1] using hsuccessor)] at hcanonicalPrev
+      exact hcanonicalPrev.symm
     · have houtside : count ≤ i + 1 := Nat.le_of_not_gt hsuccessor
-      rw [hrep.2.2.2.2.2.2.2.2]
+      have hcanonicalOutside : ¬i + 1 < (prevFreeFlags blocks).length := by
+        simpa [prevFreeFlags, hrep.1] using hsuccessor
+      rw [if_neg hcanonicalOutside] at hcanonicalPrev
       by_cases hsuccessorArray : i + 1 < prevFree.length
-      · rw [if_pos hsuccessorArray, List.take_set_of_ge houtside]
+      · rw [if_pos hsuccessorArray, take_set_of_ge prevFree 1 houtside]
+        exact hrep.2.2.2.2.2.2.2.2.trans hcanonicalPrev.symm
       · rw [if_neg hsuccessorArray]
-      rw [if_neg (by simpa [hrep.1] using hsuccessor)] at hcanonicalPrev
-      exact hcanonicalPrev
+        exact hrep.2.2.2.2.2.2.2.2.trans hcanonicalPrev.symm
 
 /-- The combined Luffs transaction refines the abstract uncoalesced TLSF
 transition: its physical flags are `markFreeAt`, and its links and both bitmap
@@ -7336,10 +7451,14 @@ theorem deallocateArrays_refines
   · have hrightCountMax : afterRight.count ≤ usizeMax := by
       have hlength := Dealloc.coalesceIfPossible_physical_length_le
         hrightAbstract
-      have hcount := hrightPhysical.1
       have hmarkedLength := markFreeAt_length blocks i
       dsimp only [markedAbstract] at hlength
-      omega
+      calc
+        afterRight.count = abstractAfterRight.physical.length := hrightPhysical.1
+        _ ≤ (markFreeAt blocks i).length := hlength
+        _ = blocks.length := hmarkedLength
+        _ = count := hphysical.1.symm
+        _ ≤ usizeMax := hcountMax
     obtain ⟨abstractAfterLeft, hleftAbstract, hleftPhysical,
         hleftBinsValid, hleftBins, hleftDisjoint, hleftSecond, hleftFirst⟩ :=
       coalesceIfPossibleArrays_refines_allocator hrightValid hpoolMax

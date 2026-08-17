@@ -7125,6 +7125,91 @@ theorem commitCoalesceClassOutcome_ne_failure_of_preflight
     · rw [hrightLens.2.2.2, hleftLens.2.2.2]
       exact hleftPrevious
 
+/-- A successful stateful commit is exactly the older array transformer once
+the precomputed source values are identified with its lookups. -/
+theorem commitCoalesceClassOutcome_success_refines_arrays
+    {input result : CoalesceClassResult}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat}
+    {count left leftOffset rightOffset leftSize rightSize
+      leftBin rightBin mergedBin : Nat}
+    (hleftOffset : offsets[left]? = some leftOffset)
+    (hrightOffset : offsets[left + 1]? = some rightOffset)
+    (hleftSize : sizes[left]? = some leftSize)
+    (hrightSize : sizes[left + 1]? = some rightSize)
+    (hleftClass : classifySizeBin leftSize = some leftBin)
+    (hrightClass : classifySizeBin rightSize = some rightBin)
+    (hmergedClass : classifySizeBin (leftSize + rightSize) = some mergedBin)
+    (hcommit : commitCoalesceClassOutcome input offsets sizes isFree prevFree
+      second first heads next previous count left leftOffset rightOffset leftBin
+        rightBin mergedBin = .success result) :
+    coalesceClassArrays offsets sizes isFree prevFree second first heads next
+      previous count left = some result := by
+  unfold commitCoalesceClassOutcome at hcommit
+  cases hremoveLeft : removeClassArrays second first heads next previous leftBin
+      leftOffset with
+  | none => simp [hremoveLeft] at hcommit
+  | some withoutLeft =>
+    cases hremoveRight : removeClassArrays withoutLeft.second withoutLeft.first
+        withoutLeft.heads withoutLeft.next withoutLeft.previous rightBin
+        rightOffset with
+    | none => simp [hremoveLeft, hremoveRight] at hcommit
+    | some withoutRight =>
+      cases hphysical : coalescePhysicalArrays offsets sizes isFree prevFree count
+          left with
+      | none => simp [hremoveLeft, hremoveRight, hphysical] at hcommit
+      | some physical =>
+        cases hinsert : insertClassArrays withoutRight.second withoutRight.first
+            withoutRight.heads withoutRight.next withoutRight.previous mergedBin
+            leftOffset with
+        | none =>
+            simp [hremoveLeft, hremoveRight, hphysical, hinsert] at hcommit
+        | some inserted =>
+          simp [hremoveLeft, hremoveRight, hphysical, hinsert] at hcommit
+          subst result
+          have hphysicalInfo := coalescePhysicalArrays_result hphysical
+          obtain ⟨_, _, _, _, physicalLeftOffset, physicalLeftSize,
+              physicalRightSize, hphysicalLeftOffset, hphysicalLeftSize,
+              hphysicalRightOffset, hphysicalRightSize⟩ := hphysicalInfo
+          have hphysicalLeftOffsetEq : physicalLeftOffset = leftOffset := by
+            rw [hleftOffset] at hphysicalLeftOffset
+            exact Option.some.inj hphysicalLeftOffset
+          have hphysicalLeftSizeEq : physicalLeftSize = leftSize := by
+            rw [hleftSize] at hphysicalLeftSize
+            exact Option.some.inj hphysicalLeftSize
+          have hphysicalRightSizeEq : physicalRightSize = rightSize := by
+            rw [hrightSize] at hphysicalRightSize
+            exact Option.some.inj hphysicalRightSize
+          subst physicalLeftOffset
+          subst physicalLeftSize
+          subst physicalRightSize
+          have hmergedSize : physical.sizes[left]? =
+              some (leftSize + rightSize) := by
+            unfold coalescePhysicalArrays at hphysical
+            split at hphysical <;> try contradiction
+            next =>
+              dsimp only at hphysical
+              split at hphysical <;> try contradiction
+              next =>
+                split at hphysical <;> try contradiction
+                next =>
+                  split at hphysical <;> try contradiction
+                  next =>
+                    simp only [hleftOffset, hleftSize, hrightOffset, hrightSize,
+                      Option.getD_some] at hphysical
+                    split at hphysical <;> try contradiction
+                    next =>
+                      simp only [Option.some.injEq] at hphysical
+                      subst physical
+                      have hleftBound : left < sizes.length :=
+                        (List.getElem?_eq_some_iff.mp hleftSize).1
+                      simp [compactActive, List.getElem?_append,
+                        List.getElem?_set, hleftBound]
+          simp [coalesceClassArrays, hleftOffset, hrightOffset, hleftSize,
+            hrightSize, hleftClass, hrightClass, hremoveLeft, hremoveRight,
+            hphysical, hmergedSize, hmergedClass, hinsert]
+
 structure InitializeArraysResult where
   offsets : List Nat
   sizes : List Nat
@@ -7867,6 +7952,93 @@ theorem coalesceIfPossibleArraysOutcome_failure_preserves_frame
         previous count ∧ (frame ∗ (emp : PROP) ⊣⊢ frame) := by
   exact ⟨coalesceIfPossibleArraysOutcome_failure_eq_input hfailure, sep_emp⟩
 
+/-- A successful state-retaining conditional coalescing execution is exactly
+the `Option` array transformer used by the established abstract refinement. -/
+theorem coalesceIfPossibleArraysOutcome_success_refines_option
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {count left : Nat}
+    {result : CoalesceClassResult}
+    (hsuccess : coalesceIfPossibleArraysOutcome offsets sizes isFree prevFree
+      second first heads next previous count left = .success result) :
+    coalesceIfPossibleArrays offsets sizes isFree prevFree second first heads next
+      previous count left = some result := by
+  let input := allocatorArrays offsets sizes isFree prevFree second first heads
+    next previous count
+  unfold coalesceIfPossibleArraysOutcome at hsuccess
+  split at hsuccess <;> try contradiction
+  next hcapacity =>
+    split at hsuccess
+    next hmax =>
+      simp only [CoalesceClassOutcome.success.injEq] at hsuccess
+      subst result
+      simp [coalesceIfPossibleArrays, input, hcapacity, hmax]
+    next hmax =>
+      dsimp only at hsuccess
+      split at hsuccess
+      next hright =>
+        simp only [CoalesceClassOutcome.success.injEq] at hsuccess
+        subst result
+        simp [coalesceIfPossibleArrays, input, hcapacity, hmax, hright]
+      next hright =>
+        split at hsuccess
+        next hleftFree =>
+          simp only [CoalesceClassOutcome.success.injEq] at hsuccess
+          subst result
+          simp [coalesceIfPossibleArrays, input, hcapacity, hmax, hright,
+            hleftFree]
+        next hleftFree =>
+          split at hsuccess
+          next hrightFree =>
+            simp only [CoalesceClassOutcome.success.injEq] at hsuccess
+            subst result
+            simp [coalesceIfPossibleArrays, input, hcapacity, hmax, hright,
+              hleftFree, hrightFree]
+          next hrightFree =>
+            cases hleftOffset : offsets[left]? with
+            | none => simp [hleftOffset] at hsuccess
+            | some leftOffset =>
+              cases hleftSize : sizes[left]? with
+              | none => simp [hleftOffset, hleftSize] at hsuccess
+              | some leftSize =>
+                cases hrightOffset : offsets[left + 1]? with
+                | none => simp [hleftOffset, hleftSize, hrightOffset] at hsuccess
+                | some rightOffset =>
+                  cases hrightSize : sizes[left + 1]? with
+                  | none =>
+                      simp [hleftOffset, hleftSize, hrightOffset, hrightSize] at
+                        hsuccess
+                  | some rightSize =>
+                    split at hsuccess
+                    next hadjacent =>
+                      simp only [CoalesceClassOutcome.success.injEq] at hsuccess
+                      subst result
+                      simp [coalesceIfPossibleArrays, input, hcapacity, hmax,
+                        hright, hleftFree, hrightFree, hleftOffset, hleftSize,
+                        hrightOffset, hadjacent]
+                    next hadjacent =>
+                      cases hleftClass : classifySizeBin leftSize with
+                      | none => simp [hleftClass] at hsuccess
+                      | some leftBin =>
+                        cases hrightClass : classifySizeBin rightSize with
+                        | none => simp [hleftClass, hrightClass] at hsuccess
+                        | some rightBin =>
+                          cases hmergedClass : classifySizeBin
+                              (leftSize + rightSize) with
+                          | none =>
+                              simp [hleftClass, hrightClass, hmergedClass] at
+                                hsuccess
+                          | some mergedBin =>
+                            split at hsuccess <;> try contradiction
+                            next hmetadata =>
+                              have hclassSuccess :=
+                                commitCoalesceClassOutcome_success_refines_arrays
+                                  hleftOffset hrightOffset hleftSize hrightSize
+                                  hleftClass hrightClass hmergedClass hsuccess
+                              simp [coalesceIfPossibleArrays, input, hcapacity,
+                                hmax, hright, hleftFree, hrightFree, hleftOffset,
+                                hleftSize, hrightOffset, hadjacent, hclassSuccess]
+
 set_option maxHeartbeats 1000000 in
 /-- A conditionally coalescing call on a completely represented valid
 allocator cannot fail. Ineligible pairs return the identity state; eligible
@@ -8391,6 +8563,37 @@ theorem coalesceIfPossibleArrays_refines_allocator
           exact coalesceIfPossibleArrays_refines_allocator_append pre leftBlock
             rightBlock rest hallocValid hpoolMax hphysicalInput hcountMax
             hsecond hfirst hbins hdisjoint hsuccess
+
+theorem coalesceIfPossibleArraysOutcome_refines_allocator
+    {pool : Luffs.Memory.Region} {blocks : List Block}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count i : Nat} {state : Bins.State}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {result : CoalesceClassResult}
+    (hallocValid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hphysical : RepresentsPhysicalArrays offsets sizes isFree prevFree count blocks)
+    (hcountMax : count ≤ usizeMax)
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hsuccess : coalesceIfPossibleArraysOutcome offsets sizes isFree prevFree
+      second first heads next previous count i = .success result) :
+    ∃ abstractNext,
+      Dealloc.coalesceIfPossible { physical := blocks, bins := state } i =
+          some abstractNext ∧
+      RepresentsPhysicalArrays result.offsets result.sizes result.isFree
+          result.prevFree result.count abstractNext.physical ∧
+      Bins.Valid abstractNext.bins ∧
+      RepresentsBins (Metadata.mk result.heads result.next result.previous)
+          abstractNext.bins ∧
+      BinsOffsetsDisjoint abstractNext.bins ∧
+      RepresentsSecondBitmap result.second abstractNext.bins ∧
+      FirstBitmapRep result.first result.second := by
+  apply coalesceIfPossibleArrays_refines_allocator hallocValid hpoolMax hphysical
+    hcountMax hsecond hfirst hbins hdisjoint
+  exact coalesceIfPossibleArraysOutcome_success_refines_option hsuccess
 
 theorem coalesceClassArrays_complete_refinement
     (pool : Luffs.Memory.Region) (pre : List Block)

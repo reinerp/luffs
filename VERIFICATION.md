@@ -388,6 +388,12 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   concrete representation relation. The valid-state totality theorem therefore
   discharges the public transaction's right-coalescing premise directly: that
   first post-marking call cannot fail.
+  Successful stateful coalescing is now bridged in the other direction as
+  well: the stateful commit reconstructs the exact `coalesceClassArrays`
+  transformer, including its compacted merged-size lookup, and the wrapper
+  reconstructs `coalesceIfPossibleArrays`. The existing abstract refinement
+  therefore proves every stateful success carries the complete allocator
+  invariant to its successor, establishing the left-call precondition.
 - [x] Prove the bounded-step property of bin lookup and local list updates.
   The exact lowered flat-bitmap cost model counts inspected 64-bit words and
   is bounded by the input word count, hence at most four probes for the fixed

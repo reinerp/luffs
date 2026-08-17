@@ -2993,6 +2993,32 @@ theorem remove_preserves_other_node {state nextState : Metadata}
         List.getElem?_set_ne (Ne.symm hsuccessor)]
     · rw [List.getElem?_set_ne (Ne.symm hblock)]
 
+theorem remove_preserves_next {state nextState : Metadata}
+    {bin block node : Nat}
+    (hremove : remove state bin block = some nextState)
+    (hblock : node ≠ block)
+    (hpredecessor : node ≠ state.previous[block]?.getD state.next.length) :
+    nextState.next[node]? = state.next[node]? := by
+  have heffect := (remove_effect hremove).2.1
+  rw [heffect]
+  split
+  · rw [List.getElem?_set_ne (Ne.symm hblock),
+      List.getElem?_set_ne (Ne.symm hpredecessor)]
+  · rw [List.getElem?_set_ne (Ne.symm hblock)]
+
+theorem remove_preserves_previous {state nextState : Metadata}
+    {bin block node : Nat}
+    (hremove : remove state bin block = some nextState)
+    (hblock : node ≠ block)
+    (hsuccessor : node ≠ state.next[block]?.getD state.next.length) :
+    nextState.previous[node]? = state.previous[node]? := by
+  have heffect := (remove_effect hremove).2.2
+  rw [heffect]
+  split
+  · rw [List.getElem?_set_ne (Ne.symm hblock),
+      List.getElem?_set_ne (Ne.symm hsuccessor)]
+  · rw [List.getElem?_set_ne (Ne.symm hblock)]
+
 theorem remove_heads_of_predecessor_lt {state nextState : Metadata}
     {bin block : Nat} (hremove : remove state bin block = some nextState)
     (hpredecessor : state.previous[block]?.getD state.next.length <
@@ -3069,6 +3095,373 @@ theorem remove_detaches {state nextState : Metadata} {bin block : Nat}
     simp only [Option.some.injEq] at hremove
   all_goals subst nextState
   all_goals simp_all
+
+/-- Local splice lemma for removing the first node after a known predecessor.
+The predecessor may be the bin sentinel or an earlier node in the same chain. -/
+theorem linked_remove_first {state nextState : Metadata} {bin block expected : Nat}
+    {rest : List Nat}
+    (hremove : remove state bin block = some nextState)
+    (hlinked : linked state expected (block :: rest))
+    (hnodup : (block :: rest).Nodup)
+    (hexpected : expected ∉ block :: rest) :
+    linked nextState expected rest := by
+  simp only [linked] at hlinked
+  rcases hlinked with ⟨hblockNext, hblockPrevious, hpred, hsucc, hrest⟩
+  cases rest with
+  | nil => trivial
+  | cons successor tail =>
+      simp only [List.head?_cons, Option.getD_some] at hsucc
+      simp only [linked] at hrest
+      rcases hrest with
+        ⟨hsuccessorNext, hsuccessorPrevious, hsuccessorPred,
+          hsuccessorSucc, htail⟩
+      have hlens := remove_preserves_lengths hremove
+      have hsuccessorBlock : successor ≠ block := by
+        exact fun heq => (List.nodup_cons.mp hnodup).1 (by simp [heq])
+      have hsuccessorExpected : successor ≠ expected := by
+        exact fun heq => hexpected (by simp [← heq])
+      refine ⟨by omega, by omega, ?_, ?_, ?_⟩
+      · exact remove_bypasses_successor hremove hpred hsucc
+          hsuccessorPrevious hsuccessorBlock
+      · rw [remove_preserves_next hremove hsuccessorBlock
+          (by simpa [hpred] using hsuccessorExpected)]
+        simpa [hlens.2.1] using hsuccessorSucc
+      · refine linked_congr (state := state) (nextState := nextState)
+          hlens.2.1 hlens.2.2 ?_ ?_ htail
+        · intro node hnode
+          have hnodeBlock : node ≠ block := by
+            exact fun heq => (List.nodup_cons.mp hnodup).1 (by
+              simp [← heq, hnode])
+          have hnodeExpected : node ≠ expected := by
+            exact fun heq => hexpected (by simp [← heq, hnode])
+          exact remove_preserves_next hremove hnodeBlock
+            (by simpa [hpred] using hnodeExpected)
+        · intro node hnode
+          have hnodeBlock : node ≠ block := by
+            exact fun heq => (List.nodup_cons.mp hnodup).1 (by
+              simp [← heq, hnode])
+          have hnodeSuccessor : node ≠ successor := by
+            exact fun heq =>
+              (List.nodup_cons.mp (List.nodup_cons.mp hnodup).2).1 (by
+                simpa [← heq] using hnode)
+          exact remove_preserves_previous hremove hnodeBlock
+            (by simpa [hsucc] using hnodeSuccessor)
+
+/-- Splicing an arbitrary node out of a well-formed intrusive chain preserves
+the chain order of the prefix and suffix. -/
+theorem linked_remove_decomposition {state nextState : Metadata}
+    {bin block expected : Nat} {pre rest : List Nat}
+    (hremove : remove state bin block = some nextState)
+    (hlinked : linked state expected (pre ++ block :: rest))
+    (hnodup : (pre ++ block :: rest).Nodup)
+    (hexpected : expected ∉ pre ++ block :: rest) :
+    linked nextState expected (pre ++ rest) := by
+  induction pre generalizing expected with
+  | nil =>
+      exact linked_remove_first hremove hlinked hnodup hexpected
+  | cons head tail ih =>
+      simp only [List.cons_append, linked] at hlinked
+      rcases hlinked with
+        ⟨hheadNext, hheadPrevious, hheadPred, hheadSucc, htailLinked⟩
+      change (head :: (tail ++ block :: rest)).Nodup at hnodup
+      have hparts := List.nodup_cons.mp hnodup
+      have htailResult := ih htailLinked hparts.2 hparts.1
+      have hlens := remove_preserves_lengths hremove
+      have hheadBlock : head ≠ block := by
+        exact fun heq => hparts.1 (by simp [heq])
+      cases tail with
+      | nil =>
+          have hlinks := linked_decomposition_links ([] : List Nat) rest
+            htailLinked
+          have hsuccessorNe :
+              head ≠ state.next[block]?.getD state.next.length := by
+            rw [hlinks.2.2.2]
+            cases rest with
+            | nil =>
+                simp only [List.head?_nil, Option.getD_none]
+                exact Nat.ne_of_lt hheadNext
+            | cons successor more =>
+                exact fun heq => hparts.1 (by simp [heq])
+          refine ⟨by omega, by omega, ?_, ?_, htailResult⟩
+          · rw [remove_preserves_previous hremove hheadBlock hsuccessorNe]
+            exact hheadPred
+          · have hbypass := remove_bypasses_predecessor hremove
+                hlinks.2.2.1 hlinks.2.2.2 hheadNext hheadBlock
+            simpa [chainPrevious, hlens.2.1] using hbypass
+      | cons first more =>
+          have hlinks := linked_decomposition_links (first :: more) rest
+            (by simpa using htailLinked)
+          have hpredecessorNe :
+              head ≠ state.previous[block]?.getD state.next.length := by
+            rw [hlinks.2.2.1]
+            exact fun heq => hparts.1 (by
+              have hmem := chainPrevious_mem (expected := head)
+                (pre := first :: more) (by simp)
+              rw [heq]
+              exact List.mem_append_left (block :: rest) hmem)
+          have hsuccessorNe :
+              head ≠ state.next[block]?.getD state.next.length := by
+            rw [hlinks.2.2.2]
+            cases rest with
+            | nil =>
+                simp only [List.head?_nil, Option.getD_none]
+                exact Nat.ne_of_lt hheadNext
+            | cons successor suffix =>
+                exact fun heq => hparts.1 (by simp [heq])
+          refine ⟨by omega, by omega, ?_, ?_, htailResult⟩
+          · rw [remove_preserves_previous hremove hheadBlock hsuccessorNe]
+            exact hheadPred
+          · rw [remove_preserves_next hremove hheadBlock hpredecessorNe]
+            simpa [hlens.2.1] using hheadSucc
+
+/-- Arbitrary removal preserves the complete selected-bin representation and
+detaches the removed node. -/
+theorem remove_decomposition_preserves_bin {state nextState : Metadata}
+    {bin block : Nat} {pre rest : List Nat}
+    (hrep : RepresentsBin state bin (pre ++ block :: rest))
+    (hremove : remove state bin block = some nextState) :
+    RepresentsBin nextState bin (pre ++ rest) ∧
+      nextState.next[block]? = some state.next.length ∧
+      nextState.previous[block]? = some state.previous.length := by
+  rcases hrep with ⟨hbin, hlens, hhead, hlinked, hnodup⟩
+  have hlengths := remove_preserves_lengths hremove
+  have hsentinelAbsent : state.next.length ∉ pre ++ block :: rest := by
+    intro hmem
+    have hbound := (linked_member_bounds hlinked hmem).1
+    omega
+  have hnextLinked := linked_remove_decomposition hremove hlinked hnodup
+    hsentinelAbsent
+  have hnextLinked' : linked nextState nextState.next.length (pre ++ rest) := by
+    rw [hlengths.2.1]
+    exact hnextLinked
+  have hnextNodup : (pre ++ rest).Nodup := by
+    have herased := hnodup.erase block
+    rwa [erase_decomposition_of_nodup hnodup] at herased
+  refine ⟨⟨by omega, hlengths.2.1.trans (hlens.trans hlengths.2.2.symm),
+    ?_, hnextLinked', hnextNodup⟩, (remove_detaches hremove).1,
+    (remove_detaches hremove).2⟩
+  cases pre with
+  | nil =>
+      have hlinks := linked_decomposition_links ([] : List Nat) rest hlinked
+      have heffect := (remove_effect hremove).1
+      have hpredSentinel :
+          state.previous[block]?.getD state.next.length ≥ state.next.length := by
+        simp [hlinks.2.2.1, chainPrevious]
+      rw [heffect, if_pos hpredSentinel, List.getElem?_set_self hbin]
+      simp only [Option.getD_some]
+      rw [hlinks.2.2.2]
+      simp [hlengths.2.1]
+  | cons head tail =>
+      have hlinks := linked_decomposition_links (head :: tail) rest
+        (by simpa using hlinked)
+      have hpredBound :
+          state.previous[block]?.getD state.next.length < state.next.length := by
+        rw [hlinks.2.2.1]
+        exact (linked_member_bounds hlinked (List.mem_append_left _
+          (chainPrevious_mem (expected := state.next.length) (by simp)))).1
+      rw [remove_heads_of_predecessor_lt hremove hpredBound]
+      simpa [hlengths.2.1] using hhead
+
+theorem remove_decomposition_preserves_other {state nextState : Metadata}
+    {bin otherBin block : Nat} {pre rest chain : List Nat}
+    (hselected : RepresentsBin state bin (pre ++ block :: rest))
+    (hother : RepresentsBin state otherBin chain) (hbins : otherBin ≠ bin)
+    (hdisjoint : ∀ node ∈ chain, node ∉ pre ++ block :: rest)
+    (hremove : remove state bin block = some nextState) :
+    RepresentsBin nextState otherBin chain := by
+  rcases hselected with ⟨_, _, _, hselectedLinked, _⟩
+  rcases hother with ⟨hotherBin, hotherLens, hotherHead,
+    hotherLinked, hotherNodup⟩
+  have hlengths := remove_preserves_lengths hremove
+  have hlinks := linked_decomposition_links pre rest hselectedLinked
+  have hotherLinked' : linked state nextState.next.length chain := by
+    rw [hlengths.2.1]
+    exact hotherLinked
+  refine ⟨by omega, hlengths.2.1.trans (hotherLens.trans hlengths.2.2.symm),
+    ?_, ?_, hotherNodup⟩
+  · have hheads := (remove_effect hremove).1
+    rw [hheads]
+    split
+    · rw [List.getElem?_set_ne (Ne.symm hbins)]
+      simpa [hlengths.2.1] using hotherHead
+    · simpa [hlengths.2.1] using hotherHead
+  · refine linked_congr (state := state) (nextState := nextState)
+      hlengths.2.1 hlengths.2.2 ?_ ?_ hotherLinked'
+    · intro node hnode
+      have hnodeBlock : node ≠ block := by
+        exact fun heq => hdisjoint node hnode (by simp [heq])
+      have hnodePred :
+          node ≠ state.previous[block]?.getD state.next.length := by
+        rw [hlinks.2.2.1]
+        cases pre with
+        | nil =>
+            simp only [chainPrevious]
+            exact Nat.ne_of_lt (linked_member_bounds hotherLinked hnode).1
+        | cons head tail =>
+            intro heq
+            apply hdisjoint node hnode
+            rw [heq]
+            exact List.mem_append_left (block :: rest)
+              (chainPrevious_mem (expected := state.next.length) (by simp))
+      exact remove_preserves_next hremove hnodeBlock hnodePred
+    · intro node hnode
+      have hnodeBlock : node ≠ block := by
+        exact fun heq => hdisjoint node hnode (by simp [heq])
+      have hnodeSuccessor :
+          node ≠ state.next[block]?.getD state.next.length := by
+        rw [hlinks.2.2.2]
+        cases rest with
+        | nil =>
+            simp only [List.head?_nil, Option.getD_none]
+            exact Nat.ne_of_lt (linked_member_bounds hotherLinked hnode).1
+        | cons successor tail =>
+            intro heq
+            apply hdisjoint node hnode
+            rw [heq]
+            simp
+      exact remove_preserves_previous hremove hnodeBlock hnodeSuccessor
+
+theorem removeClassArrays_preserves_bins
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {bin block : Nat}
+    {result : RemoveClassResult} {state : Bins.State} {cls : SizeClass}
+    {removed : Block} {replacement : List Block}
+    (hvalid : Bins.Valid state)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hbin : bin = encodeSizeClass cls)
+    (habstract : FreeList.removeOffset (state.chains cls) block =
+      some (removed, replacement))
+    (hremove : removeClassArrays second first heads next previous bin block =
+      some result) :
+    RepresentsBins (Metadata.mk result.heads result.next result.previous)
+      (state.replaceChain cls replacement) := by
+  have horigin := FreeList.removeOffset_removed_origin (hvalid.1 cls) habstract
+  obtain ⟨old, holdMem, holdOffset, _⟩ := horigin
+  have hmember : block ∈ (state.chains cls).map Block.offset := by
+    rw [← holdOffset]
+    exact List.mem_map_of_mem holdMem
+  obtain ⟨pre, rest, hshape⟩ := List.mem_iff_append.mp hmember
+  have hselected := hbins cls
+  have hbinEq : bin = cls.fl.val * secondLevelCount + cls.sl.val := by
+    simpa [encodeSizeClass] using hbin
+  rw [← hbinEq, hshape] at hselected
+  have hresult := removeClassArrays_result hremove
+  have hmetadata :
+      remove { heads, next, previous } bin block =
+        some (Metadata.mk result.heads result.next result.previous) :=
+    removeArrays_result hresult.2.2.2.2.1
+  have hselectedNext :=
+    (remove_decomposition_preserves_bin hselected hmetadata).1
+  have hreplacementOffsets := FreeList.removeOffset_offsets habstract
+  have hnodup : (pre ++ block :: rest).Nodup := by
+    rw [← hshape]
+    exact (hvalid.1 cls).2
+  rw [hshape, erase_decomposition_of_nodup hnodup] at hreplacementOffsets
+  intro query
+  by_cases hquery : query = cls
+  · subst query
+    change RepresentsBin (Metadata.mk result.heads result.next result.previous)
+      (cls.fl.val * secondLevelCount + cls.sl.val)
+      (((state.replaceChain cls replacement).chains cls).map Block.offset)
+    have hreplace : (state.replaceChain cls replacement).chains cls =
+        replacement := by
+      simp [Bins.State.replaceChain, Bins.State.fromChains,
+        Bins.Chains.replace]
+    rw [hreplace, hreplacementOffsets, ← hbinEq]
+    exact hselectedNext
+  · have hqueryBin :
+        query.fl.val * secondLevelCount + query.sl.val ≠ bin := by
+      intro heq
+      apply hquery
+      apply classIndex_injective
+      rw [← hbinEq]
+      exact heq
+    have hother := hbins query
+    have hnodes : ∀ node ∈ (state.chains query).map Block.offset,
+        node ∉ pre ++ block :: rest := by
+      intro node hnode hselectedNode
+      exact hdisjoint hquery node hnode (by
+        rw [hshape]
+        exact hselectedNode)
+    have hframe := remove_decomposition_preserves_other hselected hother
+      hqueryBin hnodes hmetadata
+    change RepresentsBin (Metadata.mk result.heads result.next result.previous)
+      (query.fl.val * secondLevelCount + query.sl.val)
+      (((state.replaceChain cls replacement).chains query).map Block.offset)
+    simpa [Bins.replaceChain_other state replacement hquery] using hframe
+
+theorem removeOffset_preserves_offsets_disjoint
+    {state : Bins.State} {cls : SizeClass} {block : Nat}
+    {removed : Block} {replacement : List Block}
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hremove : FreeList.removeOffset (state.chains cls) block =
+      some (removed, replacement)) :
+    BinsOffsetsDisjoint (state.replaceChain cls replacement) := by
+  have hoffsets := FreeList.removeOffset_offsets hremove
+  have hsubset : ∀ offset, offset ∈ replacement.map Block.offset →
+      offset ∈ (state.chains cls).map Block.offset := by
+    intro offset hmem
+    rw [hoffsets] at hmem
+    exact List.mem_of_mem_erase hmem
+  intro left right hne offset hleft hright
+  by_cases hleftCls : left = cls
+  · subst left
+    have hrightCls : right ≠ cls := by exact fun h => hne h.symm
+    have hleftOld : offset ∈ (state.chains cls).map Block.offset := by
+      apply hsubset offset
+      simpa [Bins.State.replaceChain, Bins.State.fromChains,
+        Bins.Chains.replace] using hleft
+    have hrightOld : offset ∈ (state.chains right).map Block.offset := by
+      simpa [Bins.replaceChain_other state replacement hrightCls] using hright
+    exact hdisjoint hne offset hleftOld hrightOld
+  · by_cases hrightCls : right = cls
+    · subst right
+      have hleftOld : offset ∈ (state.chains left).map Block.offset := by
+        simpa [Bins.replaceChain_other state replacement hleftCls] using hleft
+      have hrightOld : offset ∈ (state.chains cls).map Block.offset := by
+        apply hsubset offset
+        simpa [Bins.State.replaceChain, Bins.State.fromChains,
+          Bins.Chains.replace] using hright
+      exact hdisjoint hne offset hleftOld hrightOld
+    · have hleftOld : offset ∈ (state.chains left).map Block.offset := by
+        simpa [Bins.replaceChain_other state replacement hleftCls] using hleft
+      have hrightOld : offset ∈ (state.chains right).map Block.offset := by
+        simpa [Bins.replaceChain_other state replacement hrightCls] using hright
+      exact hdisjoint hne offset hleftOld hrightOld
+
+/-- End-to-end refinement of arbitrary concrete class removal to the abstract
+TLSF operation, including validity, intrusive bins, disjointness, and both
+bitmap cache levels. -/
+theorem removeClassArrays_refines_removeOffset
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {bin block : Nat}
+    {result : RemoveClassResult} {state nextState : Bins.State}
+    {cls : SizeClass} {removed : Block}
+    (hvalid : Bins.Valid state)
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hbin : bin = encodeSizeClass cls)
+    (habstract : state.removeOffset cls block = some (removed, nextState))
+    (hremove : removeClassArrays second first heads next previous bin block =
+      some result) :
+    Bins.Valid nextState ∧
+      RepresentsBins (Metadata.mk result.heads result.next result.previous)
+        nextState ∧
+      BinsOffsetsDisjoint nextState ∧
+      RepresentsSecondBitmap result.second nextState ∧
+      FirstBitmapRep result.first result.second := by
+  obtain ⟨replacement, hremoveOffset, rfl⟩ :=
+    Bins.removeOffset_success habstract
+  have hbitmaps := removeClassArrays_preserves_bitmaps hsecond hfirst hvalid
+    hbins hbin habstract hremove
+  exact ⟨Bins.removeOffset_valid hvalid hremoveOffset,
+    removeClassArrays_preserves_bins hvalid hbins hdisjoint hbin
+      hremoveOffset hremove,
+    removeOffset_preserves_offsets_disjoint hdisjoint hremoveOffset,
+    hbitmaps.1, hbitmaps.2⟩
 
 theorem remove_front_complete {state : Metadata} {bin block : Nat}
     {rest : List Nat} (hrep : RepresentsBin state bin (block :: rest)) :

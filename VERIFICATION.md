@@ -196,8 +196,12 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   connects arbitrary abstract `removeOffset` to this exact singleton test:
   the rebuilt abstract chain has precisely the old offsets with the selected
   offset erased, and the concrete transition preserves both bitmap levels for
-  the resulting abstract bin state. The remaining bin obligation is the
-  intrusive-link splice and its cross-bin frame. The fixed
+  the resulting abstract bin state. The arbitrary intrusive splice is now
+  proved as well: the predecessor and successor are relinked, the selected
+  node is detached, the prefix and suffix remain in order, every other bin is
+  framed, cross-bin offset disjointness is preserved, and the complete
+  concrete metadata plus both bitmap levels refine abstract `removeOffset`.
+  The fixed
   physical-header arrays now have an explicit active-prefix
   representation and the concrete free entry point rejects selectors outside
   `block_count`; inactive capacity can no longer masquerade as a live header.
@@ -219,7 +223,9 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   refine arbitrary-position `coalesceAt`; the same theorem carries the
   Iris-Lean `OwnsFree` equivalence showing that adjacent byte capabilities are
   recombined without loss or duplication. Proving that the composed concrete
-  bin arrays preserve the complete abstract bin relation remains.
+  bin arrays can therefore be composed with the abstract removals; the
+  remaining coalescing obligation is to carry these results through the two
+  removals, physical compaction, and merged-node insertion as one theorem.
   Pointer-to-offset validation belongs at the mmap-backed pool boundary.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 

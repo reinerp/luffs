@@ -871,6 +871,13 @@ alias semantics. This removes the one-store restriction that blocked
   while retaining ownership. Pop is representation-independent and already
   quantified over every codec; `vecDropU16Arrays_owns` explicitly specializes
   the generic allocator-backed exactly-once drop theorem to `Scalar.u16`.
+  Concrete `vec_push_u32` and `vec_get_u32` now extend this path to four-byte
+  elements. Their Luffs bodies generate exact ordered-write and ordered-read
+  programs with four mapped-address obligations, refine the corresponding
+  concrete runtime transformers, and are then proved equal to the generic
+  `Scalar.u32` operations. Consequently `vecPushU32_owns` transfers ownership
+  to a Vec with the appended value, while `vecGetU32_owns` retains ownership
+  and exposes the justified four-byte Iris read trace.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.
   All four checked-in examples are currently accepted by Lean and compile to

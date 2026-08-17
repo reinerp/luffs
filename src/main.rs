@@ -4598,6 +4598,15 @@ mod tests {
         );
         assert!(m.rust.contains("get_unchecked_mut"));
         assert!(m.rust.contains("copy_from_slice"));
+        let generated = lean(&m);
+        assert!(generated.contains(
+            "theorem vec_push_u32_refines : vec_push_u32_model = Luffs.Runtime.Containers.vecPushU32"
+        ));
+        assert!(generated.contains("theorem vec_push_u32_program_wp"));
+        assert!(generated.contains(
+            "theorem vec_get_u32_refines : vec_get_u32_model = Luffs.Runtime.Containers.vecGetU32"
+        ));
+        assert!(generated.contains("theorem vec_get_u32_program_wp"));
     }
 
     #[test]

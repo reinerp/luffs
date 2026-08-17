@@ -140,6 +140,33 @@ def insert (state : Metadata) (bin block : Nat) : Option Metadata :=
       else previous
     some { heads := state.heads.set bin block, next, previous }
 
+/-- Exact metadata-operation count for `insert`: failed guards consume their
+tested probes; success performs three guards, one head read, three mandatory
+writes, and at most one old-head backlink write. -/
+def insertSteps (state : Metadata) (bin block : Nat) : Nat :=
+  if bin ≥ state.heads.length then 1
+  else if block ≥ state.next.length then 2
+  else if block ≥ state.previous.length then 3
+  else
+    let oldHead := state.heads[bin]?.getD 0
+    if oldHead < state.previous.length then 8 else 7
+
+theorem insertSteps_le (state : Metadata) (bin block : Nat) :
+    insertSteps state bin block ≤ 8 := by
+  simp only [insertSteps]
+  split <;> try omega
+  split <;> try omega
+  split <;> try omega
+  split <;> omega
+
+def insertProfile (state : Metadata) (bin block : Nat) : Option Metadata × Nat :=
+  (insert state bin block, insertSteps state bin block)
+
+theorem insertProfile_result (state : Metadata) (bin block : Nat) :
+    (insertProfile state bin block).1 = insert state bin block ∧
+      (insertProfile state bin block).2 ≤ 8 :=
+  ⟨rfl, insertSteps_le state bin block⟩
+
 /-- Array-tuple facade used by compiler-generated Luffs semantics. -/
 def insertArrays (heads next previous : List Nat) (bin block : Nat) :
     Option (List Nat × List Nat × List Nat) :=
@@ -291,6 +318,36 @@ def remove (state : Metadata) (bin block : Nat) : Option Metadata :=
     let next := next.set block state.next.length
     let previous := previous.set block state.previous.length
     some { heads, next, previous }
+
+/-- Exact metadata-operation count for `remove`: after its three guards and
+two link reads, it performs three link-position tests, two mandatory detach
+writes, and up to three conditional repair writes. -/
+def removeSteps (state : Metadata) (bin block : Nat) : Nat :=
+  if bin ≥ state.heads.length then 1
+  else if block ≥ state.next.length then 2
+  else if block ≥ state.previous.length then 3
+  else
+    let successor := state.next[block]?.getD state.next.length
+    let predecessor := state.previous[block]?.getD state.next.length
+    10 + (if predecessor ≥ state.next.length then 1 else 0) +
+      (if predecessor < state.next.length then 1 else 0) +
+      (if successor < state.previous.length then 1 else 0)
+
+theorem removeSteps_le (state : Metadata) (bin block : Nat) :
+    removeSteps state bin block ≤ 13 := by
+  simp only [removeSteps]
+  split <;> try omega
+  split <;> try omega
+  split <;> try omega
+  split <;> split <;> split <;> omega
+
+def removeProfile (state : Metadata) (bin block : Nat) : Option Metadata × Nat :=
+  (remove state bin block, removeSteps state bin block)
+
+theorem removeProfile_result (state : Metadata) (bin block : Nat) :
+    (removeProfile state bin block).1 = remove state bin block ∧
+      (removeProfile state bin block).2 ≤ 13 :=
+  ⟨rfl, removeSteps_le state bin block⟩
 
 /-- Array-tuple facade used by compiler-generated removal semantics. -/
 def removeArrays (heads next previous : List Nat) (bin block : Nat) :
@@ -519,6 +576,21 @@ def findNonzeroWords : List (BitVec 64) → Nat → Option Nat
       if word = (0 : BitVec 64) then findNonzeroWords rest (base + 64)
       else some (base + word.ctz.toNat)
 
+/-- Number of loop iterations taken by `findNonzeroWords`. This is an exact
+cost model for the only recursive loop in the lowered flat-bitmap lookup. -/
+def findNonzeroWordsSteps : List (BitVec 64) → Nat
+  | [] => 0
+  | word :: rest =>
+      if word = (0 : BitVec 64) then 1 + findNonzeroWordsSteps rest else 1
+
+theorem findNonzeroWordsSteps_le (words : List (BitVec 64)) :
+    findNonzeroWordsSteps words ≤ words.length := by
+  induction words with
+  | nil => exact Nat.le_refl 0
+  | cons word rest ih =>
+      simp only [findNonzeroWordsSteps, List.length_cons]
+      split <;> omega
+
 theorem findNonzeroWords_refines (words : List (BitVec 64)) (base : Nat) :
     findNonzeroWords words base =
       (firstTrueIndex (bitmapBits words)).map (base + ·) := by
@@ -594,6 +666,48 @@ def findNonemptyBinLowered (words : List (BitVec 64)) (start : Nat) : Option Nat
       let masked := word &&& maskFrom bit
       if masked ≠ 0 then some (wordIndex * 64 + masked.ctz.toNat)
       else findNonzeroWords rest ((wordIndex + 1) * 64)
+
+/-- Exact number of bitmap words inspected by `findNonemptyBinLowered`. -/
+def findNonemptyBinLoweredSteps (words : List (BitVec 64)) (start : Nat) : Nat :=
+  let wordIndex := start / 64
+  let bit := start % 64
+  match words.drop wordIndex with
+  | [] => 0
+  | word :: rest =>
+      let masked := word &&& maskFrom bit
+      if masked ≠ 0 then 1 else 1 + findNonzeroWordsSteps rest
+
+theorem findNonemptyBinLoweredSteps_le (words : List (BitVec 64)) (start : Nat) :
+    findNonemptyBinLoweredSteps words start ≤ words.length := by
+  simp only [findNonemptyBinLoweredSteps]
+  cases hdrop : words.drop (start / 64) with
+  | nil => simp [hdrop]
+  | cons word rest =>
+      have hlength : rest.length + 1 ≤ words.length := by
+        have hdropLength := congrArg List.length hdrop
+        simp only [List.length_drop, List.length_cons] at hdropLength
+        omega
+      dsimp only
+      split
+      · omega
+      · have hsteps := findNonzeroWordsSteps_le rest
+        omega
+
+theorem findNonemptyBinLoweredSteps_fixed (words : List (BitVec 64))
+    (start : Nat) (hwords : words.length ≤ 4) :
+    findNonemptyBinLoweredSteps words start ≤ 4 := by
+  exact Nat.le_trans (findNonemptyBinLoweredSteps_le words start) hwords
+
+def findNonemptyBinLoweredProfile (words : List (BitVec 64)) (start : Nat) :
+    Option Nat × Nat :=
+  (findNonemptyBinLowered words start, findNonemptyBinLoweredSteps words start)
+
+theorem findNonemptyBinLoweredProfile_fixed (words : List (BitVec 64))
+    (start : Nat) (hwords : words.length ≤ 4) :
+    (findNonemptyBinLoweredProfile words start).1 =
+        findNonemptyBinLowered words start ∧
+      (findNonemptyBinLoweredProfile words start).2 ≤ 4 :=
+  ⟨rfl, findNonemptyBinLoweredSteps_fixed words start hwords⟩
 
 theorem findNonemptyBinLowered_eq_chunked
     (words : List (BitVec 64)) (start : Nat) :
@@ -938,6 +1052,49 @@ def findNonemptyClassLowered (second : List (BitVec 32)) (first : BitVec 64)
     let foundSecond := second[foundFl]?.getD 0
     if foundSecond = 0 then none else
     some (foundFl * 32 + foundSecond.ctz.toNat)
+
+/-- Exact count of conditional metadata probes in the lowered two-level class
+lookup. Unlike the flat fallback above, this path is branch-bounded and does
+not traverse a list. -/
+def findNonemptyClassLoweredSteps (second : List (BitVec 32)) (first : BitVec 64)
+    (startFl startSl : Nat) : Nat :=
+  if startFl ≥ second.length then 1 else
+  if startSl ≥ 32 then 2 else
+  let secondBitmap := second[startFl]?.getD 0
+  let secondMasked := secondBitmap &&& maskFrom32 startSl
+  if secondMasked ≠ 0 then 3 else
+  let nextFl := startFl + 1
+  if nextFl ≥ 64 then 4 else
+  let firstMasked := first &&& maskFrom nextFl
+  if firstMasked = 0 then 5 else
+  let foundFl := firstMasked.ctz.toNat
+  if foundFl ≥ second.length then 6 else
+  let foundSecond := second[foundFl]?.getD 0
+  if foundSecond = 0 then 7 else 7
+
+theorem findNonemptyClassLoweredSteps_le (second : List (BitVec 32))
+    (first : BitVec 64) (startFl startSl : Nat) :
+    findNonemptyClassLoweredSteps second first startFl startSl ≤ 7 := by
+  simp only [findNonemptyClassLoweredSteps]
+  split <;> try omega
+  split <;> try omega
+  split <;> try omega
+  split <;> try omega
+  split <;> try omega
+  split <;> try omega
+  split <;> omega
+
+def findNonemptyClassLoweredProfile (second : List (BitVec 32))
+    (first : BitVec 64) (startFl startSl : Nat) : Option Nat × Nat :=
+  (findNonemptyClassLowered second first startFl startSl,
+    findNonemptyClassLoweredSteps second first startFl startSl)
+
+theorem findNonemptyClassLoweredProfile_bounded (second : List (BitVec 32))
+    (first : BitVec 64) (startFl startSl : Nat) :
+    (findNonemptyClassLoweredProfile second first startFl startSl).1 =
+        findNonemptyClassLowered second first startFl startSl ∧
+      (findNonemptyClassLoweredProfile second first startFl startSl).2 ≤ 7 :=
+  ⟨rfl, findNonemptyClassLoweredSteps_le second first startFl startSl⟩
 
 theorem maskedWord64_ctz_facts {word : BitVec 64} {bit : Nat}
     (hnonzero : word &&& maskFrom bit ≠ 0) :

@@ -301,7 +301,15 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   consumes the exact initialized Vec ownership. Generated Lean semantics for
   both wrappers are now composed from the generated pointer-conversion and
   offset-drop models instead of directly aliasing their reference targets.
-- [ ] Prove the bounded-step property of bin lookup and local list updates.
+- [x] Prove the bounded-step property of bin lookup and local list updates.
+  The exact lowered flat-bitmap cost model counts inspected 64-bit words and
+  is bounded by the input word count, hence at most four probes for the fixed
+  256-bin bitmap. The cached two-level class lookup has no recursive scan and
+  is bounded by seven conditional metadata probes. Instrumented profiles pair
+  those costs with the exact previously refined lookup results. Intrusive
+  front insertion and arbitrary removal likewise have structurally matching
+  cost models and result profiles, with verified worst-case bounds of eight
+  and thirteen metadata operations respectively.
 
 The first concrete `stdlib/tlsf.luffs` runtime layer now implements bounded
 bitmap search plus intrusive insert/remove over fixed parallel metadata arrays,

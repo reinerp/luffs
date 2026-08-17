@@ -745,8 +745,10 @@ concurrency are later extensions and are not prerequisites for `Box` and
   opaque prefix/tail resources, and proves duplicate nonempty mutable-slice
   ownership contradictory. An equal-length replacement executes an explicit
   store trace and updates the Iris content map; recombination reconstructs the
-  Vec with the new logical middle and unchanged prefix/suffix. Scoped lifetime
-  notation in Luffs and lowering remain. The allocator-backed `Vec<u8>` path
+  Vec with the new logical middle and unchanged prefix/suffix. Luffs shared and
+  mutable slice entry points now use explicit Rust-style `<'a>` lifetimes, and
+  lowering preserves them while requiring the returned lifetime to be declared
+  and tied to an input reference. The allocator-backed `Vec<u8>` path
   now includes Luffs new, push, get, pop, drop, and growth operations. New and
   drop are composed through the concrete TLSF array transformers to the
   abstract Vec transitions and Iris ownership laws; push is connected to the
@@ -867,9 +869,12 @@ initialization and replacement are checked against `boxStoreU8`, so their
 updated storage semantics now come from the Luffs bodies. Immutable byte-slice
 translation also derives Box load and Vec last/get semantics from their Luffs
 bodies; successful Vec reads are proved inside the logical length and backing
-storage. Shared and mutable begin/end slice functions now also generate their
-exact logical sublist semantics and refine `vecSliceU8`; the generic Iris Vec
-theorems separately transfer shared or exclusive ownership for that range.
+  storage. Shared and mutable begin/end slice functions now also generate their
+  exact logical sublist semantics and refine `vecSliceU8`; their explicit
+  source lifetime is preserved in generated Rust and cannot name an unrelated
+  input lifetime. The generic Iris Vec theorems separately transfer shared or
+  exclusive ownership for that range and restore the parent capability when
+  the scoped mutable borrow ends.
 Growth copying now has source-derived two-buffer semantics as well: the first
 `len` destination bytes become the source prefix while the destination suffix
 is unchanged. Lean checks this generated transition against `vecCopyGrowU8`,
@@ -970,8 +975,9 @@ alias semantics. This removes the one-store restriction that blocked
   eight-access programs and refine the proved u64 bit-pattern transition on
   the declared 64-bit target. Thus construction, in-capacity push, indexed
   get, generic pop, and generic drop cover every scalar type currently in the
-  Luffs language; allocator-backed growth now has matching coverage. Scoped
-  slices remain before the overall Vec item is complete.
+  Luffs language; allocator-backed growth now has matching coverage. Explicit
+  lifetime lowering is present for byte slices, but source-level typed slice
+  monomorphizations remain before the overall Vec item is complete.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.
   All four checked-in examples are currently accepted by Lean and compile to

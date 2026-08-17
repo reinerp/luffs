@@ -210,6 +210,81 @@ fn main() -> ExitCode {
     }
 }
 
+fn erase_reference_lifetime(ty: &str) -> String {
+    let ty = ty.trim();
+    if let Some(rest) = ty.strip_prefix("&'")
+        && let Some((_, referent)) = rest.split_once(' ')
+    {
+        format!("&{referent}")
+    } else {
+        ty.to_owned()
+    }
+}
+
+fn is_slice_reference(ty: &str) -> bool {
+    let ty = erase_reference_lifetime(ty);
+    (ty.starts_with("&[") || ty.starts_with("&mut [")) && ty.ends_with(']')
+}
+
+fn is_mut_slice_reference(ty: &str) -> bool {
+    let ty = erase_reference_lifetime(ty);
+    ty.starts_with("&mut [") && ty.ends_with(']')
+}
+
+fn function_base_name(name: &str) -> &str {
+    name.split_once('<').map_or(name, |(base, _)| base)
+}
+
+fn explicit_reference_lifetime(ty: &str) -> Option<&str> {
+    ty.trim()
+        .strip_prefix("&'")?
+        .split_once(' ')
+        .map(|(lt, _)| lt)
+}
+
+fn validate_scoped_slice_signature(signature: &str) -> Result<(), String> {
+    let Some(return_start) = signature.find("-> Option<&'") else {
+        return Ok(());
+    };
+    let return_ref = &signature[return_start + "-> Option<&'".len()..];
+    let Some((return_lifetime, _)) = return_ref.split_once(' ') else {
+        return Err("malformed explicit return lifetime".to_owned());
+    };
+    let open = signature
+        .find('(')
+        .ok_or_else(|| "malformed function parameters".to_owned())?;
+    let close = signature[open + 1..]
+        .find(')')
+        .map(|offset| open + 1 + offset)
+        .ok_or_else(|| "malformed function parameters".to_owned())?;
+    let name = signature[3..open].trim();
+    let declared = name
+        .split_once('<')
+        .and_then(|(_, generics)| generics.strip_suffix('>'))
+        .is_some_and(|generics| {
+            generics
+                .split(',')
+                .any(|generic| generic.trim() == format!("'{return_lifetime}"))
+        });
+    if !declared {
+        return Err(format!(
+            "return lifetime `'{return_lifetime}` is not declared by the function"
+        ));
+    }
+    let has_source = signature[open + 1..close].split(',').any(|param| {
+        param
+            .split_once(':')
+            .and_then(|(_, ty)| explicit_reference_lifetime(ty))
+            == Some(return_lifetime)
+    });
+    if !has_source {
+        return Err(format!(
+            "return lifetime `'{return_lifetime}` is not tied to an input reference"
+        ));
+    }
+    Ok(())
+}
+
 fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
@@ -249,6 +324,8 @@ fn parse(source: &str) -> Result<Module, String> {
         let raw = raw.as_str();
         let trimmed = raw.trim();
         if trimmed.starts_with("fn ") {
+            validate_scoped_slice_signature(trimmed)
+                .map_err(|error| format!("line {line_no}: {error}"))?;
             nat_vars.clear();
             mutable_arrays.clear();
             facts.clear();
@@ -256,12 +333,12 @@ fn parse(source: &str) -> Result<Module, String> {
             brace_depth = 0;
             for part in trimmed.split(['(', ',', ')']) {
                 if let Some((name, ty)) = part.trim().split_once(':') {
-                    if ty.contains("&[") || ty.contains("&mut [") {
+                    if is_slice_reference(ty) {
                         nat_vars.push(format!("{}_len", name.trim()));
                     } else if ty.trim().starts_with("usize") {
                         nat_vars.push(name.trim().to_owned());
                     }
-                    if ty.contains("&mut [") {
+                    if is_mut_slice_reference(ty) {
                         mutable_arrays.insert(name.trim().to_owned());
                     }
                 }
@@ -907,9 +984,7 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
             let return_text = &trimmed[close + 1..];
             let result_type = if return_text.contains("-> Option<u8>") {
                 "Fin 256".to_owned()
-            } else if return_text.contains("-> Option<&[u8]>")
-                || return_text.contains("-> Option<&mut [u8]>")
-            {
+            } else if return_text.contains("-> Option<&") && return_text.contains("[u8]>") {
                 "List (Fin 256)".to_owned()
             } else {
                 let scalar = return_text
@@ -932,7 +1007,8 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
                 };
                 let source_name = name.trim().to_owned();
                 let name = lean_ident(&source_name);
-                match ty.trim() {
+                let ty = erase_reference_lifetime(ty);
+                match ty.as_str() {
                     "&[u8]" | "&mut [u8]" => {
                         if array.replace(source_name).is_some() {
                             eligible = false;
@@ -948,7 +1024,7 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
                 continue;
             };
             pending = Some(Pending {
-                name: trimmed[3..open].trim().to_owned(),
+                name: function_base_name(trimmed[3..open].trim()).to_owned(),
                 array,
                 params,
                 refines: next_refinement.take(),
@@ -5141,10 +5217,11 @@ mod tests {
     #[test]
     fn emits_begin_end_slice_semantics() {
         let m = parse(
-            "// refines Luffs.Runtime.Containers.vecSliceU8\nfn slice(storage: &[u8], len: usize, begin: usize, end: usize) -> Option<&[u8]> {\nif begin > end { return None; }\nif end > len { return None; }\nif len > storage.len() { return None; }\nSome(storage[begin..<end])\n}",
+            "// refines Luffs.Runtime.Containers.vecSliceU8\nfn slice<'a>(storage: &'a [u8], len: usize, begin: usize, end: usize) -> Option<&'a [u8]> {\nif begin > end { return None; }\nif end > len { return None; }\nif len > storage.len() { return None; }\nSome(storage[begin..<end])\n}",
         )
         .unwrap();
         assert_eq!(m.read_models.len(), 1);
+        assert!(m.rust.contains("fn slice<'a>(storage: &'a [u8]"));
         let generated = lean(&m);
         assert!(generated.contains("(end_ : Nat) : Option (List (Fin 256))"));
         assert!(generated.contains("some ((storage.drop begin).take (end_ - begin))"));
@@ -5156,6 +5233,31 @@ mod tests {
             generated
                 .contains("hmapped : ∀ i, i < end_ - begin → mem.mapped (storageBase + begin + i)")
         );
+    }
+
+    #[test]
+    fn emits_mutable_slice_with_explicit_lifetime() {
+        let m = parse(
+            "// refines Luffs.Runtime.Containers.vecSliceU8\nfn slice_mut<'a>(storage: &'a mut [u8], len: usize, begin: usize, end: usize) -> Option<&'a mut [u8]> {\nif begin > end { return None; }\nif end > len { return None; }\nif len > storage.len() { return None; }\nSome(storage[begin..<end])\n}",
+        )
+        .unwrap();
+        validate(&m).unwrap();
+        assert_eq!(m.read_models.len(), 1);
+        assert!(m.rust.contains("fn slice_mut<'a>(storage: &'a mut [u8]"));
+        let generated = lean(&m);
+        assert!(generated.contains(
+            "theorem slice_mut_refines : slice_mut_model = Luffs.Runtime.Containers.vecSliceU8"
+        ));
+        assert!(generated.contains("theorem slice_mut_program_wp"));
+    }
+
+    #[test]
+    fn rejects_slice_return_lifetime_not_tied_to_input() {
+        let error = parse(
+            "fn bad<'a, 'b>(storage: &'a [u8]) -> Option<&'b [u8]> {\nSome(storage[0..<storage.len()])\n}",
+        )
+        .unwrap_err();
+        assert!(error.contains("return lifetime `'b` is not tied to an input reference"));
     }
 
     #[test]

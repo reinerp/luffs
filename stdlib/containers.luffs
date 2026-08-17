@@ -593,7 +593,7 @@ fn vec_get_isize(storage: &[u8], offset: usize, len: usize, index: usize) -> Opt
 }
 
 // refines Luffs.Runtime.Containers.vecSliceU8
-fn vec_slice_u8(storage: &[u8], len: usize, begin: usize, end: usize) -> Option<&[u8]> {
+fn vec_slice_u8<'a>(storage: &'a [u8], len: usize, begin: usize, end: usize) -> Option<&'a [u8]> {
     if begin > end { return None; }
     if end > len { return None; }
     if len > storage.len() { return None; }
@@ -601,7 +601,7 @@ fn vec_slice_u8(storage: &[u8], len: usize, begin: usize, end: usize) -> Option<
 }
 
 // refines Luffs.Runtime.Containers.vecSliceU8
-fn vec_slice_mut_u8(storage: &mut [u8], len: usize, begin: usize, end: usize) -> Option<&mut [u8]> {
+fn vec_slice_mut_u8<'a>(storage: &'a mut [u8], len: usize, begin: usize, end: usize) -> Option<&'a mut [u8]> {
     if begin > end { return None; }
     if end > len { return None; }
     if len > storage.len() { return None; }

@@ -737,6 +737,11 @@ alias semantics. This removes the one-store restriction that blocked
   encoding. Its generated state transformer refines `boxStoreU16`, which is
   separately proved equal to codec-generic `boxStore Scalar.u16` for a
   64-bit-addressable backing store.
+  The same source-derived lowering now covers `box_store_u32` and
+  `box_load_u32`: all four byte accesses follow checked 64-bit end-address
+  arithmetic, generated Lean semantics refines their exact state transformers,
+  and `boxLoadU32_after_boxStoreU32` proves the four-byte little-endian
+  round trip for every `BitVec 32` value.
   The same monomorphization now covers `vec_push_u16`: its Rust-like Luffs
   source performs every checked 64-bit address calculation and the two
   little-endian writes, while `vecPushU16_refines_generic` connects each

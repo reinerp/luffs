@@ -1846,6 +1846,45 @@ def boxStoreU16 (storage : List Byte) (begin : Nat) (value : BitVec 16) :
     else some ((storage.set begin (Scalar.byteAt value 0)).set second
       (Scalar.byteAt value 8))
 
+def boxLoadU32 (storage : List Byte) (begin : Nat) : Option (BitVec 32) := do
+  if begin > Luffs.Runtime.TLSF.usizeMax - 3 then none
+  let fourth := begin + 3
+  if fourth ≥ storage.length then none
+  let byte0 ← storage[begin]?
+  let byte1 ← storage[begin + 1]?
+  let byte2 ← storage[begin + 2]?
+  let byte3 ← storage[fourth]?
+  Scalar.decode32 [byte0, byte1, byte2, byte3]
+
+def boxStoreU32 (storage : List Byte) (begin : Nat) (value : BitVec 32) :
+    Option (List Byte) :=
+  if begin > Luffs.Runtime.TLSF.usizeMax - 3 then none
+  else
+    let fourth := begin + 3
+    if fourth ≥ storage.length then none
+    else some ((((storage.set begin (Scalar.byteAt value 0)).set (begin + 1)
+      (Scalar.byteAt value 8)).set (begin + 2) (Scalar.byteAt value 16)).set
+      fourth (Scalar.byteAt value 24))
+
+theorem boxLoadU32_after_boxStoreU32 (storage result : List Byte) (begin : Nat)
+    (value : BitVec 32)
+    (hsuccess : boxStoreU32 storage begin value = some result) :
+    boxLoadU32 result begin = some value := by
+  unfold boxStoreU32 at hsuccess
+  split at hsuccess <;> try contradiction
+  next hword =>
+    dsimp only at hsuccess
+    split at hsuccess <;> try contradiction
+    next hbound =>
+      simp only [Option.some.injEq] at hsuccess
+      subst result
+      have h0 : begin < storage.length := by omega
+      have h1 : begin + 1 < storage.length := by omega
+      have h2 : begin + 2 < storage.length := by omega
+      have h3 : begin + 3 < storage.length := by omega
+      simp [boxLoadU32, hword, hbound, h0, h1, h2, h3,
+        Scalar.decode32, Scalar.byteAt]
+
 theorem boxLoadU16_eq_generic (storage : List Byte) (begin : Nat)
     (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax) :
     boxLoadU16 storage begin = boxLoad Scalar.u16 storage begin := by

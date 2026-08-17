@@ -344,6 +344,11 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   and proves physical compaction total from the checked active-prefix,
   free-pair, lookup, and adjacency facts. These eliminate three more possible
   post-mutation failure edges in the coalescing transaction.
+  The full remove-left/remove-right/compact/insert mutation phase now retains
+  each intermediate state explicitly. Length preservation carries the source
+  bounds through both removals, making the second removal and merged-node
+  insertion total; together with physical totality, Lean proves that the
+  complete commit phase cannot produce any of its failure states.
 - [x] Prove the bounded-step property of bin lookup and local list updates.
   The exact lowered flat-bitmap cost model counts inspected 64-bit words and
   is bounded by the input word count, hence at most four probes for the fixed

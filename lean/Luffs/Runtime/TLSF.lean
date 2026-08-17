@@ -6870,8 +6870,154 @@ def coalesceClassArrays (offsets sizes : List Nat)
     offsets := physical.offsets, sizes := physical.sizes,
     isFree := physical.isFree, prevFree := physical.prevFree,
     count := physical.count, second := inserted.second, first := inserted.first,
-    heads := inserted.heads, next := inserted.next,
+      heads := inserted.heads, next := inserted.next,
       previous := inserted.previous }
+
+inductive CoalesceClassOutcome where
+  | success (state : CoalesceClassResult)
+  | failure (state : CoalesceClassResult)
+deriving DecidableEq, Repr
+
+def coalesceStateAfterRemove (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count : Nat)
+    (removed : RemoveClassResult) : CoalesceClassResult :=
+  ⟨offsets, sizes, isFree, prevFree, count, removed.second, removed.first,
+    removed.heads, removed.next, removed.previous⟩
+
+def coalesceStateAfterPhysical (physical : CoalescePhysicalResult)
+    (removed : RemoveClassResult) : CoalesceClassResult :=
+  ⟨physical.offsets, physical.sizes, physical.isFree, physical.prevFree,
+    physical.count, removed.second, removed.first, removed.heads, removed.next,
+    removed.previous⟩
+
+/-- Source-ordered mutation phase of `tlsf_coalesce_class`, after all size,
+class, arithmetic, and bounds checks have completed. Unlike the older `Option`
+transformer, each impossible failure retains its concrete intermediate state. -/
+def commitCoalesceClassOutcome (input : CoalesceClassResult)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (count left leftOffset rightOffset
+      leftBin rightBin mergedBin : Nat) : CoalesceClassOutcome :=
+  match removeClassArrays second first heads next previous leftBin leftOffset with
+  | none => .failure input
+  | some withoutLeft =>
+    match removeClassArrays withoutLeft.second withoutLeft.first
+        withoutLeft.heads withoutLeft.next withoutLeft.previous rightBin
+        rightOffset with
+    | none => .failure
+        (coalesceStateAfterRemove offsets sizes isFree prevFree count withoutLeft)
+    | some withoutRight =>
+      match coalescePhysicalArrays offsets sizes isFree prevFree count left with
+      | none => .failure
+          (coalesceStateAfterRemove offsets sizes isFree prevFree count withoutRight)
+      | some physical =>
+        match insertClassArrays withoutRight.second withoutRight.first
+            withoutRight.heads withoutRight.next withoutRight.previous mergedBin
+            leftOffset with
+        | none => .failure (coalesceStateAfterPhysical physical withoutRight)
+        | some inserted => .success
+            ⟨physical.offsets, physical.sizes, physical.isFree,
+              physical.prevFree, physical.count, inserted.second, inserted.first,
+              inserted.heads, inserted.next, inserted.previous⟩
+
+/-- The remove/remove/compact/insert commit has no failure edge once each
+source preflight has established totality of its corresponding component. -/
+theorem commitCoalesceClassOutcome_ne_failure
+    {input failed : CoalesceClassResult}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat}
+    {count left leftOffset rightOffset leftBin rightBin mergedBin : Nat}
+    (hleft : removeClassArrays second first heads next previous leftBin
+      leftOffset ≠ none)
+    (hright : ∀ withoutLeft,
+      removeClassArrays second first heads next previous leftBin leftOffset =
+          some withoutLeft →
+      removeClassArrays withoutLeft.second withoutLeft.first withoutLeft.heads
+        withoutLeft.next withoutLeft.previous rightBin rightOffset ≠ none)
+    (hphysical : coalescePhysicalArrays offsets sizes isFree prevFree count left ≠
+      none)
+    (hinsert : ∀ withoutLeft withoutRight,
+      removeClassArrays second first heads next previous leftBin leftOffset =
+          some withoutLeft →
+      removeClassArrays withoutLeft.second withoutLeft.first withoutLeft.heads
+          withoutLeft.next withoutLeft.previous rightBin rightOffset =
+        some withoutRight →
+      insertClassArrays withoutRight.second withoutRight.first withoutRight.heads
+        withoutRight.next withoutRight.previous mergedBin leftOffset ≠ none) :
+    commitCoalesceClassOutcome input offsets sizes isFree prevFree second first
+      heads next previous count left leftOffset rightOffset leftBin rightBin
+        mergedBin ≠ .failure failed := by
+  unfold commitCoalesceClassOutcome
+  cases hleftEq : removeClassArrays second first heads next previous leftBin
+      leftOffset with
+  | none => exact (hleft hleftEq).elim
+  | some withoutLeft =>
+    simp only [hleftEq]
+    cases hrightEq : removeClassArrays withoutLeft.second withoutLeft.first
+        withoutLeft.heads withoutLeft.next withoutLeft.previous rightBin
+        rightOffset with
+    | none => exact (hright withoutLeft hleftEq hrightEq).elim
+    | some withoutRight =>
+      simp only [hrightEq]
+      cases hphysicalEq : coalescePhysicalArrays offsets sizes isFree prevFree
+          count left with
+      | none => exact (hphysical hphysicalEq).elim
+      | some physical =>
+        simp only [hphysicalEq]
+        cases hinsertEq : insertClassArrays withoutRight.second
+            withoutRight.first withoutRight.heads withoutRight.next
+            withoutRight.previous mergedBin leftOffset with
+        | none => exact (hinsert withoutLeft withoutRight hleftEq hrightEq
+            hinsertEq).elim
+        | some inserted => simp
+
+/-- The actual bounds hoisted by `tlsf_coalesce_class` discharge every
+component-totality premise, including bounds after both intrusive removals. -/
+theorem commitCoalesceClassOutcome_ne_failure_of_preflight
+    {input failed : CoalesceClassResult}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat}
+    {count left leftOffset rightOffset leftBin rightBin mergedBin : Nat}
+    (hleftBin : leftBin < heads.length)
+    (hrightBin : rightBin < heads.length)
+    (hmergedBin : mergedBin < heads.length)
+    (hleftFl : leftBin / 32 < second.length)
+    (hrightFl : rightBin / 32 < second.length)
+    (hmergedFl : mergedBin / 32 < second.length)
+    (hleftNext : leftOffset < next.length)
+    (hleftPrevious : leftOffset < previous.length)
+    (hrightNext : rightOffset < next.length)
+    (hrightPrevious : rightOffset < previous.length)
+    (hphysical : coalescePhysicalArrays offsets sizes isFree prevFree count left ≠
+      none) :
+    commitCoalesceClassOutcome input offsets sizes isFree prevFree second first
+      heads next previous count left leftOffset rightOffset leftBin rightBin
+        mergedBin ≠ .failure failed := by
+  have hleft := removeClassArrays_ne_none_of_preflight hleftBin hleftFl
+    hleftNext hleftPrevious
+  apply commitCoalesceClassOutcome_ne_failure hleft
+  · intro withoutLeft hleftEq
+    have hlens := removeClassArrays_preserves_lengths hleftEq
+    apply removeClassArrays_ne_none_of_preflight
+    · simpa [hlens.2.1] using hrightBin
+    · simpa [hlens.1] using hrightFl
+    · simpa [hlens.2.2.1] using hrightNext
+    · simpa [hlens.2.2.2] using hrightPrevious
+  · exact hphysical
+  · intro withoutLeft withoutRight hleftEq hrightEq
+    have hleftLens := removeClassArrays_preserves_lengths hleftEq
+    have hrightLens := removeClassArrays_preserves_lengths hrightEq
+    apply insertClassArrays_ne_none_of_preflight
+    · rw [hrightLens.2.1, hleftLens.2.1]
+      exact hmergedBin
+    · rw [hrightLens.1, hleftLens.1]
+      exact hmergedFl
+    · rw [hrightLens.2.2.1, hleftLens.2.2.1]
+      exact hleftNext
+    · rw [hrightLens.2.2.2, hleftLens.2.2.2]
+      exact hleftPrevious
 
 structure InitializeArraysResult where
   offsets : List Nat

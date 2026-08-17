@@ -49,9 +49,13 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   from `WriteSteps`. Generic `Box<T>` assignment and mutable Vec-slice
   replacement retain their updated typed ownership while returning both the
   exact store trace and its adequacy-ready WP. Stores into previously
-  uninitialized Vec spare capacity, branches/loops, and compiler emission of
-  these program terms still need composition before this end-to-end item can
-  be checked off.
+  uninitialized Vec spare capacity are now covered as well: `MemoryRep` is
+  proved invariant under mapped writes, full allocation ownership establishes
+  every destination byte, and the generic `push_owns_wp` theorem combines the
+  exact generated store program with the initialized-content insertion and
+  extended typed Vec ownership. Branches/loops and compiler emission of these
+  program terms still need composition before this end-to-end item can be
+  checked off.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

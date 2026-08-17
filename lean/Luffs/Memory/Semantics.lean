@@ -249,6 +249,14 @@ map. Byte contents are modeled separately; this relation records liveness. -/
 def MemoryRep (allocated : ByteMap Unit) (mem : Memory) : Prop :=
   ∀ p, Std.PartialMap.get? allocated p = some () ↔ mem.mapped p
 
+theorem MemoryRep.write {allocated : ByteMap Unit} {mem : Memory}
+    {p : Addr} {old value : Byte} (hrep : MemoryRep allocated mem)
+    (hold : mem p = some old) :
+    MemoryRep allocated (mem.write p value) := by
+  intro q
+  rw [write_preserves_mapped hold]
+  exact hrep q
+
 /-- Adequacy for loads: authoritative agreement plus an owned region proves
 that the operational semantics has a next step. -/
 theorem owned_load_safe {GF : BundledGFunctors} [G : ByteRegionGS GF]
@@ -529,6 +537,48 @@ theorem WriteSteps.program_wp {GF : BundledGFunctors} {base : Addr}
   ipureintro
   exact ⟨⟨after, hsteps.program_exec⟩,
     fun final hexec => hsteps.program_exec_unique hexec⟩
+
+/-- Exclusive ownership of an allocated region proves a whole generated store
+sequence safe even when the destination bytes are not initialized in the
+separate contents map. `MemoryRep.write` keeps the allocation/mapping relation
+valid after every byte. -/
+theorem owned_writeBytes_wp {GF : BundledGFunctors} [G : ByteRegionGS GF]
+    {allocated : ByteMap Unit} {mem : Memory} {region : Region}
+    {base : Nat} (values : List Byte)
+    (hrep : MemoryRep allocated mem)
+    (hinside : ∀ i, i < values.length → region.contains (base + i)) :
+    byteHeapInterp (G := G) allocated ∗ OwnsBytes region ⊢
+      ⌜∃ next, WriteSteps base values mem next ∧
+        (⊢@{IProp GF} Program.wp (Program.writeBytes base values) mem
+          (fun final => final = next))⌝ := by
+  change byteHeapInterp (G := G) allocated ∗ ghostOwnsBytes region ⊢ _
+  induction values generalizing base mem with
+  | nil =>
+      iintro H
+      ipureintro
+      exact ⟨mem, .nil, WriteSteps.program_wp .nil⟩
+  | cons value rest ih =>
+      iintro H
+      ihave %hsafe := owned_store_safe (G := G) hrep
+        (hinside 0 (by simp)) value $$ H
+      obtain ⟨result, after, hstep⟩ := hsafe
+      cases hstep with
+      | @store _ _ old _ hold =>
+          have hrepNext : MemoryRep allocated (mem.write base value) :=
+            hrep.write hold
+          have hinsideTail : ∀ i, i < rest.length →
+              region.contains (base + 1 + i) := by
+            intro i hi
+            have h := hinside (i + 1) (by simp; omega)
+            simpa [Nat.add_assoc, Nat.add_comm 1 i] using h
+          have htailRule := ih (base := base + 1)
+            (mem := mem.write base value) hrepNext hinsideTail
+          ihave %htail := htailRule $$ H
+          ipureintro
+          obtain ⟨next, hsteps, _⟩ := htail
+          let hall : WriteSteps base (value :: rest) mem next :=
+            .cons (.store hold) hold hsteps
+          exact ⟨next, hall, hall.program_wp⟩
 
 /-- Iris adequacy for the Luffs primitive language. This is the closed-proof
 boundary: semantic validity of a WP yields an actual complete execution. -/

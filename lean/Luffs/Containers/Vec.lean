@@ -1169,6 +1169,90 @@ theorem push_owns {GF : BundledGFunctors}
     · rw [hencoded]
       iassumption
 
+/-- Push into spare capacity is operationally safe even though those bytes
+were not previously initialized in the contents map. Allocation ownership and
+`MemoryRep` prove the complete encoded destination mapped; the content update
+then establishes the extended typed Vec ownership. -/
+theorem push_owns_wp {GF : BundledGFunctors}
+    [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
+    (codec : Codec α) {pool : Region} {handle next : Handle}
+    {values : List α} (value : α) (contents : ContentsMap)
+    {allocated : ByteMap Unit} {mem : Memory}
+    (hvalid : Valid codec handle) (hlen : values.length = handle.len)
+    (hrep : MemoryRep allocated mem)
+    (hsuccess : push handle = some next)
+    (hfresh : CanInsertBytes contents
+      ((handle.block.region pool).base + (encodeValues codec values).length)
+      (codec.encode value)) :
+    byteHeapInterp (G := (inferInstance : ByteRegionGS GF)) allocated ∗
+        (contentsInterp (G := G) contents ∗ Owns codec pool handle values) ==∗
+      byteHeapInterp allocated ∗
+        (contentsInterp (insertBytes contents
+            ((handle.block.region pool).base +
+              (encodeValues codec values).length)
+            (codec.encode value)) ∗
+          Owns codec pool next (values ++ [value])) ∗
+        ⌜∃ memNext,
+          WriteSteps
+            ((handle.block.region pool).base +
+              (encodeValues codec values).length)
+            (codec.encode value) mem memNext ∧
+          (⊢@{IProp GF} Program.wp
+            (Program.writeBytes
+              ((handle.block.region pool).base +
+                (encodeValues codec values).length)
+              (codec.encode value))
+            mem (fun final => final = memNext))⌝ := by
+  obtain ⟨hlt, rfl⟩ := push_result hsuccess
+  have hencoded : encodeValues codec (values ++ [value]) =
+      encodeValues codec values ++ codec.encode value := by
+    simp [encodeValues]
+  have hinside : ∀ i, i < (codec.encode value).length →
+      (handle.block.region pool).contains
+        ((handle.block.region pool).base +
+          (encodeValues codec values).length + i) := by
+    intro i hi
+    have hiSize : i < codec.size := by
+      simpa [codec.encode_length] using hi
+    have hnextCapacity : handle.len + 1 ≤ handle.capacity := by omega
+    have hnextBytes : (handle.len + 1) * codec.size ≤
+        handle.capacity * codec.size :=
+      Nat.mul_le_mul_right codec.size hnextCapacity
+    have hoffset : handle.len * codec.size + i < handle.block.bytes := by
+      rcases hvalid with ⟨_, hcapacityBytes⟩
+      rw [Nat.add_mul] at hnextBytes
+      omega
+    have hcontains := contains_offset (handle.block.region pool)
+      (handle.len * codec.size + i) hoffset
+    simpa [encodeValues_length, hlen, Nat.add_assoc] using hcontains
+  simp only [Owns]
+  iintro ⟨Hheap, Hcontainer⟩
+  icases Hcontainer with ⟨Hcontents, Hvec⟩
+  icases Hvec with ⟨Hregion, Hpoints⟩
+  icombine Hheap Hregion as Hmapped
+  ihave %hwrite := owned_writeBytes_wp (G := (inferInstance : ByteRegionGS GF))
+    (codec.encode value) hrep hinside $$ Hmapped
+  icases Hmapped with ⟨Hheap, Hregion⟩
+  imod pointsToBytes_insert contents
+    ((handle.block.region pool).base + (encodeValues codec values).length)
+    (codec.encode value) hfresh $$ Hcontents with ⟨Hcontents, Hnew⟩
+  icombine Hpoints Hnew as Hpoints
+  ihave Hpoints := (pointsToBytes_append
+    (handle.block.region pool).base (encodeValues codec values)
+      (codec.encode value)).mpr $$ Hpoints
+  imodintro
+  isplitl [Hheap]
+  · iassumption
+  · isplitl [Hcontents Hregion Hpoints]
+    · isplitl [Hcontents]
+      · iassumption
+      · isplitl [Hregion]
+        · iassumption
+        · rw [hencoded]
+          iassumption
+    · ipureintro
+      exact hwrite
+
 theorem pop_owns {GF : BundledGFunctors}
     [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
     (codec : Codec α) {pool : Region} {handle next : Handle}

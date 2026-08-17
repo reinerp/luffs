@@ -81,6 +81,17 @@ theorem classifySizeBin_result {size encoded : Nat}
       simp only [encodeSizeClass, firstLevelCount, secondLevelCount] at hfl hsl ⊢
       omega
 
+theorem classifySizeBin_complete {size : Nat}
+    (hsize : 0 < size) (hmax : size < 2 ^ firstLevelCount) :
+    classifySizeBin size = some (encodeSizeClass (sizeClass size hsize hmax)) := by
+  simp [classifySizeBin, hsize, hmax]
+
+theorem classifySizeBin_ne_none {size : Nat}
+    (hsize : 0 < size) (hmax : size < 2 ^ firstLevelCount) :
+    classifySizeBin size ≠ none := by
+  rw [classifySizeBin_complete hsize hmax]
+  simp
+
 theorem classifySizeBin_refines_block {block : Block} {encoded : Nat}
     (hclass : classifySizeBin block.bytes = some encoded) :
     ∃ cls, Bins.classifyBlock? block = some cls ∧
@@ -89,6 +100,18 @@ theorem classifySizeBin_refines_block {block : Block} {encoded : Nat}
   let cls := sizeClass block.bytes hsize hmax
   refine ⟨cls, ?_, hencoded⟩
   simp [Bins.classifyBlock?, cls, hsize, hmax]
+
+theorem classifySizeBin_of_classifyBlock {block : Block} {cls : SizeClass}
+    (hclass : Bins.classifyBlock? block = some cls) :
+    classifySizeBin block.bytes = some (encodeSizeClass cls) := by
+  unfold Bins.classifyBlock? at hclass
+  split at hclass <;> try contradiction
+  next hsize =>
+    split at hclass <;> try contradiction
+    next hmax =>
+      simp only [Option.some.injEq] at hclass
+      subst cls
+      exact classifySizeBin_complete hsize hmax
 
 /-- The executable mapping-up classifier used to start allocation lookup. -/
 def classifyRequestBin (request : Nat) : Option Nat :=
@@ -2923,6 +2946,33 @@ def RepresentsBins (metadata : Metadata) (state : Bins.State) : Prop :=
     RepresentsBin metadata
       (cls.fl.val * secondLevelCount + cls.sl.val)
       ((state.chains cls).map Block.offset)
+
+theorem represented_class_indices_bounded
+    {second : List (BitVec 32)} {state : Bins.State}
+    {heads next previous : List Nat}
+    (hsecond : RepresentsSecondBitmap second state)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (cls : SizeClass) :
+    encodeSizeClass cls < heads.length ∧
+      encodeSizeClass cls / secondLevelCount < second.length := by
+  constructor
+  · simpa [encodeSizeClass] using (hbins cls).1
+  · rw [encodeSizeClass_div, hsecond.1]
+    exact cls.fl.isLt
+
+theorem represented_free_block_link_bounds
+    {pool : Luffs.Memory.Region} {physical : List Block} {state : Bins.State}
+    {heads next previous : List Nat} {block : Block}
+    (hvalid : Alloc.Valid pool { physical, bins := state })
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hmem : block ∈ physical) (hfree : block.free = true) :
+    block.offset < next.length ∧ block.offset < previous.length := by
+  obtain ⟨cls, cached, hcached, hsame⟩ :=
+    hvalid.2.2.2 block hmem hfree
+  have hoffsetMem : block.offset ∈ (state.chains cls).map Block.offset := by
+    rw [hsame.1]
+    exact List.mem_map_of_mem Block.offset hcached
+  exact linked_member_bounds (hbins cls).2.2.2.1 hoffsetMem
 
 /-- End-to-end bitmap refinement for arbitrary class removal.  The abstract
 free-list operation itself supplies the singleton/non-singleton fact consumed

@@ -368,6 +368,12 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   validity, cross-bin disjointness, intrusive links, and both bitmap levels for
   the actual stateful successor. This establishes the full invariant at the
   right-coalescing call boundary.
+  The valid-state coalescing-totality proof now also has generic bridges for
+  all remaining metadata preflights: executable size classification is
+  complete and follows abstract `classifyBlock?`; represented class encodings
+  are bounded by the concrete head and second-level arrays; and physical/bin
+  agreement plus intrusive-chain representation proves every free block's
+  byte offset is bounded by both link arrays.
 - [x] Prove the bounded-step property of bin lookup and local list updates.
   The exact lowered flat-bitmap cost model counts inspected 64-bit words and
   is bounded by the input word count, hence at most four probes for the fixed

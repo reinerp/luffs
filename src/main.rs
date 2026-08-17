@@ -2240,7 +2240,7 @@ fn parse_tlsf_box_drop_ptr_models(source: &str) -> Vec<TlsfCoalescePhysicalModel
 
 fn parse_tlsf_vec_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
     let lines = source.lines().collect::<Vec<_>>();
-    let specifications = [
+    let mut specifications = vec![
         (
             "tlsf_vec_new_u8",
             vec![
@@ -2262,6 +2262,37 @@ fn parse_tlsf_vec_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
             ],
         ),
     ];
+    for (name, multiply) in [
+        (
+            "tlsf_vec_new_u32",
+            "let bytes: usize = capacity.checked_mul(4)?;",
+        ),
+        (
+            "tlsf_vec_new_u64",
+            "let bytes: usize = capacity.checked_mul(8)?;",
+        ),
+        (
+            "tlsf_vec_new_u128",
+            "let bytes: usize = capacity.checked_mul(16)?;",
+        ),
+    ] {
+        specifications.push((name, vec![
+            "if capacity == 0 { return None; }",
+            multiply,
+            "let rounded: usize = bytes.checked_add(7)?;",
+            "let request: usize = rounded & !7;",
+            "tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)",
+        ]));
+    }
+    specifications.extend([
+        ("tlsf_vec_new_i8", vec!["tlsf_vec_new_u8(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, capacity)"]),
+        ("tlsf_vec_new_i16", vec!["tlsf_vec_new_u16(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, capacity)"]),
+        ("tlsf_vec_new_i32", vec!["tlsf_vec_new_u32(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, capacity)"]),
+        ("tlsf_vec_new_i64", vec!["tlsf_vec_new_u64(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, capacity)"]),
+        ("tlsf_vec_new_i128", vec!["tlsf_vec_new_u128(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, capacity)"]),
+        ("tlsf_vec_new_usize", vec!["tlsf_vec_new_u64(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, capacity)"]),
+        ("tlsf_vec_new_isize", vec!["tlsf_vec_new_u64(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, capacity)"]),
+    ]);
     let mut models = Vec::new();
     for (name, required) in specifications {
         let Some(index) = lines
@@ -2296,6 +2327,23 @@ fn parse_tlsf_vec_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
             });
         }
     }
+    let recognized = models
+        .iter()
+        .map(|model| model.name.clone())
+        .collect::<BTreeSet<_>>();
+    models.retain(|model| {
+        let dependency = match model.name.as_str() {
+            "tlsf_vec_new_i8" => Some("tlsf_vec_new_u8"),
+            "tlsf_vec_new_i16" => Some("tlsf_vec_new_u16"),
+            "tlsf_vec_new_i32" => Some("tlsf_vec_new_u32"),
+            "tlsf_vec_new_i64" | "tlsf_vec_new_usize" | "tlsf_vec_new_isize" => {
+                Some("tlsf_vec_new_u64")
+            }
+            "tlsf_vec_new_i128" => Some("tlsf_vec_new_u128"),
+            _ => None,
+        };
+        dependency.is_none_or(|name| recognized.contains(name))
+    });
     models
 }
 
@@ -3799,7 +3847,7 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
         }
     }
     for model in &module.tlsf_vec_new_models {
-        if model.name == "tlsf_vec_new_u16" {
+        if model.name != "tlsf_vec_new_u8" {
             out.push_str(&format!(
                 "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (capacity : Nat) : Option Luffs.Runtime.TLSF.AllocateArraysResult :=\n  {} offsets sizes is_free prev_free count second first heads next previous capacity\n\n",
                 model.name, model.refines
@@ -4255,6 +4303,15 @@ mod tests {
             "theorem tlsf_vec_new_u8_refines : tlsf_vec_new_u8_model = Luffs.Runtime.Containers.vecNewU8Arrays"
         ));
         assert!(generated.contains(
+            "theorem tlsf_vec_new_u128_refines : tlsf_vec_new_u128_model = Luffs.Runtime.Containers.vecNewU128Arrays"
+        ));
+        assert!(generated.contains(
+            "theorem tlsf_vec_new_i128_refines : tlsf_vec_new_i128_model = Luffs.Runtime.Containers.vecNewI128Arrays"
+        ));
+        assert!(generated.contains(
+            "theorem tlsf_vec_new_usize_refines : tlsf_vec_new_usize_model = Luffs.Runtime.Containers.vecNewUsizeArrays"
+        ));
+        assert!(generated.contains(
             "else tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous\n    (Luffs.Containers.Vec.allocationBytes Luffs.Memory.Scalar.u8 capacity)"
         ));
         assert!(generated.contains(
@@ -4469,6 +4526,21 @@ mod tests {
             !m.tlsf_vec_new_models
                 .iter()
                 .any(|model| model.name == "tlsf_vec_new_u16")
+        );
+    }
+
+    #[test]
+    fn tlsf_vec_u128_refinement_rejects_wrong_element_width() {
+        let source = include_str!("../stdlib/tlsf.luffs").replace(
+            "let bytes: usize = capacity.checked_mul(16)?;",
+            "let bytes: usize = capacity.checked_mul(8)?;",
+        );
+        let module = parse(&source).unwrap();
+        assert!(
+            !module
+                .tlsf_vec_new_models
+                .iter()
+                .any(|model| model.name == "tlsf_vec_new_u128")
         );
     }
 

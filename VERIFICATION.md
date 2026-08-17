@@ -763,6 +763,13 @@ concurrency are later extensions and are not prerequisites for `Box` and
   `vecNewArrays Scalar.u16`, and the generic Iris theorem returns an empty
   exclusive typed Vec capability. A source-shape regression rejects omission
   of the capacity multiplication.
+  Construction is now monomorphized across the complete scalar surface:
+  unsigned 32/64/128-bit constructors perform their own checked byte-capacity
+  multiplication, and signed/native-width constructors reuse the identical
+  representation layout. Each generated model targets the corresponding
+  `vecNewArrays` codec specialization, so `vecNewArrays_refines_vec` supplies
+  the empty exclusive typed Vec capability. A u128 mutation regression rejects
+  using an eight-byte element width.
   Generic executable push now checks capacity, multiplication, base addition,
   and end-of-element arithmetic in the 64-bit domain before performing the
   codec-wide store. Its storage write is proved to occur exactly after the

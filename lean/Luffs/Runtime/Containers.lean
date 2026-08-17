@@ -972,6 +972,17 @@ def vecNewU16Arrays (offsets sizes : List Nat)
   vecNewArrays Scalar.u16 offsets sizes isFree prevFree count second first
     heads next previous capacity
 
+def vecNewU32Arrays := vecNewArrays Scalar.u32
+def vecNewU64Arrays := vecNewArrays Scalar.u64
+def vecNewU128Arrays := vecNewArrays Scalar.u128
+def vecNewI8Arrays := vecNewArrays Scalar.i8
+def vecNewI16Arrays := vecNewArrays Scalar.i16
+def vecNewI32Arrays := vecNewArrays Scalar.i32
+def vecNewI64Arrays := vecNewArrays Scalar.i64
+def vecNewI128Arrays := vecNewArrays Scalar.i128
+def vecNewUsizeArrays := vecNewArrays Scalar.usize
+def vecNewIsizeArrays := vecNewArrays Scalar.isize
+
 set_option maxHeartbeats 1200000 in
 theorem vecNewU16Arrays_refines_vec
     {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]

@@ -802,6 +802,69 @@ fn tlsf_vec_new_u16(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_f
     tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)
 }
 
+// refines Luffs.Runtime.Containers.vecNewU32Arrays
+fn tlsf_vec_new_u32(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], capacity: usize) -> Option<usize> {
+    if capacity == 0 { return None; }
+    let bytes: usize = capacity.checked_mul(4)?;
+    let rounded: usize = bytes.checked_add(7)?;
+    let request: usize = rounded & !7;
+    tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)
+}
+
+// refines Luffs.Runtime.Containers.vecNewU64Arrays
+fn tlsf_vec_new_u64(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], capacity: usize) -> Option<usize> {
+    if capacity == 0 { return None; }
+    let bytes: usize = capacity.checked_mul(8)?;
+    let rounded: usize = bytes.checked_add(7)?;
+    let request: usize = rounded & !7;
+    tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)
+}
+
+// refines Luffs.Runtime.Containers.vecNewU128Arrays
+fn tlsf_vec_new_u128(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], capacity: usize) -> Option<usize> {
+    if capacity == 0 { return None; }
+    let bytes: usize = capacity.checked_mul(16)?;
+    let rounded: usize = bytes.checked_add(7)?;
+    let request: usize = rounded & !7;
+    tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)
+}
+
+// Scalar representations of equal width have identical Vec layouts.
+// refines Luffs.Runtime.Containers.vecNewI8Arrays
+fn tlsf_vec_new_i8(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], capacity: usize) -> Option<usize> {
+    tlsf_vec_new_u8(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, capacity)
+}
+
+// refines Luffs.Runtime.Containers.vecNewI16Arrays
+fn tlsf_vec_new_i16(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], capacity: usize) -> Option<usize> {
+    tlsf_vec_new_u16(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, capacity)
+}
+
+// refines Luffs.Runtime.Containers.vecNewI32Arrays
+fn tlsf_vec_new_i32(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], capacity: usize) -> Option<usize> {
+    tlsf_vec_new_u32(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, capacity)
+}
+
+// refines Luffs.Runtime.Containers.vecNewI64Arrays
+fn tlsf_vec_new_i64(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], capacity: usize) -> Option<usize> {
+    tlsf_vec_new_u64(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, capacity)
+}
+
+// refines Luffs.Runtime.Containers.vecNewI128Arrays
+fn tlsf_vec_new_i128(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], capacity: usize) -> Option<usize> {
+    tlsf_vec_new_u128(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, capacity)
+}
+
+// refines Luffs.Runtime.Containers.vecNewUsizeArrays
+fn tlsf_vec_new_usize(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], capacity: usize) -> Option<usize> {
+    tlsf_vec_new_u64(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, capacity)
+}
+
+// refines Luffs.Runtime.Containers.vecNewIsizeArrays
+fn tlsf_vec_new_isize(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], capacity: usize) -> Option<usize> {
+    tlsf_vec_new_u64(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, capacity)
+}
+
 // refines Luffs.Runtime.Containers.vecPushU8Offset
 fn tlsf_vec_push_u8(pool: &mut [u8; 4096], offset: usize, len: usize, capacity: usize, value: u8) -> Option<usize> {
     if len >= capacity { return None; }

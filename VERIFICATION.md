@@ -228,5 +228,15 @@ concurrency are later extensions and are not prerequisites for `Box` and
   store trace and updates the Iris content map; recombination reconstructs the
   Vec with the new logical middle and unchanged prefix/suffix. Scoped lifetime
   notation in Luffs and lowering remain.
+
+`stdlib/containers.luffs` now contains the first byte-monomorphized Box and Vec
+lowering: initialization/load/store, push/pop length transitions, indexed get,
+shared/mutable begin/end slices, and growth copying. Generated Rust uses only
+proof-gated unchecked accesses and checked scalar arithmetic. The corresponding
+Lean reference semantics proves successful runtime operations' bounds, storage
+updates, length preservation, and refinement to the abstract Vec push/pop
+handle transitions. Compiler-generated function semantics still need to
+replace this hand-associated reference module before the end-to-end refinement
+claim is complete.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.

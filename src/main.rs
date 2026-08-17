@@ -724,4 +724,20 @@ mod tests {
         assert!(m.rust.contains("get_unchecked_mut"));
         assert!(m.rust.contains("checked_mul"));
     }
+
+    #[test]
+    fn container_runtime_source_has_only_proved_accesses() {
+        let m = parse(include_str!("../stdlib/containers.luffs")).unwrap();
+        validate(&m).unwrap();
+        assert!(m.accesses.len() >= 10);
+        assert_eq!(
+            m.accesses.len(),
+            m.proofs
+                .iter()
+                .filter(|p| p.name.starts_with("__auto_"))
+                .count()
+        );
+        assert!(m.rust.contains("get_unchecked_mut"));
+        assert!(m.rust.contains("copy_from_slice"));
+    }
 }

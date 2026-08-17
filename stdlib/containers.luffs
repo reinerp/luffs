@@ -1,0 +1,68 @@
+// Concrete byte-specialized Box and Vec runtime operations. Generic codecs are
+// represented in Lean; these functions are the first monomorphized lowering.
+
+fn box_initialize_u8(storage: &mut [u8], begin: usize, value: u8) -> Option<()> {
+    if begin >= storage.len() { return None; }
+    storage[begin] = value;
+    Some(())
+}
+
+fn box_load_u8(storage: &[u8], begin: usize) -> Option<u8> {
+    if begin >= storage.len() { return None; }
+    Some(storage[begin])
+}
+
+fn box_store_u8(storage: &mut [u8], begin: usize, value: u8) -> Option<()> {
+    if begin >= storage.len() { return None; }
+    storage[begin] = value;
+    Some(())
+}
+
+fn vec_push_u8(storage: &mut [u8], len: usize, capacity: usize, value: u8) -> Option<usize> {
+    if len >= capacity { return None; }
+    if capacity > storage.len() { return None; }
+    storage[len] = value;
+    len.checked_add(1)
+}
+
+fn vec_last_u8(storage: &[u8], len: usize) -> Option<u8> {
+    if len == 0 { return None; }
+    if len > storage.len() { return None; }
+    let index: usize = len - 1;
+    Some(storage[index])
+}
+
+fn vec_len_after_pop(len: usize) -> Option<usize> {
+    if len == 0 { return None; }
+    let next_len: usize = len - 1;
+    Some(next_len)
+}
+
+fn vec_get_u8(storage: &[u8], len: usize, index: usize) -> Option<u8> {
+    if index >= len { return None; }
+    if len > storage.len() { return None; }
+    Some(storage[index])
+}
+
+fn vec_slice_u8(storage: &[u8], len: usize, begin: usize, end: usize) -> Option<&[u8]> {
+    if begin > end { return None; }
+    if end > len { return None; }
+    if len > storage.len() { return None; }
+    Some(storage[begin..<end])
+}
+
+fn vec_slice_mut_u8(storage: &mut [u8], len: usize, begin: usize, end: usize) -> Option<&mut [u8]> {
+    if begin > end { return None; }
+    if end > len { return None; }
+    if len > storage.len() { return None; }
+    Some(storage[begin..<end])
+}
+
+fn vec_copy_grow_u8(source: &[u8], destination: &mut [u8], len: usize) -> Option<()> {
+    if len > source.len() { return None; }
+    if len > destination.len() { return None; }
+    let from: &[u8] = source[0..<len];
+    let to: &mut [u8] = destination[0..<len];
+    to.copy_from_slice(from);
+    Some(())
+}

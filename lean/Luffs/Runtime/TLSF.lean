@@ -55,6 +55,13 @@ def remove (state : Metadata) (bin block : Nat) : Option Metadata :=
     let previous := previous.set block state.previous.length
     some { heads, next, previous }
 
+/-- Array-tuple facade used by compiler-generated removal semantics. -/
+def removeArrays (heads next previous : List Nat) (bin block : Nat) :
+    Option (List Nat × List Nat × List Nat) :=
+  match remove { heads, next, previous } bin block with
+  | none => none
+  | some state => some (state.heads, state.next, state.previous)
+
 def linked (state : Metadata) : Nat → List Nat → Prop
   | _, [] => True
   | expectedPrevious, block :: rest =>

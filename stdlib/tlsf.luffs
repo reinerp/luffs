@@ -18,6 +18,7 @@ fn tlsf_insert(heads: &mut [usize; 256], next: &mut [usize; 4096], previous: &mu
     Some(())
 }
 
+// refines Luffs.Runtime.TLSF.removeArrays
 fn tlsf_remove(heads: &mut [usize; 256], next: &mut [usize; 4096], previous: &mut [usize; 4096], bin: usize, block: usize) -> Option<()> {
     if bin >= heads.len() { return None; }
     if block >= next.len() { return None; }

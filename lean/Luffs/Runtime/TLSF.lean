@@ -1217,6 +1217,94 @@ theorem findNonemptyClassLowered_selects_nonempty
   have hset : state.slSet cls.fl cls.sl = true := Option.some.inj hrepresented.symm
   exact ⟨cls, hclass, hencode, (hvalid.2.2.1 cls.fl cls.sl).mp hset⟩
 
+theorem findNonemptyClassLowered_eq_findCandidate
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {state : Bins.State} (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second) (hvalid : Bins.Valid state)
+    (start selected : SizeClass) {bin : Nat}
+    (hfind : findNonemptyClassLowered second first start.fl.val start.sl.val =
+      some bin) (hclass : classOfBin? bin = some selected) :
+    Bins.findCandidate state start = some selected := by
+  have hbin := classOfBin?_index hclass
+  have hlogical : findNonemptyClass second start.fl.val start.sl.val = some bin := by
+    rw [← findNonemptyClassLowered_refines hfirst _ _ start.sl.isLt]
+    exact hfind
+  have hsound := findNonemptyClass_sound hlogical
+  have hselectedBit := hsecond.2 selected
+  rw [← hbin, hsound.2.2] at hselectedBit
+  have hselectedSet : state.slSet selected.fl selected.sl = true :=
+    Option.some.inj hselectedBit.symm
+  have hselectedNonempty := (hvalid.2.2.1 selected.fl selected.sl).1 hselectedSet
+  have heligible : Bins.HasEligibleBin state start := by
+    by_cases hfl : selected.fl.val = start.fl.val
+    · left
+      have hflEq : selected.fl = start.fl := Fin.ext hfl
+      refine ⟨selected.sl, ?_, ?_⟩
+      have hstartSl := start.sl.isLt
+      have hselectedSl := selected.sl.isLt
+      rw [hbin] at hsound
+      simp only [secondLevelCount] at hsound hstartSl hselectedSl
+      omega
+      · simpa [hflEq] using hselectedSet
+    · right
+      have hflAfter : start.fl.val < selected.fl.val := by
+        have hstartSl := start.sl.isLt
+        have hselectedSl := selected.sl.isLt
+        rw [hbin] at hsound
+        simp only [secondLevelCount] at hsound hstartSl hselectedSl
+        omega
+      refine ⟨selected.fl, hflAfter, ?_⟩
+      exact (hvalid.2.2.2 selected.fl).2 ⟨selected.sl, hselectedNonempty⟩
+  cases habstract : Bins.findCandidate state start with
+  | none =>
+      exact (((Bins.findCandidate_none_iff hvalid).1 habstract) heligible).elim
+  | some abstract =>
+      have habstractNonempty := Bins.findCandidate_nonempty hvalid habstract
+      have hselectedStart :
+          start.fl.val * secondLevelCount + start.sl.val ≤
+            selected.fl.val * secondLevelCount + selected.sl.val := by
+        rw [← hbin]
+        simpa [secondLevelCount] using hsound.1
+      have habstractMinimal := Bins.findCandidate_encoded_minimal hvalid habstract
+        hselectedNonempty hselectedStart
+      have habstractNotBefore : ¬
+          abstract.fl.val * secondLevelCount + abstract.sl.val < bin := by
+        intro habstractEarlier
+        have habstractStart :
+            start.fl.val * 32 + start.sl.val ≤
+              abstract.fl.val * 32 + abstract.sl.val := by
+          have horder := Bins.findCandidate_ordered habstract
+          rcases horder with hflOrder | hsameOrder
+          · have hstartSl := start.sl.isLt
+            have habstractSl := abstract.sl.isLt
+            simp only [secondLevelCount] at hflOrder hstartSl habstractSl
+            omega
+          · simp only [secondLevelCount] at hsameOrder
+            omega
+        have habstractEarlier32 :
+            abstract.fl.val * 32 + abstract.sl.val < bin := by
+          simpa [secondLevelCount] using habstractEarlier
+        have hfalse := findNonemptyClassLowered_minimal hfirst start.sl.isLt
+          hfind habstractStart habstractEarlier32
+        have habstractRep := hsecond.2 abstract
+        have habstractSet :=
+          (hvalid.2.2.1 abstract.fl abstract.sl).2 habstractNonempty
+        rw [habstractSet] at habstractRep
+        have habstractRep32 :
+            (classBits second)[abstract.fl.val * 32 + abstract.sl.val]? =
+              some true := by
+          simpa [secondLevelCount] using habstractRep
+        rw [habstractRep32] at hfalse
+        contradiction
+      have hindexEq :
+          abstract.fl.val * secondLevelCount + abstract.sl.val = bin := by
+        rw [← hbin] at habstractMinimal
+        omega
+      have habstractEq : abstract = selected := by
+        apply classIndex_injective
+        rw [hindexEq, hbin]
+      simpa [habstractEq] using habstract
+
 def clearWordBit (bitmap : BitVec 64) (bit : Nat) : BitVec 64 :=
   bitmap &&& ~~~(BitVec.ofNat 64 1 <<< bit)
 
@@ -2242,6 +2330,7 @@ theorem takeCandidateClassArrays_preserves_bins
     (htake : takeCandidateClassArrays second first heads next previous
       startFl startSl = some result) :
     ∃ cls removed rest,
+      classOfBin? result.bin = some cls ∧
       FreeList.removeFront (state.chains cls) = some (removed, rest) ∧
       result.block = removed.offset ∧
       RepresentsBins (Metadata.mk result.heads result.next result.previous)
@@ -2278,7 +2367,7 @@ theorem takeCandidateClassArrays_preserves_bins
     rw [hremove] at hselectedRemove
     exact (Option.some.inj hselectedRemove).symm
   subst selectedMetadata
-  refine ⟨cls, removed, rest, hremoveFront, hblock, ?_, hsecondNext,
+  refine ⟨cls, removed, rest, hclass, hremoveFront, hblock, ?_, hsecondNext,
     hfirstNext⟩
   intro query
   by_cases hquery : query = cls
@@ -2301,6 +2390,36 @@ theorem takeCandidateClassArrays_preserves_bins
     have hpreserved := remove_front_preserves_other hselected hother
       hqueryBin hnodes hremove
     simpa [Bins.replaceChain_other state rest hquery] using hpreserved
+
+theorem takeCandidateClassArrays_refines_takeCandidate
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {result : ClassCandidateResult}
+    {state : Bins.State} (start : SizeClass)
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second) (hvalid : Bins.Valid state)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (htake : takeCandidateClassArrays second first heads next previous
+      start.fl.val start.sl.val = some result) :
+    ∃ cls removed rest,
+      state.takeCandidate start = some (removed, state.replaceChain cls rest) ∧
+      result.block = removed.offset ∧
+      RepresentsBins (Metadata.mk result.heads result.next result.previous)
+        (state.replaceChain cls rest) ∧
+      RepresentsSecondBitmap result.second (state.replaceChain cls rest) ∧
+      FirstBitmapRep result.first result.second := by
+  obtain ⟨cls, removed, rest, hclass, hremoveFront, hblock, hnextBins,
+    hnextSecond, hnextFirst⟩ := takeCandidateClassArrays_preserves_bins
+      hsecond hfirst hvalid hbins hdisjoint htake
+  have hresult := takeCandidateClassArrays_result htake
+  have hfindAbstract := findNonemptyClassLowered_eq_findCandidate
+    hsecond hfirst hvalid start cls hresult.1 hclass
+  have habstractTake :
+      state.takeCandidate start = some (removed, state.replaceChain cls rest) := by
+    simp [Bins.State.takeCandidate, hfindAbstract, Bins.State.removeFront,
+      hremoveFront]
+  exact ⟨cls, removed, rest, habstractTake, hblock, hnextBins,
+    hnextSecond, hnextFirst⟩
 
 theorem remove_second_complete {state : Metadata} {bin head block : Nat}
     {rest : List Nat} (hrep : RepresentsBin state bin (head :: block :: rest)) :

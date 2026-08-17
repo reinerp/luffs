@@ -1169,6 +1169,100 @@ theorem findCandidate_nonempty {state : State} {start found : SizeClass}
       ⟨found.fl.val, hflBound⟩ 0 found.sl.val hsecond
     simpa using hchain
 
+/-- The two-level search returns the least encoded nonempty class at or above
+the encoded start class. -/
+theorem findCandidate_encoded_minimal {state : State} {start found other : SizeClass}
+    (hvalid : Valid state) (hfind : findCandidate state start = some found)
+    (hother : state.chains other ≠ [])
+    (hstart : start.fl.val * secondLevelCount + start.sl.val ≤
+      other.fl.val * secondLevelCount + other.sl.val) :
+    found.fl.val * secondLevelCount + found.sl.val ≤
+      other.fl.val * secondLevelCount + other.sl.val := by
+  have hindices := findCandidate_result hfind
+  have hcandidate := findCandidateIndices_result hindices
+  have hotherSlSet := (hvalid.2.2.1 other.fl other.sl).2 hother
+  have hotherSlBit : (slBitmap state other.fl)[other.sl.val]? = some true := by
+    simp [slBitmap, hotherSlSet]
+  have hotherFlSet := (hvalid.2.2.2 other.fl).2 ⟨other.sl, hother⟩
+  have hotherFlBit : (flBitmap state)[other.fl.val]? = some true := by
+    simp [flBitmap, hotherFlSet]
+  rcases hcandidate with hsame | hlater
+  · have hfoundFl : found.fl = start.fl := Fin.ext hsame.1
+    by_cases hotherFl : other.fl.val = start.fl.val
+    · have hotherSlNotBefore : ¬other.sl.val < found.sl.val := by
+        intro hbefore
+        have hlower : start.sl.val ≤ other.sl.val := by
+          have hstartSl := start.sl.isLt
+          have hotherSl := other.sl.isLt
+          simp only [secondLevelCount] at hstart hstartSl hotherSl
+          omega
+        have hfalse := firstSetFrom_minimal hsame.2 hlower hbefore
+        have hflEq : other.fl = start.fl := Fin.ext hotherFl
+        rw [← hflEq, hotherSlBit] at hfalse
+        contradiction
+      simp only [secondLevelCount] at hstart ⊢
+      simp only [hfoundFl, hotherFl]
+      omega
+    · have hotherFlAfter : start.fl.val < other.fl.val := by
+        have hstartSl := start.sl.isLt
+        have hotherSl := other.sl.isLt
+        simp only [secondLevelCount] at hstart hstartSl hotherSl
+        omega
+      have hfoundSl := found.sl.isLt
+      have hotherSl := other.sl.isLt
+      simp only [hfoundFl, secondLevelCount] at hfoundSl hotherSl ⊢
+      omega
+  · obtain ⟨hfoundFlBound, hfirst, hsecond⟩ := hlater
+    have hfoundAfter : start.fl.val < found.fl.val := by
+      exact Nat.lt_of_succ_le (firstSetFrom_sound hfirst).1
+    have hsameNone :
+        firstSetFrom (slBitmap state start.fl) start.sl.val = none := by
+      cases hsameSearch :
+          firstSetFrom (slBitmap state start.fl) start.sl.val with
+      | none => rfl
+      | some sameSl =>
+          unfold findCandidateIndices at hindices
+          rw [hsameSearch] at hindices
+          simp only [Option.some.injEq, Prod.mk.injEq] at hindices
+          omega
+    have hotherNotStart : other.fl.val ≠ start.fl.val := by
+      intro hfl
+      have hotherSlAtOrAfter : start.sl.val ≤ other.sl.val := by
+        have hstartSl := start.sl.isLt
+        have hotherSl := other.sl.isLt
+        simp only [secondLevelCount] at hstart hstartSl hotherSl
+        omega
+      have hflEq : other.fl = start.fl := Fin.ext hfl
+      obtain ⟨selected, hselected⟩ := firstSetFrom_complete
+        hotherSlAtOrAfter (by simpa [hflEq] using hotherSlBit)
+      rw [hsameNone] at hselected
+      contradiction
+    have hotherAfter : start.fl.val < other.fl.val := by
+      have hstartSl := start.sl.isLt
+      have hotherSl := other.sl.isLt
+      simp only [secondLevelCount] at hstart hstartSl hotherSl
+      omega
+    have hfoundFlNotAfter : ¬other.fl.val < found.fl.val := by
+      intro hbefore
+      have hfalse := firstSetFrom_minimal hfirst
+        (Nat.succ_le_iff.mpr hotherAfter) hbefore
+      rw [hotherFlBit] at hfalse
+      contradiction
+    by_cases hsameFl : found.fl.val = other.fl.val
+    · have hotherSlNotBefore : ¬other.sl.val < found.sl.val := by
+        intro hbefore
+        have hfalse := firstSetFrom_minimal hsecond (Nat.zero_le _) hbefore
+        have hflEq : other.fl = ⟨found.fl.val, hfoundFlBound⟩ :=
+          Fin.ext hsameFl.symm
+        rw [← hflEq, hotherSlBit] at hfalse
+        contradiction
+      simp only [secondLevelCount] at hstart ⊢
+      omega
+    · have hfoundSl := found.sl.isLt
+      have hotherSl := other.sl.isLt
+      simp only [secondLevelCount] at hfoundSl hotherSl ⊢
+      omega
+
 def State.takeCandidate (state : State) (start : SizeClass) :
     Option (Block × State) :=
   match findCandidate state start with

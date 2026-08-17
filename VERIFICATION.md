@@ -233,6 +233,11 @@ also preserves the intrusive metadata representation for every chain in the
 successor state: the selected head is detached, its remainder is represented,
 and all other bins are framed unchanged. This closes the modeled candidate
 transition from concrete Luffs metadata to the abstract bin operation.
+The abstract two-level lookup is now separately proved minimal in encoded
+class order. Combining abstract and concrete minimality proves that the Luffs
+lookup selects exactly `Bins.findCandidate`; the final composed theorem proves
+the concrete candidate transition refines `Bins.State.takeCandidate`, including
+the returned block offset and all successor representations.
 The logical 2048-bit search is also proved equal to a chunked search that
 examines only the suffix of the starting `u32` and then the remaining complete
 second-level words. For each `u32`, masked `ctz` is proved exactly equal to its

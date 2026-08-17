@@ -67,7 +67,7 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   models its checked rounding addition and composes with mapping-down. Its
   proof covers exact top-bin overflow, and generated refinement likewise uses
   the extensional theorem rather than aliasing the specification.
-- [ ] Implement bitmap search and prove it returns a nonempty suitable bin.
+- [x] Implement bitmap search and prove it returns a nonempty suitable bin.
   The reference search is proved in-bounds, set-bit sound, and minimal from its
   starting index. Cached first/second-level bits are now proved equivalent to
   nonempty intrusive chains, and a successful second-level search is proved to
@@ -86,7 +86,7 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   facade now converts successful raw indices to `Fin` fields; success proves
   that exact class has a nonempty chain and inherits the unified physical-block
   suitability result.
-- [ ] Implement intrusive free-list insertion/removal and prove link
+- [x] Implement intrusive free-list insertion/removal and prove link
   consistency and ownership preservation.
   Blocks now carry intrusive previous/next offsets. Front insertion and removal
   are executable and proved to preserve bidirectional link consistency and
@@ -99,21 +99,20 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   boundary tags and the chain projection owns intrusive links. Bitmap-selected heads are proved to represent
   physical blocks, with free state, size classification, alignment, and region
   transferred across that relation; classification functionality rules out
-  two distinct classes. State-changing bin operations must still be proved to
-  preserve this agreement. Bitmap caches can now be rebuilt from
+  two distinct classes. State-changing bin operations preserve this agreement
+  through allocation, deallocation, and coalescing. Bitmap caches can now be rebuilt from
   chains with a proof that both levels exactly reflect chain nonemptiness;
   front insertion of a fresh, correctly classified block preserves intrusive
   links, classification, and both rebuilt bitmap invariants. Front removal is
   likewise proved to preserve those invariants, returns a detached block, and
-  rebuilds both bitmap levels (including empty-bin clearing). The simultaneous
-  physical-metadata update remains. Lookup and removal are now composed as an
+  rebuilds both bitmap levels (including empty-bin clearing). Lookup and removal are now composed as an
   executable `takeCandidate` transition: success preserves bin validity and
   returns a detached head, while failure occurs exactly when no eligible bin
   exists. Suitability is proved class-wide, so the exact detached head is now
   proved aligned and large enough, and remains related to an authoritative
   physical header. Executable physical-header lookup by shared metadata is
-  proved sound and complete. Applying the exact-fit/split mutation and
-  reinserting a remainder remain. The concrete Luffs insertion wrapper now
+  proved sound and complete. Exact-fit/split mutation and remainder
+  reinsertion are composed by the complete allocation theorem. The concrete Luffs insertion wrapper now
   performs all bounds checks before mutation, inserts the block through the
   intrusive primitive, and sets both packed bitmap-cache levels. Its exact
   generated state model proves metadata-length preservation, representation
@@ -140,17 +139,22 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   Initialization now also rejects pools larger than the 4096-byte intrusive
   link address space. Lean proves every successful concrete initialization
   satisfies that bound, so later byte-offset link indexing is representable.
-- [ ] Prove physical blocks form a disjoint partition of every mapped pool.
+- [x] Prove physical blocks form a disjoint partition of every mapped pool.
   `partitions` now requires adjacency from offset zero plus exact byte coverage,
   closing the gap permitted by the earlier ordered/sum-only invariant.
-- [ ] Prove split and coalesce preserve alignment, boundary tags, bin
+  Initialization establishes it, and the complete allocation/deallocation
+  theorems preserve the `Alloc.Valid` physical `wellFormed` component containing
+  that exact partition.
+- [x] Prove split and coalesce preserve alignment, boundary tags, bin
   membership, and the pool partition.
   Head-block splitting now preserves the contiguous pool partition and
   transfers the original Iris byte ownership exactly to the two output blocks.
   Arbitrary-position splitting now preserves the partition; aligned requests
   produce two aligned, nonempty blocks. The executable block model now carries
   a predecessor-free boundary tag, and allocation, deallocation, and
-  coalescing are proved to preserve tag consistency. Bin membership remains.
+  coalescing are proved to preserve tag consistency. Their complete refinement
+  theorems also preserve `Bins.Valid`, physical/bin agreement, both bitmap
+  representations, and the pool partition, including bin membership.
 - [x] Prove `alloc`: failure preserves the heap; success returns a fresh,
   aligned owned region of at least the requested size.
   The executable split-success transition now rejects non-free, undersized, or

@@ -209,6 +209,128 @@ theorem classifySizeBinLowered_eq (size : Nat) :
       omega
     simp [classifySizeBinLowered, classifySizeBin, hword, hpositive, hout]
 
+/-- Source-shaped computation of the upper endpoint used for mapping an
+allocation request upward. The two final comparisons model the source's
+checked additions in the 64-bit `usize` domain. -/
+def highRequestKeyLowered (request : Nat) : Option Nat :=
+  let leading := leadingZeros64 request
+  if leading > 63 then none
+  else
+    let fl := 63 - leading
+    if fl < 5 then none
+    else
+      let base := 1 <<< fl
+      if base > request then none
+      else
+        let shift := fl - 5
+        let step := 1 <<< shift
+        let delta := request - base
+        let sl := delta / step
+        if sl ≥ 32 then none
+        else
+          let lowerDelta := sl * step
+          let lower := base + lowerDelta
+          if lower > usizeMax then none
+          else
+            let key := lower + step
+            if key > usizeMax then none else some key
+
+theorem highRequestKeyLowered_eq (request : Nat)
+    (hpositive : 0 < request) (hhigh : linearCutoff < request)
+    (hmax : request < 2 ^ 64) :
+    highRequestKeyLowered request =
+      if requestKey request > usizeMax then none else some (requestKey request) := by
+  have hlogMax : request.log2 < 64 :=
+    (Nat.log2_lt (Nat.ne_of_gt hpositive)).2 hmax
+  have hfl : 63 - (63 - request.log2) = request.log2 := by omega
+  have hlog : 5 ≤ request.log2 := high_log_at_least_five request hhigh
+  have hbase : 2 ^ request.log2 ≤ request :=
+    Nat.log2_self_le (Nat.ne_of_gt hpositive)
+  have hsl : (request - 2 ^ request.log2) /
+      2 ^ (request.log2 - 5) < 32 := by
+    simpa [secondLevelCount] using
+      high_sizeClass_quotient_lt request hpositive hlog
+  have hlower : 2 ^ request.log2 +
+      ((request - 2 ^ request.log2) / 2 ^ (request.log2 - 5)) *
+        2 ^ (request.log2 - 5) = highBinLower request := by
+    rfl
+  have hkey : highBinLower request + 2 ^ (request.log2 - 5) =
+      requestKey request := by
+    simp [requestKey, Nat.not_le_of_gt hhigh, highBinUpper, highBinStep]
+  have hlowerLe : highBinLower request ≤ request :=
+    (high_sizeClass_covers request hpositive).1
+  have hword : request ≤ usizeMax := by
+    simp only [usizeMax]
+    omega
+  have hlowerWord : ¬highBinLower request > usizeMax := by omega
+  simp only [highRequestKeyLowered, leadingZeros64_eq hpositive hmax,
+    show ¬63 < 63 - request.log2 by omega, ↓reduceIte, hfl,
+    Nat.not_lt_of_ge hlog, Nat.shiftLeft_eq, Nat.one_mul,
+    Nat.not_lt_of_ge hbase, Nat.not_le.mpr hsl]
+  rw [hlower, if_neg hlowerWord, hkey]
+
+/-- Independent executable semantics of `tlsf_classify_request`. The high
+branch calls the separately lowered mapping-down classifier, matching the
+actual Luffs call graph. -/
+def classifyRequestBinLowered (request : Nat) : Option Nat :=
+  if request > usizeMax then none
+  else if request = 0 then none
+  else if request ≤ 256 then classifySizeBinLowered request
+  else do
+    let key ← highRequestKeyLowered request
+    classifySizeBinLowered key
+
+theorem classifyRequestBinLowered_eq (request : Nat) :
+    classifyRequestBinLowered request = classifyRequestBin request := by
+  by_cases hwordOut : request > usizeMax
+  · have hpositive : 0 < request := by omega
+    have hkeyOut : ¬requestKey request < 2 ^ firstLevelCount := by
+      have hle := request_le_key request hpositive
+      simp only [usizeMax, firstLevelCount] at hwordOut ⊢
+      omega
+    simp [classifyRequestBinLowered, hwordOut, classifyRequestBin,
+      hpositive, hkeyOut]
+  by_cases hzero : request = 0
+  · simp [classifyRequestBinLowered, hwordOut, hzero, classifyRequestBin]
+  have hpositive : 0 < request := Nat.pos_of_ne_zero hzero
+  have hmax : request < 2 ^ 64 := by
+    simp only [usizeMax] at hwordOut
+    omega
+  by_cases hlinear : request ≤ 256
+  · have hlinearCutoff : request ≤ linearCutoff := by
+      simpa [linearCutoff, alignment, secondLevelCount] using hlinear
+    have hkeyMax : requestKey request < 2 ^ firstLevelCount := by
+      simp [requestKey, hlinearCutoff, linearBinUpper, linearBinNumber,
+        alignment, firstLevelCount]
+      omega
+    have hkeyMax64 : requestKey request < 2 ^ 64 := by
+      simpa [firstLevelCount] using hkeyMax
+    rw [classifyRequestBinLowered]
+    simp only [hwordOut, ↓reduceIte, hzero, hlinear]
+    rw [classifySizeBinLowered_eq]
+    simp [classifyRequestBin, classifySizeBin, hpositive, hmax, hkeyMax,
+      hkeyMax64,
+      searchSizeClass, hlinearCutoff, firstLevelCount]
+  · have hhigh : linearCutoff < request := by
+      simp only [linearCutoff, alignment, secondLevelCount]
+      omega
+    rw [classifyRequestBinLowered]
+    simp only [hwordOut, ↓reduceIte, hzero, hlinear]
+    rw [highRequestKeyLowered_eq request hpositive hhigh hmax]
+    by_cases hkeyWord : requestKey request > usizeMax
+    · have hkeyOut : ¬requestKey request < 2 ^ firstLevelCount := by
+        simp only [usizeMax, firstLevelCount] at hkeyWord ⊢
+        omega
+      simp [hkeyWord, classifyRequestBin, hpositive, hkeyOut]
+    · have hkeyMax : requestKey request < 2 ^ firstLevelCount := by
+        simp only [usizeMax, firstLevelCount] at hkeyWord ⊢
+        omega
+      simp only [hkeyWord, ↓reduceIte, Option.bind_eq_bind, Option.bind_some]
+      rw [classifySizeBinLowered_eq]
+      simp [classifyRequestBin, classifySizeBin, hpositive, hkeyMax,
+        searchSizeClass, requestSizeClass, Nat.not_le_of_gt hhigh,
+        requestKey_positive]
+
 /-- Pure state used by the fixed parallel-array TLSF lowering. -/
 structure Metadata where
   heads : List Nat

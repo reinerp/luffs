@@ -3205,11 +3205,11 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
     }
     for model in &module.tlsf_classify_request_models {
         out.push_str(&format!(
-            "def {}_model (request : Nat) : Option Nat :=\n  {} request\n\n",
-            model.name, model.refines
+            "def {}_model (request : Nat) : Option Nat :=\n  Luffs.Runtime.TLSF.classifyRequestBinLowered request\n\n",
+            model.name
         ));
         out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
+            "theorem {}_refines : {}_model = {} := by\n  funext request\n  exact Luffs.Runtime.TLSF.classifyRequestBinLowered_eq request\n\n",
             model.name, model.name, model.refines
         ));
     }
@@ -3643,6 +3643,10 @@ mod tests {
         ));
         assert!(generated.contains(
             "theorem tlsf_classify_request_refines : tlsf_classify_request_model = Luffs.Runtime.TLSF.classifyRequestBin"
+        ));
+        assert!(generated.contains("Luffs.Runtime.TLSF.classifyRequestBinLowered request"));
+        assert!(!generated.contains(
+            "def tlsf_classify_request_model (request : Nat) : Option Nat :=\n  Luffs.Runtime.TLSF.classifyRequestBin request"
         ));
         assert!(generated.contains(
             "theorem tlsf_insert_class_refines : tlsf_insert_class_model = Luffs.Runtime.TLSF.insertClassArrays"

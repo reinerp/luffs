@@ -52,7 +52,7 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
 
 - [x] Define the first pure block layout predicates and prove that splitting
   and coalescing preserve byte counts.
-- [ ] Implement size-class mapping and prove every `(fl, sl)` index in range.
+- [x] Implement size-class mapping and prove every `(fl, sl)` index in range.
   The Lean reference mapping returns `Fin 64 × Fin 32`; its high-range quotient
   is proved not to wrap and its selected interval is proved to contain the
   request. The corrected 32-bin linear branch is also proved to contain every
@@ -63,7 +63,10 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   the specification: it executes an independent 64-bit `leading_zeros`,
   shift, subtraction, quotient, and checked encoded-index path, proved
   extensionally equal to `sizeClass`; generated refinement uses that proof
-  rather than `rfl`. The mapping-up request path remains.
+  rather than `rfl`. The independently lowered mapping-up path additionally
+  models its checked rounding addition and composes with mapping-down. Its
+  proof covers exact top-bin overflow, and generated refinement likewise uses
+  the extensional theorem rather than aliasing the specification.
 - [ ] Implement bitmap search and prove it returns a nonempty suitable bin.
   The reference search is proved in-bounds, set-bit sound, and minimal from its
   starting index. Cached first/second-level bits are now proved equivalent to

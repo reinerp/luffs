@@ -216,8 +216,11 @@ flattened 2048-bit semantics, proves successful lowered lookup is in range and
 points to a set class bit, proves every result decodes to an in-range
 `SizeClass`, and relates the packed bitmap to `Bins.State.slSet`. Under
 `Bins.Valid`, every successful concrete lookup therefore selects an abstract
-class whose intrusive chain is nonempty. Full minimality/completeness under the
-first-level cache relation and the mutating candidate-state refinement remain.
+class whose intrusive chain is nonempty. The candidate-removal body now also
+has a compiler-recognized exact semantic model covering intrusive removal and
+both conditional bitmap clears. Lean proves its result equation and that
+clearing a selected class bit preserves every other class bit. Preservation of
+the combined concrete-to-abstract bitmap and chain relation remains.
 The logical 2048-bit search is also proved equal to a chunked search that
 examines only the suffix of the starting `u32` and then the remaining complete
 second-level words. For each `u32`, masked `ctz` is proved exactly equal to its

@@ -1197,6 +1197,178 @@ theorem clearBinBit_preserves_other_bit {words : List (BitVec 64)} {bin : Nat}
   rw [clearWordBit_getLsbD]
   simp [hne]
 
+def clearSecondBit (bitmap : BitVec 32) (bit : Nat) : BitVec 32 :=
+  bitmap &&& ~~~(BitVec.ofNat 32 1 <<< bit)
+
+theorem clearSecondBit_getLsbD (bitmap : BitVec 32) (bit index : Nat) :
+    (clearSecondBit bitmap bit).getLsbD index =
+      if index = bit ∧ index < 32 then false else bitmap.getLsbD index := by
+  simp only [clearSecondBit, BitVec.getLsbD_and, BitVec.getLsbD_not,
+    BitVec.getLsbD_shiftLeft, BitVec.getLsbD_ofNat]
+  by_cases hindex : index < 32 <;> by_cases heq : index = bit
+  · subst bit
+    simp [hindex]
+  ·
+    by_cases hbefore : index < bit
+    · simp [hindex, heq, hbefore]
+    · have htestFalse : Nat.testBit 1 (index - bit) = false := by
+        cases htest : Nat.testBit 1 (index - bit) with
+        | false => rfl
+        | true =>
+          have hzero := Nat.testBit_one_eq_true_iff_self_eq_zero.mp htest
+          omega
+      simp [hindex, heq, hbefore, htestFalse]
+  · have hbitmap := BitVec.getLsbD_of_ge bitmap index (by omega)
+    simp [hindex, hbitmap]
+  · have hbitmap := BitVec.getLsbD_of_ge bitmap index (by omega)
+    simp [hindex, hbitmap]
+
+def clearClassBit (second : List (BitVec 32)) (bin : Nat) :
+    List (BitVec 32) :=
+  let fl := bin / 32
+  let sl := bin % 32
+  let bitmap := second[fl]?.getD 0
+  second.set fl (clearSecondBit bitmap sl)
+
+theorem clearClassBit_length (second : List (BitVec 32)) (bin : Nat) :
+    (clearClassBit second bin).length = second.length := by
+  simp [clearClassBit]
+
+theorem clearClassBit_selected_false {second : List (BitVec 32)} {bin : Nat}
+    (hfl : bin / 32 < second.length) :
+    (classBits (clearClassBit second bin))[bin]? = some false := by
+  have hsl : bin % 32 < 32 := Nat.mod_lt bin (by decide)
+  have hset : (clearClassBit second bin)[bin / 32]? =
+      some (clearSecondBit second[bin / 32] (bin % 32)) := by
+    simp [clearClassBit, hfl]
+  have hclass := classBits_get hset hsl
+  rw [clearSecondBit_getLsbD] at hclass
+  simp [hsl] at hclass
+  rw [Nat.mul_comm (bin / 32) 32, Nat.div_add_mod] at hclass
+  exact hclass
+
+theorem clearClassBit_preserves_other {second : List (BitVec 32)}
+    {bin other : Nat} (hfl : bin / 32 < second.length)
+    (hother : other < second.length * 32) (hne : other ≠ bin) :
+    (classBits (clearClassBit second bin))[other]? =
+      (classBits second)[other]? := by
+  have hotherFl : other / 32 < second.length := by
+    rw [Nat.div_lt_iff_lt_mul (by decide : 0 < 32)]
+    exact hother
+  have hotherSl : other % 32 < 32 := Nat.mod_lt other (by decide)
+  have hold : second[other / 32]? = some second[other / 32] := by
+    simp [hotherFl]
+  by_cases hword : other / 32 = bin / 32
+  · have hnew : (clearClassBit second bin)[other / 32]? =
+        some (clearSecondBit second[other / 32] (bin % 32)) := by
+      simp [clearClassBit, hfl, hword]
+    have hnewBit := classBits_get hnew hotherSl
+    have holdBit := classBits_get hold hotherSl
+    have hslNe : other % 32 ≠ bin % 32 := by
+      intro hsl
+      apply hne
+      have hotherEq := Nat.div_add_mod other 32
+      have hbinEq := Nat.div_add_mod bin 32
+      omega
+    rw [clearSecondBit_getLsbD] at hnewBit
+    simp [hslNe] at hnewBit
+    have heq := hnewBit.trans holdBit.symm
+    rw [Nat.mul_comm (other / 32) 32, Nat.div_add_mod] at heq
+    exact heq
+  · have hnew : (clearClassBit second bin)[other / 32]? =
+        some second[other / 32] := by
+      simp [clearClassBit, hfl, List.getElem?_set_ne (Ne.symm hword), hold]
+    have hnewBit := classBits_get hnew hotherSl
+    have holdBit := classBits_get hold hotherSl
+    have heq := hnewBit.trans holdBit.symm
+    rw [Nat.mul_comm (other / 32) 32, Nat.div_add_mod] at heq
+    exact heq
+
+structure ClassCandidateResult where
+  block : Nat
+  bin : Nat
+  second : List (BitVec 32)
+  first : BitVec 64
+  heads : List Nat
+  next : List Nat
+  previous : List Nat
+deriving DecidableEq, Repr
+
+/-- Exact pure effect of the real 64 × 32 `tlsf_take_candidate_class`
+lowering. The first-level cache is cleared only when removing the last member
+also empties the selected second-level word. -/
+def takeCandidateClassArrays (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (startFl startSl : Nat) :
+    Option ClassCandidateResult :=
+  match findNonemptyClassLowered second first startFl startSl with
+  | none => none
+  | some bin =>
+      if bin ≥ heads.length then none else
+      let fl := bin / 32
+      if fl ≥ second.length then none else
+      let block := heads[bin]?.getD next.length
+      if block ≥ next.length then none else
+      if block ≥ previous.length then none else
+      let successor := next[block]?.getD next.length
+      match removeArrays heads next previous bin block with
+      | none => none
+      | some (nextHeads, nextLinks, nextPrevious) =>
+          if successor ≥ next.length then
+            let nextSecond := clearClassBit second bin
+            let nextFirst :=
+              if nextSecond[fl]?.getD 0 = 0 then clearWordBit first fl
+              else first
+            some (ClassCandidateResult.mk block bin nextSecond nextFirst
+              nextHeads nextLinks nextPrevious)
+          else
+            some (ClassCandidateResult.mk block bin second first nextHeads
+              nextLinks nextPrevious)
+
+theorem takeCandidateClassArrays_result
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {startFl startSl : Nat}
+    {result : ClassCandidateResult}
+    (htake : takeCandidateClassArrays second first heads next previous
+      startFl startSl = some result) :
+    findNonemptyClassLowered second first startFl startSl = some result.bin ∧
+      result.bin < heads.length ∧ result.bin / 32 < second.length ∧
+      result.block = heads[result.bin]?.getD next.length ∧
+      result.block < next.length ∧ result.block < previous.length ∧
+      removeArrays heads next previous result.bin result.block =
+        some (result.heads, result.next, result.previous) ∧
+      if next[result.block]?.getD next.length ≥ next.length then
+        result.second = clearClassBit second result.bin ∧
+          result.first =
+            if result.second[result.bin / 32]?.getD 0 = 0 then
+              clearWordBit first (result.bin / 32)
+            else first
+      else result.second = second ∧ result.first = first := by
+  unfold takeCandidateClassArrays at htake
+  split at htake <;> try contradiction
+  next bin hfind =>
+    split at htake <;> try contradiction
+    next hbin =>
+      dsimp only at htake
+      split at htake <;> try contradiction
+      next hfl =>
+        split at htake <;> try contradiction
+        next hnext =>
+          split at htake <;> try contradiction
+          next hprevious =>
+            cases hremove : removeArrays heads next previous bin
+                (heads[bin]?.getD next.length) with
+            | none => simp [hremove] at htake
+            | some arrays =>
+              obtain ⟨nextHeads, nextLinks, nextPrevious⟩ := arrays
+              simp only [hremove] at htake
+              split at htake
+              · split at htake <;> simp only [Option.some.injEq] at htake
+                all_goals subst result
+                all_goals simp_all [ClassCandidateResult.mk.injEq]
+              · simp only [Option.some.injEq] at htake
+                subst result
+                simp_all [ClassCandidateResult.mk.injEq] <;> omega
+
 structure CandidateResult where
   block : Nat
   bin : Nat

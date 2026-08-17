@@ -155,6 +155,7 @@ fn tlsf_find_nonempty_class(second_nonempty: &[u32; 64], first_nonempty: &[u64; 
 // Detach the selected class head and update both bitmap levels. The first-level
 // bit is cleared exactly when clearing the selected second-level bit empties
 // that entire second-level word.
+// refines Luffs.Runtime.TLSF.takeCandidateClassArrays
 fn tlsf_take_candidate_class(second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], start_fl: usize, start_sl: usize) -> Option<usize> {
     let bin: usize = tlsf_find_nonempty_class(second_nonempty, first_nonempty, start_fl, start_sl)?;
     if bin >= heads.len() { return None; }

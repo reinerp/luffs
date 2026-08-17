@@ -955,6 +955,11 @@ theorem grow_owns_step_with_copy_wp {GF : BundledGFunctors}
             (Program.copyBytes (handle.block.region pool).base
               (allocated.handle.block.region pool).base
               (encodeValues codec values)) mem
+            (fun final => final = memNext)) ∧
+          (⊢@{IProp GF} Program.wp
+            (Program.copyLoop (handle.block.region pool).base
+              (allocated.handle.block.region pool).base
+              (encodeValues codec values).length) mem
             (fun final => final = memNext))⌝ := by
   iintro H
   imod grow_owns_step_with_copy codec hhandle hlenCapacity hvalid hmember
@@ -964,7 +969,7 @@ theorem grow_owns_step_with_copy_wp {GF : BundledGFunctors}
   isplitl [Hresources]
   · iassumption
   · ipureintro
-    exact ⟨memNext, hsteps, hsteps.program_wp⟩
+    exact ⟨memNext, hsteps, hsteps.program_wp, hsteps.copyLoop_wp_exact⟩
 
 theorem owns_exclusive {GF : BundledGFunctors}
     [ByteRegionGS GF] [ByteContentsGS GF] {α : Type}

@@ -78,7 +78,12 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   loops non-stuck from mapped source/destination ranges, with u16 using the
   source-checked \`len * 2\` byte count. General emission for arbitrary nested
   branches and non-copy loop bodies still needs composition before this
-  end-to-end item can be checked off.
+  end-to-end item can be checked off. The bounded loop is additionally proved
+  extensionally equivalent, on every concrete \`CopySteps\` trace, to the
+  recursive exact-copy execution: it terminates in the identical final memory.
+  The framed Iris Vec-growth rule now returns that exact WP for the generated
+  loop alongside the transferred typed ownership, and the compiler emits the
+  same exact-trace theorem for both growth variants.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

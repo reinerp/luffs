@@ -3779,6 +3779,10 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
             "theorem {}_copy_program_wp {{GF : Iris.BundledGFunctors}}\n    (oldBase newBase len : Nat) (mem : Luffs.Memory.Memory)\n    (hsrc : ∀ i, i < {copied_len} → mem.mapped (oldBase + i))\n    (hdst : ∀ i, i < {copied_len} → mem.mapped (newBase + i)) :\n    ⊢@{{Iris.IProp GF}} Luffs.Memory.Program.wp\n      ({}_copy_program oldBase newBase len) mem\n      (fun final =>\n        (∀ i, i < {copied_len} → final.mapped (oldBase + i)) ∧\n        (∀ i, i < {copied_len} → final.mapped (newBase + i))) := by\n  exact Luffs.Memory.Program.copyLoop_wp oldBase newBase ({copied_len}) mem hsrc hdst\n\n",
             model.name, model.name
         ));
+        out.push_str(&format!(
+            "theorem {}_copy_program_wp_exact {{GF : Iris.BundledGFunctors}}\n    (oldBase newBase len : Nat) (values : List (Fin 256))\n    (before after : Luffs.Memory.Memory)\n    (hlen : values.length = {copied_len})\n    (hsteps : Luffs.Memory.CopySteps oldBase newBase values before after) :\n    ⊢@{{Iris.IProp GF}} Luffs.Memory.Program.wp\n      ({}_copy_program oldBase newBase len) before\n      (fun final => final = after) := by\n  unfold {}_copy_program\n  rw [← hlen]\n  exact hsteps.copyLoop_wp_exact\n\n",
+            model.name, model.name, model.name
+        ));
     }
     for model in &module.tlsf_deallocate_uncoalesced_models {
         out.push_str(&format!(
@@ -4147,6 +4151,8 @@ mod tests {
             "Luffs.Memory.Program.forRange 0 (len * 2)\n        (Luffs.Memory.Program.copyLoopBody oldBase newBase)"
         ));
         assert!(generated.contains("theorem tlsf_vec_grow_u16_copy_program_wp"));
+        assert!(generated.contains("theorem tlsf_vec_grow_u16_copy_program_wp_exact"));
+        assert!(generated.contains("exact hsteps.copyLoop_wp_exact"));
         assert!(generated.contains("hsrc : ∀ i, i < len * 2 → mem.mapped (oldBase + i)"));
         assert!(generated.contains(
             "theorem tlsf_remove_class_refines : tlsf_remove_class_model = Luffs.Runtime.TLSF.removeClassArrays"

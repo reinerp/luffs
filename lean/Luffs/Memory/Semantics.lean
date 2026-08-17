@@ -492,6 +492,80 @@ def Program.copyLoopBody (src dst : Addr) (i : Nat) : Program :=
 def Program.copyLoop (src dst count : Nat) : Program :=
   Program.forRange 0 count (Program.copyLoopBody src dst)
 
+def Program.copyLoopFrom (src dst : Addr) : Nat → Program
+  | 0 => .done
+  | count + 1 =>
+      .call (.load src) (fun result =>
+        match result with
+        | .byte value =>
+            .call (.store dst value) (fun _ =>
+              copyLoopFrom (src + 1) (dst + 1) count)
+        | _ => copyLoopFrom (src + 1) (dst + 1) count)
+
+theorem Program.forRange_copyLoopBody (src dst start count : Nat) :
+    Program.forRange start count (Program.copyLoopBody src dst) =
+      Program.copyLoopFrom (src + start) (dst + start) count := by
+  induction count generalizing start with
+  | zero => rfl
+  | succ count ih =>
+      simp only [Program.forRange, Program.copyLoopBody, Program.then,
+        Program.copyLoopFrom]
+      congr 1
+      funext result
+      cases result <;> simp [ih, Nat.add_assoc, Program.then]
+
+theorem Program.copyLoop_eq_copyLoopFrom (src dst count : Nat) :
+    Program.copyLoop src dst count = Program.copyLoopFrom src dst count := by
+  simpa [Program.copyLoop] using
+    Program.forRange_copyLoopBody src dst 0 count
+
+theorem CopySteps.copyLoopFrom_exec {src dst : Addr} {values : List Byte}
+    {before after : Memory}
+    (hsteps : CopySteps src dst values before after) :
+    Program.Exec (Program.copyLoopFrom src dst values.length) before after := by
+  induction hsteps with
+  | nil => exact .done
+  | cons hload hstore htail ih =>
+      exact .call hload (.call hstore ih)
+
+theorem CopySteps.copyLoopFrom_exec_unique {src dst : Addr}
+    {values : List Byte} {before after final : Memory}
+    (hsteps : CopySteps src dst values before after)
+    (hexec : Program.Exec (Program.copyLoopFrom src dst values.length)
+      before final) :
+    final = after := by
+  induction hsteps generalizing final with
+  | nil => cases hexec; rfl
+  | @cons src dst value rest mem next hload hstore htail ih =>
+      cases hload with
+      | load hexpected =>
+          cases hexec with
+          | call executedLoad restExec =>
+              cases executedLoad with
+              | @load _ _ actual hactual =>
+                  have hvalue : actual = value := by
+                    rw [hactual] at hexpected
+                    exact Option.some.inj hexpected
+                  subst actual
+                  cases restExec with
+                  | call executedStore tailExec =>
+                      cases executedStore
+                      exact ih tailExec
+
+/-- Exact refinement of the generated bounded loop to the byte-copy trace used
+by the Vec ownership transfer. -/
+theorem CopySteps.copyLoop_wp_exact {GF : BundledGFunctors}
+    {src dst : Addr} {values : List Byte} {before after : Memory}
+    (hsteps : CopySteps src dst values before after) :
+    ⊢@{IProp GF} Program.wp
+      (Program.copyLoop src dst values.length) before
+      (fun final => final = after) := by
+  rw [Program.copyLoop_eq_copyLoopFrom]
+  unfold Program.wp
+  ipureintro
+  exact ⟨⟨after, hsteps.copyLoopFrom_exec⟩,
+    fun final hexec => hsteps.copyLoopFrom_exec_unique hexec⟩
+
 /-- Whole-loop safety from the facts tracked by the CFG: every source and
 destination byte is mapped. Stores preserve mappedness, including for
 overlapping ranges, so this rule does not need a stronger non-alias premise. -/

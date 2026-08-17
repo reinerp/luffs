@@ -4995,6 +4995,20 @@ theorem findOffsetIndex_sound {offsets : List Nat} {count target i : Nat}
             have hj := ih hrest
             exact ⟨by omega, by simpa using hj.2⟩
 
+theorem findOffsetIndex_take (offsets : List Nat) (count target : Nat) :
+    findOffsetIndex offsets count target =
+      findOffsetIndex (offsets.take count) count target := by
+  induction offsets generalizing count with
+  | nil => cases count <;> rfl
+  | cons offset rest ih =>
+      cases count with
+      | zero => rfl
+      | succ count =>
+          simp only [findOffsetIndex, List.take_succ_cons]
+          split
+          · rfl
+          · rw [ih]
+
 theorem findOffsetIndex_blockOffsets_eq_findPhysicalIndex
     (blocks : List Block) (target : Block)
     (hoffset : ∀ b ∈ blocks,
@@ -5033,6 +5047,16 @@ theorem findOffsetIndex_refines_findPhysicalIndex
     subst b
     exact hsame
   · exact fun h => h.1
+
+theorem findOffsetIndex_refines_findPhysicalIndex_represented
+    {pool : Luffs.Memory.Region} {blocks : List Block} {target actual : Block}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    (hrep : RepresentsPhysicalArrays offsets sizes isFree prevFree count blocks)
+    (hwell : wellFormed pool blocks) (hactual : actual ∈ blocks)
+    (hsame : SamePhysical actual target) :
+    findOffsetIndex offsets count target.offset = findPhysicalIndex blocks target := by
+  rw [findOffsetIndex_take, hrep.1, hrep.2.2.2.2.2.1]
+  exact findOffsetIndex_refines_findPhysicalIndex hwell hactual hsame
 
 structure AllocateArraysResult where
   offsets : List Nat
@@ -5300,6 +5324,7 @@ law before the separate post-state metadata representation theorem. -/
 theorem allocateArrays_ownsFree
     {PROP : Type} [Iris.BI PROP] [Luffs.Memory.ByteRegionLogic PROP]
     {pool : Luffs.Memory.Region} {blocks : List Block} {state : Bins.State}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
     {second : List (BitVec 32)} {first : BitVec 64}
     {heads next previous : List Nat} {request : Nat}
     {result : AllocateArraysResult}
@@ -5308,8 +5333,9 @@ theorem allocateArrays_ownsFree
     (hfirst : FirstBitmapRep first second)
     (hbins : RepresentsBins { heads, next, previous } state)
     (hdisjoint : BinsOffsetsDisjoint state)
-    (hsuccess : allocateArrays (blockOffsets blocks) (blockSizes blocks)
-      (freeFlags blocks) (prevFreeFlags blocks) blocks.length second first
+    (hphysicalInput : RepresentsPhysicalArrays offsets sizes isFree prevFree
+      count blocks)
+    (hsuccess : allocateArrays offsets sizes isFree prevFree count second first
       heads next previous request = some result) :
     ∃ (hrequest : 0 < request)
         (hkeyMax : requestKey request < 2 ^ firstLevelCount)
@@ -5355,18 +5381,18 @@ theorem allocateArrays_ownsFree
     rw [← harrayBlock, hremovedOffset]
   obtain ⟨actual, hactual, hactualRemoved, _, _, _, _⟩ :=
     takeCandidate_suitable hvalid request hrequest hkeyMax habstractTake
-  have hscanRemoved : findOffsetIndex (blockOffsets blocks) blocks.length
-      removed.offset = some block := by
+  have hscanRemoved : findOffsetIndex offsets count removed.offset =
+      some block := by
     simpa [hselectedRemoved] using hscan
-  have hscanEq := findOffsetIndex_refines_findPhysicalIndex hvalid.1 hactual
-    hactualRemoved
+  have hscanEq := findOffsetIndex_refines_findPhysicalIndex_represented
+    hphysicalInput hvalid.1 hactual hactualRemoved
   rw [hscanEq] at hscanRemoved
   obtain ⟨selected, hselected, hselectedRemovedPhysical⟩ :=
     findPhysicalIndex_sound hscanRemoved
   obtain ⟨allocated, nextPhysical, hchosen, hnextPhysical,
       hphysicalOffset, hphysicalBytes⟩ :=
-    allocatePhysicalArrays_refines (canonical_representsPhysicalArrays blocks)
-      hselected hvalid.1.2.2.1 hphysical
+    allocatePhysicalArrays_refines hphysicalInput hselected
+      hvalid.1.2.2.1 hphysical
   let nextBins := state.replaceChain removedClass rest
   let prepared : Alloc.Prepared := {
     detached := removed
@@ -5400,7 +5426,7 @@ theorem allocateArrays_ownsFree
     rw [hresultPhysical.2.2.2.2.2.2, hphysicalBytes]
   have hselectedSize : selectedSize = selected.bytes := by
     have hexpected := representsPhysicalArrays_get_size
-      (canonical_representsPhysicalArrays blocks) hselected
+      hphysicalInput hselected
     rw [hsize] at hexpected
     exact Option.some.inj hexpected
   obtain ⟨_, hfits, _, _⟩ :=

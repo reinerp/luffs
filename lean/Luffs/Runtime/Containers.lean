@@ -76,6 +76,8 @@ theorem boxNewU8Arrays_refines_box
     {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
     {pool : Region} {blocks : List Block} {state : Bins.State}
     {storage : List Byte} {second : List (BitVec 32)} {first : BitVec 64}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
     {heads next previous : List Nat} {value : Byte}
     {result : BoxNewU8ArraysResult}
     (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
@@ -84,11 +86,10 @@ theorem boxNewU8Arrays_refines_box
     (hbins : Luffs.Runtime.TLSF.RepresentsBins
       { heads, next, previous } state)
     (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
     (hsuccess : boxNewU8Arrays storage
-      (Luffs.Runtime.TLSF.blockOffsets blocks)
-      (Luffs.Runtime.TLSF.blockSizes blocks)
-      (Luffs.Runtime.TLSF.freeFlags blocks)
-      (Luffs.Runtime.TLSF.prevFreeFlags blocks) blocks.length second first
+      offsets sizes isFree prevFree count second first
       heads next previous value = some result) :
     ∃ (hkeyMax : requestKey
           (Luffs.Containers.Box.requestBytes Scalar.u8.size) <
@@ -107,7 +108,8 @@ theorem boxNewU8Arrays_refines_box
   obtain ⟨hrequest, hkey, abstractResult, habstract, hoffset, hbytes,
       _, _, _, _, _, _, howns⟩ :=
     Luffs.Runtime.TLSF.allocateArrays_ownsFree
-      (PROP := Iris.IProp GF) hvalid hsecond hfirst hbins hdisjoint halloc
+      (PROP := Iris.IProp GF) hvalid hsecond hfirst hbins hdisjoint hphysical
+      halloc
   have hkeyBox : requestKey
       (Luffs.Containers.Box.requestBytes Scalar.u8.size) <
         2 ^ firstLevelCount := by
@@ -137,6 +139,7 @@ theorem boxNewU8Arrays_owns
     [G : Luffs.Memory.ByteContentsGS GF]
     {pool : Region} {blocks : List Block} {state : Bins.State}
     {storage : List Byte} {second : List (BitVec 32)} {first : BitVec 64}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
     {heads next previous : List Nat} {value : Byte}
     {result : BoxNewU8ArraysResult}
     (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
@@ -145,11 +148,10 @@ theorem boxNewU8Arrays_owns
     (hbins : Luffs.Runtime.TLSF.RepresentsBins
       { heads, next, previous } state)
     (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
     (hsuccess : boxNewU8Arrays storage
-      (Luffs.Runtime.TLSF.blockOffsets blocks)
-      (Luffs.Runtime.TLSF.blockSizes blocks)
-      (Luffs.Runtime.TLSF.freeFlags blocks)
-      (Luffs.Runtime.TLSF.prevFreeFlags blocks) blocks.length second first
+      offsets sizes isFree prevFree count second first
       heads next previous value = some result) :
     ∃ (hkeyMax : requestKey
           (Luffs.Containers.Box.requestBytes Scalar.u8.size) <
@@ -171,7 +173,7 @@ theorem boxNewU8Arrays_owns
               Ownership.OwnsFree pool boxResult.state.physical) := by
   obtain ⟨hkeyMax, boxResult, hbox, hoffset, _, _, howns⟩ :=
     boxNewU8Arrays_refines_box (GF := GF) hvalid hsecond hfirst hbins
-      hdisjoint hsuccess
+      hdisjoint hphysical hsuccess
   refine ⟨hkeyMax, boxResult, hbox, hoffset, ?_⟩
   intro contents hfresh
   iintro ⟨Hcontents, Hallocator⟩
@@ -313,22 +315,22 @@ theorem boxDropU8Arrays_owns
     {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
     [G : Luffs.Memory.ByteContentsGS GF]
     {pool : Region} {blocks : List Block} {state : Bins.State}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
     {second : List (BitVec 32)} {first : BitVec 64}
     {heads next previous : List Nat} {returnedOffset : Nat}
     {result : Luffs.Runtime.TLSF.CoalesceClassResult}
     (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
     (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
-    (hcountMax : blocks.length ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hcountMax : count ≤ Luffs.Runtime.TLSF.usizeMax)
     (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
     (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
     (hbins : Luffs.Runtime.TLSF.RepresentsBins
       { heads, next, previous } state)
     (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
     (hsuccess : boxDropU8Arrays
-      (Luffs.Runtime.TLSF.blockOffsets blocks)
-      (Luffs.Runtime.TLSF.blockSizes blocks)
-      (Luffs.Runtime.TLSF.freeFlags blocks)
-      (Luffs.Runtime.TLSF.prevFreeFlags blocks) blocks.length second first
+      offsets sizes isFree prevFree count second first
       heads next previous returnedOffset = some result) :
     ∃ (selected : Block) (abstractNext : Alloc.State),
       selected.offset = returnedOffset ∧
@@ -342,8 +344,7 @@ theorem boxDropU8Arrays_owns
             Ownership.OwnsFree pool abstractNext.physical := by
   obtain ⟨selected, abstractNext, hoffset, _, hdrop, _⟩ :=
     boxDropU8Arrays_refines_box (GF := GF) hvalid hpoolMax hcountMax hsecond
-      hfirst hbins hdisjoint
-      (Luffs.Runtime.TLSF.canonical_representsPhysicalArrays blocks) hsuccess
+      hfirst hbins hdisjoint hphysical hsuccess
   refine ⟨selected, abstractNext, hoffset, ?_⟩
   intro value contents
   exact Luffs.Containers.Box.drop_owns Scalar.u8 value contents hdrop
@@ -383,6 +384,7 @@ theorem vecNewU8Arrays_refines_vec
     [Luffs.Memory.ByteContentsGS GF]
     {pool : Region} {blocks : List Block} {state : Bins.State}
     {second : List (BitVec 32)} {first : BitVec 64}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
     {heads next previous : List Nat} {capacity : Nat}
     {result : Luffs.Runtime.TLSF.AllocateArraysResult}
     (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
@@ -391,11 +393,10 @@ theorem vecNewU8Arrays_refines_vec
     (hbins : Luffs.Runtime.TLSF.RepresentsBins
       { heads, next, previous } state)
     (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
     (hsuccess : vecNewU8Arrays
-      (Luffs.Runtime.TLSF.blockOffsets blocks)
-      (Luffs.Runtime.TLSF.blockSizes blocks)
-      (Luffs.Runtime.TLSF.freeFlags blocks)
-      (Luffs.Runtime.TLSF.prevFreeFlags blocks) blocks.length second first
+      offsets sizes isFree prevFree count second first
       heads next previous capacity = some result) :
     ∃ (hcapacity : 0 < capacity)
         (hkeyMax : requestKey
@@ -414,7 +415,8 @@ theorem vecNewU8Arrays_refines_vec
   obtain ⟨_, hkeyMax, abstractResult, habstract, hoffset, hbytes,
       _, _, _, _, _, _, howns⟩ :=
     Luffs.Runtime.TLSF.allocateArrays_ownsFree
-      (PROP := Iris.IProp GF) hvalid hsecond hfirst hbins hdisjoint halloc
+      (PROP := Iris.IProp GF) hvalid hsecond hfirst hbins hdisjoint hphysical
+      halloc
   let vecResult : Luffs.Containers.Vec.AllocResult := {
     handle := ⟨abstractResult.allocated, 0, capacity⟩
     state := abstractResult.state }
@@ -540,22 +542,22 @@ theorem vecDropU8Arrays_owns
     {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
     [G : Luffs.Memory.ByteContentsGS GF]
     {pool : Region} {blocks : List Block} {state : Bins.State}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
     {second : List (BitVec 32)} {first : BitVec 64}
     {heads next previous : List Nat} {offset len capacity : Nat}
     {result : Luffs.Runtime.TLSF.CoalesceClassResult}
     (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
     (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
-    (hcountMax : blocks.length ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hcountMax : count ≤ Luffs.Runtime.TLSF.usizeMax)
     (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
     (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
     (hbins : Luffs.Runtime.TLSF.RepresentsBins
       { heads, next, previous } state)
     (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
     (hsuccess : boxDropU8Arrays
-      (Luffs.Runtime.TLSF.blockOffsets blocks)
-      (Luffs.Runtime.TLSF.blockSizes blocks)
-      (Luffs.Runtime.TLSF.freeFlags blocks)
-      (Luffs.Runtime.TLSF.prevFreeFlags blocks) blocks.length second first
+      offsets sizes isFree prevFree count second first
       heads next previous offset = some result) :
     ∃ (handle : Luffs.Containers.Vec.Handle) (abstractNext : Alloc.State),
       handle.block.offset = offset ∧ handle.len = len ∧
@@ -573,8 +575,7 @@ theorem vecDropU8Arrays_owns
             Ownership.OwnsFree pool abstractNext.physical := by
   obtain ⟨selected, abstractNext, hoffset, _, hdrop, _⟩ :=
     boxDropU8Arrays_refines_box (GF := GF) hvalid hpoolMax hcountMax hsecond
-      hfirst hbins hdisjoint
-      (Luffs.Runtime.TLSF.canonical_representsPhysicalArrays blocks) hsuccess
+      hfirst hbins hdisjoint hphysical hsuccess
   let handle : Luffs.Containers.Vec.Handle := ⟨selected, len, capacity⟩
   have hvecDrop : Luffs.Containers.Vec.drop pool
       { physical := blocks, bins := state } handle = some abstractNext := by
@@ -592,6 +593,53 @@ def copyByteRange (storage : List Byte) (source destination : Nat) :
       let byte ← storage[source + n]?
       if destination + n ≥ storage.length then none
       pure (copied.set (destination + n) byte)
+
+theorem copyByteRange_result
+    {storage copied : List Byte} {source destination len : Nat}
+    (hcopy : copyByteRange storage source destination len = some copied) :
+    copied.length = storage.length ∧
+      (∀ i, i < len →
+        copied[destination + i]? = storage[source + i]?) ∧
+      (∀ j, (j < destination ∨ destination + len ≤ j) →
+        copied[j]? = storage[j]?) := by
+  induction len generalizing copied with
+  | zero =>
+      simp [copyByteRange] at hcopy
+      subst copied
+      simp
+  | succ n ih =>
+      simp only [copyByteRange] at hcopy
+      cases hprefix : copyByteRange storage source destination n with
+      | none => simp [hprefix] at hcopy
+      | some prefix =>
+        cases hbyte : storage[source + n]? with
+        | none => simp [hprefix, hbyte] at hcopy
+        | some byte =>
+          by_cases hbound : destination + n ≥ storage.length
+          · simp [hprefix, hbyte, hbound] at hcopy
+          · simp [hprefix, hbyte, hbound] at hcopy
+            subst copied
+            obtain ⟨hlength, hpref, houtside⟩ := ih hprefix
+            have hdest : destination + n < prefix.length := by
+              rw [hlength]
+              exact Nat.lt_of_not_ge hbound
+            refine ⟨by simp [hlength], ?_, ?_⟩
+            · intro i hi
+              by_cases heq : i = n
+              · subst i
+                simp [List.getElem?_set_self hdest, hbyte]
+              · have hin : i < n := by omega
+                have hne : destination + i ≠ destination + n := by omega
+                rw [List.getElem?_set_ne hne]
+                exact hpref i hin
+            · intro j hj
+              have hne : j ≠ destination + n := by
+                rcases hj with hleft | hright <;> omega
+              rw [List.getElem?_set_ne hne]
+              apply houtside j
+              rcases hj with hleft | hright
+              · exact Or.inl hleft
+              · exact Or.inr (by omega)
 
 structure VecGrowU8ArraysResult where
   allocator : Luffs.Runtime.TLSF.CoalesceClassResult
@@ -701,6 +749,25 @@ theorem vecGrowU8Arrays_result
               exact ⟨allocated, copied, released, hlen, hcapacity, hmax,
                 hold64, holdBound, rfl, hnew64, hnewBound, hcopy, hdrop, rfl⟩
 
+theorem vecGrowU8Arrays_copies_prefix
+    {storage : List Byte} {offsets sizes : List Nat}
+    {isFree prevFree : List (Fin 256)} {count : Nat}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {oldOffset len oldCapacity newCapacity : Nat}
+    {result : VecGrowU8ArraysResult}
+    (hsuccess : vecGrowU8Arrays storage offsets sizes isFree prevFree count
+      second first heads next previous oldOffset len oldCapacity newCapacity =
+        some result) :
+    result.storage.length = storage.length ∧
+      (∀ i, i < len →
+        result.storage[result.newOffset + i]? = storage[oldOffset + i]?) ∧
+      (∀ j, (j < result.newOffset ∨ result.newOffset + len ≤ j) →
+        result.storage[j]? = storage[j]?) := by
+  obtain ⟨allocated, copied, released, _, _, _, _, _, _, _, _, hcopy, _,
+      hresult⟩ := vecGrowU8Arrays_result hsuccess
+  subst result
+  simpa using copyByteRange_result hcopy
+
 set_option maxHeartbeats 1600000 in
 /-- Successful concrete allocator-backed byte growth is the abstract verified
 Vec growth transition. In particular, allocation preserves the old live
@@ -721,14 +788,13 @@ theorem vecGrowU8Arrays_refines_vec
     (hbins : Luffs.Runtime.TLSF.RepresentsBins
       { heads, next, previous } state)
     (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysicalInput : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
     (hmember : handle.block ∈ blocks)
     (hallocated : handle.block.free = false)
-    (hcountMax : blocks.length ≤ Luffs.Runtime.TLSF.usizeMax)
+    (harrayMax : offsets.length ≤ Luffs.Runtime.TLSF.usizeMax)
     (hsuccess : vecGrowU8Arrays storage
-      (Luffs.Runtime.TLSF.blockOffsets blocks)
-      (Luffs.Runtime.TLSF.blockSizes blocks)
-      (Luffs.Runtime.TLSF.freeFlags blocks)
-      (Luffs.Runtime.TLSF.prevFreeFlags blocks) blocks.length second first
+      offsets sizes isFree prevFree count second first
       heads next previous handle.block.offset handle.len handle.capacity
       newCapacity = some result) :
     ∃ (hcapacity : 0 < newCapacity)
@@ -749,6 +815,7 @@ theorem vecGrowU8Arrays_refines_vec
       hpostFirst, _⟩ :=
     Luffs.Runtime.TLSF.allocateArrays_ownsFree
       (PROP := Iris.IProp GF) hvalid hsecond hfirst hbins hdisjoint
+      hphysicalInput
       hconcreteAlloc
   have hcapacity : 0 < newCapacity := by omega
   have hpostValid : Alloc.Valid pool abstractAllocated.state :=
@@ -757,8 +824,7 @@ theorem vecGrowU8Arrays_refines_vec
       Luffs.Runtime.TLSF.usizeMax := by
     have hcount := Luffs.Runtime.TLSF.allocateArrays_count_le_offsets
       hconcreteAlloc
-    simpa [Luffs.Runtime.TLSF.blockOffsets] using
-      Nat.le_trans hcount hcountMax
+    exact Nat.le_trans hcount harrayMax
   obtain ⟨updated, hupdated, hsame, _⟩ :=
     Alloc.allocate_preserves_allocated hvalid habstractAlloc hmember hallocated
   have hupdatedAllocated : updated.free = false :=
@@ -808,6 +874,7 @@ theorem vecGrowU8Arrays_owns
     [G : Luffs.Memory.ByteContentsGS GF]
     {pool : Region} {blocks : List Block} {state : Bins.State}
     {storage : List Byte} {second : List (BitVec 32)} {first : BitVec 64}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
     {heads next previous : List Nat}
     {handle : Luffs.Containers.Vec.Handle} {newCapacity : Nat}
     {result : VecGrowU8ArraysResult}
@@ -818,14 +885,13 @@ theorem vecGrowU8Arrays_owns
     (hbins : Luffs.Runtime.TLSF.RepresentsBins
       { heads, next, previous } state)
     (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysicalInput : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
     (hmember : handle.block ∈ blocks)
     (hallocated : handle.block.free = false)
-    (hcountMax : blocks.length ≤ Luffs.Runtime.TLSF.usizeMax)
+    (harrayMax : offsets.length ≤ Luffs.Runtime.TLSF.usizeMax)
     (hsuccess : vecGrowU8Arrays storage
-      (Luffs.Runtime.TLSF.blockOffsets blocks)
-      (Luffs.Runtime.TLSF.blockSizes blocks)
-      (Luffs.Runtime.TLSF.freeFlags blocks)
-      (Luffs.Runtime.TLSF.prevFreeFlags blocks) blocks.length second first
+      offsets sizes isFree prevFree count second first
       heads next previous handle.block.offset handle.len handle.capacity
       newCapacity = some result) :
     ∃ (hcapacity : 0 < newCapacity)
@@ -853,7 +919,7 @@ theorem vecGrowU8Arrays_owns
               Ownership.OwnsFree pool growResult.state.physical) := by
   obtain ⟨hcapacity, hkeyMax, growResult, hgrow, hoffset, _, _⟩ :=
     vecGrowU8Arrays_refines_vec (GF := GF) hvalid hpoolMax hsecond hfirst
-      hbins hdisjoint hmember hallocated hcountMax hsuccess
+      hbins hdisjoint hphysicalInput hmember hallocated harrayMax hsuccess
   refine ⟨hcapacity, hkeyMax, growResult, hgrow, hoffset, ?_⟩
   intro values contents hfresh
   obtain ⟨allocated, next, halloc, hdrop, hresult⟩ :=
@@ -861,6 +927,91 @@ theorem vecGrowU8Arrays_owns
   subst growResult
   exact Luffs.Containers.Vec.grow_owns_step Scalar.u8 hvalid halloc hdrop
     values contents hfresh
+
+set_option maxHeartbeats 1800000 in
+/-- End-to-end growth theorem for the concrete Luffs byte Vec. It combines the
+source-derived pool-array copy/frame law, abstract allocator/Vec refinement,
+Iris ownership transfer, and the operational load/store trace for the same
+initialized byte prefix. -/
+theorem vecGrowU8Arrays_owns_with_copy
+    {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
+    [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {blocks : List Block} {state : Bins.State}
+    {storage : List Byte} {second : List (BitVec 32)} {first : BitVec 64}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {heads next previous : List Nat}
+    {handle : Luffs.Containers.Vec.Handle} {newCapacity : Nat}
+    {result : VecGrowU8ArraysResult}
+    (hhandle : Luffs.Containers.Vec.Valid Scalar.u8 handle)
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins
+      { heads, next, previous } state)
+    (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysicalInput : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
+    (hmember : handle.block ∈ blocks)
+    (hallocated : handle.block.free = false)
+    (harrayMax : offsets.length ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hsuccess : vecGrowU8Arrays storage
+      offsets sizes isFree prevFree count second first
+      heads next previous handle.block.offset handle.len handle.capacity
+      newCapacity = some result) :
+    ∃ (hcapacity : 0 < newCapacity)
+        (hkeyMax : requestKey
+          (Luffs.Containers.Vec.allocationBytes Scalar.u8 newCapacity) <
+            2 ^ firstLevelCount)
+        (growResult : Luffs.Containers.Vec.GrowResult),
+      Luffs.Containers.Vec.grow Scalar.u8 pool handle newCapacity hcapacity
+          { physical := blocks, bins := state } hkeyMax = some growResult ∧
+      result.newOffset = growResult.handle.block.offset ∧
+      result.storage.length = storage.length ∧
+      (∀ i, i < handle.len →
+        result.storage[result.newOffset + i]? =
+          storage[handle.block.offset + i]?) ∧
+      (∀ j, (j < result.newOffset ∨ result.newOffset + handle.len ≤ j) →
+        result.storage[j]? = storage[j]?) ∧
+      ∀ (values : List (BitVec 8)) (contents : ContentsMap) (mem : Memory),
+        values.length = handle.len → ContentsRep contents mem →
+        (∀ i, i < (Luffs.Containers.Vec.encodeValues Scalar.u8 values).length →
+          mem.mapped ((growResult.handle.block.region pool).base + i)) →
+        CanInsertBytes contents (growResult.handle.block.region pool).base
+          (Luffs.Containers.Vec.encodeValues Scalar.u8 values) →
+        contentsInterp (G := G) contents ∗
+            (Luffs.Containers.Vec.Owns Scalar.u8 pool handle values ∗
+              Ownership.OwnsFree pool blocks) ==∗
+          (contentsInterp
+              (deleteBytes
+                (insertBytes contents
+                  (growResult.handle.block.region pool).base
+                  (Luffs.Containers.Vec.encodeValues Scalar.u8 values))
+                (handle.block.region pool).base
+                (Luffs.Containers.Vec.encodeValues Scalar.u8 values)) ∗
+            (Luffs.Containers.Vec.Owns Scalar.u8 pool growResult.handle values ∗
+              Ownership.OwnsFree pool growResult.state.physical)) ∗
+            ⌜∃ memNext, CopySteps (handle.block.region pool).base
+              (growResult.handle.block.region pool).base
+              (Luffs.Containers.Vec.encodeValues Scalar.u8 values) mem memNext⌝ := by
+  have hcopy := vecGrowU8Arrays_copies_prefix hsuccess
+  obtain ⟨_, _, _, hlenOld, hcapacityLt, _, _, _, _, _, _, _, _, _⟩ :=
+    vecGrowU8Arrays_result hsuccess
+  have hlenCapacity : handle.len ≤ newCapacity := by omega
+  obtain ⟨hcapacity, hkeyMax, growResult, hgrow, hoffset, _, _⟩ :=
+    vecGrowU8Arrays_refines_vec (GF := GF) hvalid hpoolMax hsecond hfirst
+      hbins hdisjoint hphysicalInput hmember hallocated harrayMax hsuccess
+  obtain ⟨vecAllocated, abstractNext, hvecAlloc, hdrop, hresult⟩ :=
+    Luffs.Containers.Vec.grow_result hgrow
+  subst growResult
+  refine ⟨hcapacity, hkeyMax,
+    { handle := ⟨vecAllocated.handle.block, handle.len, newCapacity⟩,
+      state := abstractNext }, hgrow, hoffset, hcopy.1, hcopy.2.1,
+    hcopy.2.2, ?_⟩
+  intro values contents mem hlen hrep hdst hfresh
+  exact Luffs.Containers.Vec.grow_owns_step_with_copy Scalar.u8 hhandle
+    hlenCapacity hvalid hmember hallocated hvecAlloc hdrop values hlen
+    contents mem hrep hdst hfresh
 
 /-- Pure reference semantics for the first byte-monomorphized Luffs lowering.
 These definitions deliberately expose both the mutated storage and scalar

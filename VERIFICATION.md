@@ -458,6 +458,10 @@ concurrency are later extensions and are not prerequisites for `Box` and
   abstract `Box.allocate` and Iris initialization update, producing typed
   exclusive `Box.Owns`; drop is composed with abstract `Box.drop` and consumes
   that typed capability exactly once while returning the region to TLSF.
+  Constructor and drop refinement now accept the actual fixed-capacity header
+  arrays through `RepresentsPhysicalArrays`; they no longer require canonical
+  arrays with no spare slots, so splitting allocation is included in the
+  end-to-end theorem.
   Generic Luffs monomorphization and target-width parameterization remain
   before this item is complete.
 - [ ] `Vec<T>`: invariant `len <= capacity`, initialized prefix ownership,
@@ -520,6 +524,10 @@ concurrency are later extensions and are not prerequisites for `Box` and
   replacement bytes. Connecting the source-derived `copyByteRange` result to
   this combined rule, plus generic Luffs monomorphization, remains before this
   item is complete.
+  New, growth, and drop now all quantify over represented fixed-capacity
+  physical-header arrays. The generalized public allocation theorem proves
+  the active prefix refines abstract TLSF while framing unused slots, closing
+  the previous gap where canonical input arrays could not accommodate a split.
 
 `stdlib/containers.luffs` now contains the first byte-monomorphized Box and Vec
 lowering: initialization/load/store, push/pop length transitions, indexed get,

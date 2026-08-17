@@ -499,7 +499,16 @@ concurrency are later extensions and are not prerequisites for `Box` and
   ownership contradictory. An equal-length replacement executes an explicit
   store trace and updates the Iris content map; recombination reconstructs the
   Vec with the new logical middle and unchanged prefix/suffix. Scoped lifetime
-  notation in Luffs and lowering remain.
+  notation in Luffs and lowering remain. The allocator-backed `Vec<u8>` path
+  now includes Luffs new, push, get, pop, drop, and growth operations. New and
+  drop are composed through the concrete TLSF array transformers to the
+  abstract Vec transitions and Iris ownership laws; push is connected to the
+  typed handle and framed initialization rule. Growth statically checks every
+  loop address and has a source-recognized exact Lean state transformer that
+  sequences replacement allocation, snapshot-prefix copying, old-block
+  deallocation/coalescing, and the returned offset. Composing that concrete
+  growth transformer with `grow_owns_step`, plus generic Luffs
+  monomorphization, remains before this item is complete.
 
 `stdlib/containers.luffs` now contains the first byte-monomorphized Box and Vec
 lowering: initialization/load/store, push/pop length transitions, indexed get,

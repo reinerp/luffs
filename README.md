@@ -66,9 +66,11 @@ The checked-in foundation currently contains:
 It does **not** yet constitute a fully verified TLSF, `Box`, or `Vec`. The
 current Lean development does instantiate `OwnsBytes` with Iris authoritative
 ghost-map resources and proves the allocator's main allocation/deallocation
-ownership paths plus initial Box and Vec clients. Remaining work includes the
-Luffs implementations and lowering, weakest-precondition integration, Vec
-growth and borrowing, and the allocator's O(1) link-update refinement. See
+ownership paths plus allocator-backed byte Box and Vec clients. The Luffs Vec
+growth loop now has checked addresses and an exact generated allocation/copy/
+deallocation model. Remaining work includes composing that concrete growth
+model with its Iris ownership theorem, generic lowering, weakest-precondition
+integration, borrowing syntax, and the allocator's O(1) link-update refinement. See
 [`VERIFICATION.md`](VERIFICATION.md) for the precise proof boundary and
 completion criteria.
 

@@ -406,6 +406,53 @@ theorem Program.wp_then {GF : BundledGFunctors} {first tail : Program}
     pure_soundness (PROP := IProp GF) (htail split hsplit)
   exact hsplitTail.2 after hsuffix
 
+/-- Pure CFG branch selection. Conditions are evaluated by the value semantics;
+the effect semantics records which memory-effect subprogram is executed. -/
+def Program.branch (condition : Bool) (thenProgram elseProgram : Program) :
+    Program :=
+  if condition then thenProgram else elseProgram
+
+theorem Program.wp_branch {GF : BundledGFunctors} (condition : Bool)
+    {thenProgram elseProgram : Program} {mem : Memory}
+    {post : Memory → Prop}
+    (hthen : condition = true →
+      ⊢@{IProp GF} Program.wp thenProgram mem post)
+    (helse : condition = false →
+      ⊢@{IProp GF} Program.wp elseProgram mem post) :
+    ⊢@{IProp GF} Program.wp
+      (Program.branch condition thenProgram elseProgram) mem post := by
+  cases condition with
+  | false => simpa [Program.branch] using helse rfl
+  | true => simpa [Program.branch] using hthen rfl
+
+/-- A statically bounded `while cursor < bound; cursor += 1` effect program.
+The body may depend on the exact loop index. -/
+def Program.forRange (start : Nat) : Nat → (Nat → Program) → Program
+  | 0, _ => .done
+  | count + 1, body =>
+      (body start).then (Program.forRange (start + 1) count body)
+
+/-- Loop-invariant WP rule for generated bounded loops. The invariant is
+indexed by the next cursor value, so array facts derived from the loop
+condition can be supplied independently for every body instance. -/
+theorem Program.wp_forRange {GF : BundledGFunctors} (body : Nat → Program)
+    (invariant : Nat → Memory → Prop) (start count : Nat) (mem : Memory)
+    (hinit : invariant start mem)
+    (hbody : ∀ i current, invariant i current →
+      ⊢@{IProp GF} Program.wp (body i) current (invariant (i + 1))) :
+    ⊢@{IProp GF} Program.wp (Program.forRange start count body) mem
+      (invariant (start + count)) := by
+  induction count generalizing start mem with
+  | zero =>
+      simpa [Program.forRange] using
+        (Program.wp_done (GF := GF) mem (invariant start) hinit)
+  | succ count ih =>
+      apply Program.wp_then (hbody start mem hinit)
+      intro after hnext
+      have htail := ih (start + 1) after hnext
+      have hindex : start + 1 + count = start + (count + 1) := by omega
+      simpa [Program.forRange, hindex] using htail
+
 /-- The effect program emitted for a contiguous checked byte read. Results of
 individual loads are consumed by the value-level generated semantics; this
 program records the memory effects and stuckness obligations. -/
@@ -532,6 +579,54 @@ theorem WriteSteps.program_wp {GF : BundledGFunctors} {base : Addr}
     {values : List Byte} {before after : Memory}
     (hsteps : WriteSteps base values before after) :
     ⊢@{IProp GF} Program.wp (Program.writeBytes base values) before
+      (fun final => final = after) := by
+  unfold Program.wp
+  ipureintro
+  exact ⟨⟨after, hsteps.program_exec⟩,
+    fun final hexec => hsteps.program_exec_unique hexec⟩
+
+/-- The generated effect program for relocation copies one byte at a time.
+The encoded byte list fixes the value written after each load; a `CopySteps`
+witness proves that the loaded source has exactly that value. -/
+def Program.copyBytes (src dst : Addr) : List Byte → Program
+  | [] => .done
+  | value :: rest =>
+      .call (.load src) (fun _ =>
+        .call (.store dst value) (fun _ =>
+          copyBytes (src + 1) (dst + 1) rest))
+
+theorem CopySteps.program_exec {src dst : Addr} {values : List Byte}
+    {before after : Memory}
+    (hsteps : CopySteps src dst values before after) :
+    Program.Exec (Program.copyBytes src dst values) before after := by
+  induction hsteps with
+  | nil => exact .done
+  | cons hload hstore htail ih => exact .call hload (.call hstore ih)
+
+theorem CopySteps.program_exec_unique {src dst : Addr} {values : List Byte}
+    {before after final : Memory}
+    (hsteps : CopySteps src dst values before after)
+    (hexec : Program.Exec (Program.copyBytes src dst values) before final) :
+    final = after := by
+  induction hsteps generalizing final with
+  | nil =>
+      cases hexec
+      rfl
+  | cons hload hstore htail ih =>
+      cases hexec with
+      | call executedLoad restExec =>
+          cases executedLoad
+          cases restExec with
+          | call executedStore tailExec =>
+              cases executedStore
+              exact ih tailExec
+
+/-- The concrete byte-copy trace supplied by the allocator/Vec ownership proof
+is a closed no-stuck proof for the generated relocation program. -/
+theorem CopySteps.program_wp {GF : BundledGFunctors} {src dst : Addr}
+    {values : List Byte} {before after : Memory}
+    (hsteps : CopySteps src dst values before after) :
+    ⊢@{IProp GF} Program.wp (Program.copyBytes src dst values) before
       (fun final => final = after) := by
   unfold Program.wp
   ipureintro

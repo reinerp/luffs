@@ -453,4 +453,97 @@ theorem remove_second_complete {state : Metadata} {bin head block : Nat}
     · intro hin
       exact hin.elim
 
+theorem remove_second_represents {state : Metadata} {bin head block : Nat}
+    {rest : List Nat} (hrep : RepresentsBin state bin (head :: block :: rest)) :
+    ∃ nextState, remove state bin block = some nextState ∧
+      RepresentsBin nextState bin (head :: rest) := by
+  obtain ⟨nextState, hremove, hheads, hnextState, hpreviousState,
+    hheadNextValue, _, _, hsuccessorPrevious⟩ := remove_second_complete hrep
+  rcases hrep with ⟨hbin, hlens, hbinHead, hlinked, hnodup⟩
+  have hlengths := remove_preserves_lengths hremove
+  simp only [linked] at hlinked
+  rcases hlinked with ⟨hheadNext, hheadPrevious, hheadPrev, _, hblockLinked⟩
+  rcases hblockLinked with ⟨_, _, _, _, htail⟩
+  have hheadBlock : head ≠ block := by
+    intro heq
+    exact (List.nodup_cons.mp hnodup).1 (by simp [heq])
+  have hheadNotRest : head ∉ rest := by
+    intro hmem
+    exact (List.nodup_cons.mp hnodup).1 (by simp [hmem])
+  have hblockNotRest : block ∉ rest :=
+    (List.nodup_cons.mp (List.nodup_cons.mp hnodup).2).1
+  have hrestNodup : rest.Nodup :=
+    (List.nodup_cons.mp (List.nodup_cons.mp hnodup).2).2
+  refine ⟨nextState, hremove, ⟨?_, ?_, ?_, ?_, ?_⟩⟩
+  · omega
+  · omega
+  · rw [hheads]
+    simpa using hbinHead
+  · simp only [linked]
+    refine ⟨by omega, by omega, ?_, ?_, ?_⟩
+    · rw [hpreviousState]
+      cases rest with
+      | nil =>
+        rw [show ([].head?.getD state.next.length) = state.next.length by simp]
+        have hout : ¬ state.next.length < state.previous.length := by omega
+        simp only [hout, if_false]
+        rw [List.getElem?_set_ne (Ne.symm hheadBlock), hlengths.2.1]
+        exact hheadPrev
+      | cons successor tail =>
+        simp only [List.head?_cons, Option.getD_some]
+        have hsuccessorBound : successor < state.previous.length := by
+          simp only [linked] at htail
+          exact htail.2.1
+        have hheadSuccessor : head ≠ successor := by
+          exact fun heq => hheadNotRest (by simp [heq])
+        simp only [hsuccessorBound, if_true]
+        rw [List.getElem?_set_ne (Ne.symm hheadBlock),
+          List.getElem?_set_ne (Ne.symm hheadSuccessor), hlengths.2.1]
+        exact hheadPrev
+    · rw [hlengths.2.1]
+      exact hheadNextValue
+    · cases rest with
+      | nil => trivial
+      | cons successor tail =>
+        simp only [linked] at htail ⊢
+        rcases htail with ⟨hsuccessorNext, hsuccessorPreviousBound, _,
+          hsuccessorNxt, htailLinked⟩
+        have hsuccessorHead : successor ≠ head := by
+          exact fun heq => hheadNotRest (by simp [heq])
+        have hsuccessorBlock : successor ≠ block := by
+          exact fun heq => hblockNotRest (by simp [heq])
+        refine ⟨by omega, by omega, ?_, ?_, ?_⟩
+        · exact hsuccessorPrevious (by simpa)
+        · rw [hnextState, List.getElem?_set_ne (Ne.symm hsuccessorBlock),
+            List.getElem?_set_ne (Ne.symm hsuccessorHead)]
+          simpa using hsuccessorNxt
+        · apply linked_congr (state := state) (nextState := nextState)
+            hlengths.2.1 hlengths.2.2
+          · intro node hmem
+            have hnodeHead : head ≠ node := by
+              intro heq
+              exact hheadNotRest
+                (List.mem_cons_of_mem successor (heq.symm ▸ hmem))
+            have hnodeBlock : block ≠ node := by
+              intro heq
+              exact hblockNotRest
+                (List.mem_cons_of_mem successor (heq.symm ▸ hmem))
+            rw [hnextState, List.getElem?_set_ne hnodeBlock,
+              List.getElem?_set_ne hnodeHead]
+          · intro node hmem
+            rw [hpreviousState]
+            simp only [List.head?_cons, Option.getD_some,
+              hsuccessorPreviousBound, if_true]
+            have hnodeBlock : block ≠ node := by
+              intro heq
+              exact hblockNotRest
+                (List.mem_cons_of_mem successor (heq.symm ▸ hmem))
+            have hnodeSuccessor : successor ≠ node := by
+              intro heq
+              exact (List.nodup_cons.mp hrestNodup).1 (heq.symm ▸ hmem)
+            rw [List.getElem?_set_ne hnodeBlock,
+              List.getElem?_set_ne hnodeSuccessor]
+          · exact htailLinked
+  · exact List.nodup_cons.mpr ⟨hheadNotRest, hrestNodup⟩
+
 end Luffs.Runtime.TLSF

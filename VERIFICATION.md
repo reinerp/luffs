@@ -184,7 +184,10 @@ represents exactly `rest`, preserves its entire linked tail, and detaches
 `block`. Removal of the node immediately after the head is also proved
 complete: the head table is unchanged, the head bypasses the removed node, the
 successor's back-link is repaired when present, and the removed node is
-detached. Framing this local rewrite under an arbitrary prefix remains.
+detached. The exact post-state equations are now framed through the entire
+tail, proving `RepresentsBin nextState bin (head :: rest)` including link
+consistency and `Nodup`. Generalizing the same local frame under an arbitrary
+prefix remains.
 Compiler-generated multi-array semantics now cover `tlsf_remove` as well. Lean
 checks its ordered conditional bypass and detachment writes extensionally
 against `removeArrays`; this preserves sequential alias behavior even for

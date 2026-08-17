@@ -195,6 +195,27 @@ theorem deref_read {GF : BundledGFunctors}
   · ipureintro
     exact ⟨hsteps, codec.decode_encode value⟩
 
+/-- Whole-value Box reads retain the typed resources and additionally provide
+a closed generated-effect WP. `Program.wp_adequacy` therefore turns this
+theorem into a complete non-stuck execution of all encoded-byte loads. -/
+theorem deref_read_wp {GF : BundledGFunctors}
+    [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
+    (codec : Codec α) {pool : Region} {block : Block} {value : α}
+    {contents : ContentsMap} {mem : Memory} (hrep : ContentsRep contents mem) :
+    contentsInterp (G := G) contents ∗ Owns codec pool block value ⊢
+      (contentsInterp contents ∗ Owns codec pool block value) ∗
+        Program.wp
+          (Program.readBytes (block.region pool).base codec.size) mem
+          (fun final => final = mem) := by
+  iintro H
+  ihave ⟨H, %hread⟩ := deref_read codec hrep $$ H
+  isplitl [H]
+  · iassumption
+  · have hlength : (codec.encode value).length = codec.size :=
+      codec.encode_length value
+    rw [← hlength]
+    exact hread.1.program_wp
+
 theorem store {GF : BundledGFunctors}
     [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
     (codec : Codec α) {pool : Region} {block : Block} (oldValue newValue : α)

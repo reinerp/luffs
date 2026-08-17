@@ -300,6 +300,37 @@ inductive Program.Exec : Program → Memory → Memory → Prop where
       (htail : Exec (next result) after final) :
       Exec (.call op next) mem final
 
+/-- Sequential composition of closed effect programs. This is the control-flow
+algebra used by generated Luffs code: reaching `done` in the first program
+continues with the second program. -/
+def Program.then : Program → Program → Program
+  | .done, tail => tail
+  | .call op next, tail => .call op (fun result => (next result).then tail)
+
+theorem Program.exec_then {first tail : Program} {before middle after : Memory}
+    (hfirst : Program.Exec first before middle)
+    (htail : Program.Exec tail middle after) :
+    Program.Exec (first.then tail) before after := by
+  induction hfirst with
+  | done => exact htail
+  | call hstep _ ih => exact .call hstep (ih htail)
+
+theorem Program.exec_then_iff (first tail : Program) (before after : Memory) :
+    Program.Exec (first.then tail) before after ↔
+      ∃ middle, Program.Exec first before middle ∧
+        Program.Exec tail middle after := by
+  constructor
+  · intro hexec
+    induction first generalizing before after with
+    | done => exact ⟨before, .done, hexec⟩
+    | call op next ih =>
+        cases hexec with
+        | call hstep hrest =>
+            obtain ⟨middle, hnext, htail⟩ := ih _ _ _ hrest
+            exact ⟨middle, .call hstep hnext, htail⟩
+  · rintro ⟨middle, hfirst, htail⟩
+    exact Program.exec_then hfirst htail
+
 def Program.Safe (program : Program) (mem : Memory) : Prop :=
   ∃ final, Program.Exec program mem final
 
@@ -338,6 +369,125 @@ theorem Program.wp_call {GF : BundledGFunctors} {op : Prim}
   intro final hexec
   cases hexec with
   | call hstep' htail' => exact (hnext _ _ hstep').2 final htail'
+
+/-- Sequential WP composition. Generated control flow may prove the first
+fragment against an intermediate memory predicate, then continue from every
+memory satisfying that predicate. The resulting theorem is a closed no-stuck
+proof for the concatenated program. -/
+theorem Program.wp_then {GF : BundledGFunctors} {first tail : Program}
+    {before : Memory} {middle post : Memory → Prop}
+    (hfirst : ⊢@{IProp GF} Program.wp first before middle)
+    (htail : ∀ mem, middle mem →
+      ⊢@{IProp GF} Program.wp tail mem post) :
+    ⊢@{IProp GF} Program.wp (first.then tail) before post := by
+  have hfirstSpec : Program.Spec first before middle :=
+    pure_soundness (PROP := IProp GF) hfirst
+  unfold Program.wp
+  ipureintro
+  obtain ⟨middleMem, hmiddleExec⟩ := hfirstSpec.1
+  have hmiddle : middle middleMem := hfirstSpec.2 middleMem hmiddleExec
+  have htailSpec : Program.Spec tail middleMem post :=
+    pure_soundness (PROP := IProp GF) (htail middleMem hmiddle)
+  obtain ⟨final, hfinalExec⟩ := htailSpec.1
+  refine ⟨⟨final, Program.exec_then hmiddleExec hfinalExec⟩, ?_⟩
+  intro after hexec
+  obtain ⟨split, hprefix, hsuffix⟩ :=
+    (Program.exec_then_iff first tail before after).1 hexec
+  have hsplit : middle split := hfirstSpec.2 split hprefix
+  have hsplitTail : Program.Spec tail split post :=
+    pure_soundness (PROP := IProp GF) (htail split hsplit)
+  exact hsplitTail.2 after hsuffix
+
+/-- The effect program emitted for a contiguous checked byte read. Results of
+individual loads are consumed by the value-level generated semantics; this
+program records the memory effects and stuckness obligations. -/
+def Program.readBytes (base : Addr) : Nat → Program
+  | 0 => .done
+  | count + 1 => .call (.load base) (fun _ => readBytes (base + 1) count)
+
+theorem Program.readBytes_wp {GF : BundledGFunctors} (base count : Nat)
+    (mem : Memory)
+    (hmapped : ∀ i, i < count → mem.mapped (base + i)) :
+    ⊢@{IProp GF} Program.wp (Program.readBytes base count) mem
+      (fun final => final = mem) := by
+  induction count generalizing base with
+  | zero => exact Program.wp_done mem _ rfl
+  | succ count ih =>
+      apply Program.wp_call
+      · exact (load_safe_iff mem base).2 (by simpa using hmapped 0 (by omega))
+      · intro result after hstep
+        cases hstep with
+        | load hload =>
+            apply pure_soundness (PROP := IProp GF)
+            apply ih
+            intro i hi
+            have h := hmapped (i + 1) (by omega)
+            simpa [Nat.add_assoc, Nat.add_comm 1 i] using h
+
+/-- A generated contiguous read is safe from an Iris-owned region. This is
+the compositional whole-sequence counterpart of `owned_load_wp`. -/
+theorem owned_readBytes_wp {GF : BundledGFunctors} [G : ByteRegionGS GF]
+    {allocated : ByteMap Unit} {mem : Memory} {region : Region}
+    {base count : Nat}
+    (hrep : MemoryRep allocated mem)
+    (hinside : ∀ i, i < count → region.contains (base + i)) :
+    byteHeapInterp (G := G) allocated ∗ ghostOwnsBytes region ⊢
+      Program.wp (Program.readBytes base count) mem
+        (fun final => final = mem) := by
+  induction count generalizing base with
+  | zero =>
+      iintro H
+      unfold Program.readBytes Program.wp
+      ipureintro
+      exact ⟨⟨mem, .done⟩, fun final hexec => by cases hexec; rfl⟩
+  | succ count ih =>
+      have hinsideTail : ∀ i, i < count →
+          region.contains (base + 1 + i) := by
+        intro i hi
+        have h := hinside (i + 1) (by omega)
+        simpa [Nat.add_assoc, Nat.add_comm 1 i] using h
+      have htailRule := ih (base := base + 1) hinsideTail
+      unfold Program.wp at htailRule
+      iintro H
+      ihave %hsafe := owned_load_safe (G := G) hrep
+        (hinside 0 (by omega)) $$ H
+      ihave %htailSpec := htailRule $$ H
+      unfold Program.readBytes Program.wp
+      ipureintro
+      obtain ⟨result, after, hstep⟩ := hsafe
+      cases hstep with
+      | load hload =>
+          obtain ⟨final, htail⟩ := htailSpec.1
+          refine ⟨⟨final, .call (.load hload) htail⟩, ?_⟩
+          intro final hexec
+          cases hexec with
+          | call hstep' htail' =>
+              cases hstep'
+              exact htailSpec.2 final htail'
+
+theorem ReadSteps.mapped {base : Addr} {values : List Byte} {mem : Memory}
+    (hsteps : ReadSteps base values mem) :
+    ∀ i, i < values.length → mem.mapped (base + i) := by
+  induction hsteps with
+  | nil => simp
+  | @cons base value rest mem hload htail ih =>
+      intro i hi
+      cases i with
+      | zero =>
+          cases hload with
+          | load h => simp [Memory.mapped, h]
+      | succ i =>
+          have h := ih i (by simpa using Nat.lt_of_succ_lt_succ hi)
+          simpa [Nat.add_assoc, Nat.add_comm 1 i] using h
+
+/-- Existing exact read traces produced by Box and Vec ownership rules now
+compose directly into the closed-program WP and hence adequacy boundary. -/
+theorem ReadSteps.program_wp {GF : BundledGFunctors} {base : Addr}
+    {values : List Byte} {mem : Memory}
+    (hsteps : ReadSteps base values mem) :
+    ⊢@{IProp GF} Program.wp (Program.readBytes base values.length) mem
+      (fun final => final = mem) :=
+  Program.readBytes_wp base values.length mem hsteps.mapped
 
 /-- Iris adequacy for the Luffs primitive language. This is the closed-proof
 boundary: semantic validity of a WP yields an actual complete execution. -/

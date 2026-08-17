@@ -963,6 +963,24 @@ theorem read_initialized_prefix {GF : BundledGFunctors}
   · ipureintro
     exact ⟨hsteps, fun value _ => codec.decode_encode value⟩
 
+/-- The complete initialized Vec prefix is a compositional generated-effect
+program with a closed no-stuck WP, while the typed Vec capability is retained. -/
+theorem read_initialized_prefix_wp {GF : BundledGFunctors}
+    [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
+    (codec : Codec α) {pool : Region} {handle : Handle} {values : List α}
+    {contents : ContentsMap} {mem : Memory} (hrep : ContentsRep contents mem) :
+    contentsInterp (G := G) contents ∗ Owns codec pool handle values ⊢
+      (contentsInterp contents ∗ Owns codec pool handle values) ∗
+        Program.wp
+          (Program.readBytes (handle.block.region pool).base
+            (encodeValues codec values).length)
+          mem (fun final => final = mem) := by
+  iintro H
+  ihave ⟨H, %hread⟩ := read_initialized_prefix codec hrep $$ H
+  isplitl [H]
+  · iassumption
+  · exact hread.1.program_wp
+
 theorem read_element {GF : BundledGFunctors}
     [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
     (codec : Codec α) {pool : Region} {handle : Handle} {values : List α}

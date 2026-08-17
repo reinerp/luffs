@@ -151,7 +151,7 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   produce two aligned, nonempty blocks. The executable block model now carries
   a predecessor-free boundary tag, and allocation, deallocation, and
   coalescing are proved to preserve tag consistency. Bin membership remains.
-- [ ] Prove `alloc`: failure preserves the heap; success returns a fresh,
+- [x] Prove `alloc`: failure preserves the heap; success returns a fresh,
   aligned owned region of at least the requested size.
   The executable split-success transition now rejects non-free, undersized, or
   unaligned requests and is proved to return an exact-size aligned allocated
@@ -203,8 +203,11 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   states. Physical mutation and remainder insertion are separately proved
   infallible from their preflight facts. Candidate removal's nested intrusive
   removal is now also proved infallible after its lookup and index guards, so
-  all three mutation stages have no post-guard failure edge. Composing these
-  local totality results into the operational failure theorem remains.
+  all three mutation stages have no post-guard failure edge. The stateful
+  commit model composes those local results, and the public source-shaped
+  control-flow theorem proves every failure returns the exact input metadata.
+  Its Iris-Lean corollary preserves an arbitrary disjoint frame, including the
+  allocator's complete `OwnsFree` assertion.
 - [ ] Prove `dealloc`: consuming exactly a live allocation restores it to the
   allocator without leaks, overlap, or double-free.
   The executable deallocation transition now requires the exact returned

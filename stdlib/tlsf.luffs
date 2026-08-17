@@ -720,6 +720,12 @@ fn tlsf_vec_drop_u8(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_f
     tlsf_box_drop_u8(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, offset)
 }
 
+// Public pointer-facing Vec drop.
+// refines Luffs.Runtime.Containers.boxDropPointerU8Arrays
+fn tlsf_vec_drop_ptr_u8(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], pool_base: usize, pool_bytes: usize, pointer: usize) -> Option<()> {
+    tlsf_box_drop_ptr_u8(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, pool_base, pool_bytes, pointer)
+}
+
 // refines Luffs.Runtime.Containers.vecGrowU8Arrays
 fn tlsf_vec_grow_u8(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], old_offset: usize, len: usize, old_capacity: usize, new_capacity: usize) -> Option<usize> {
     if len > old_capacity { return None; }

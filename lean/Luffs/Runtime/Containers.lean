@@ -647,6 +647,48 @@ theorem vecDropU8Arrays_owns
   intro values contents _
   exact Luffs.Containers.Vec.drop_owns Scalar.u8 values contents hvecDrop
 
+theorem vecDropPointerU8Arrays_owns
+    {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
+    [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {blocks : List Block} {state : Bins.State}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {pointer len capacity : Nat}
+    {result : Luffs.Runtime.TLSF.CoalesceClassResult}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hcountMax : count ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins
+      { heads, next, previous } state)
+    (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
+    (hsuccess : boxDropPointerU8Arrays offsets sizes isFree prevFree count
+      second first heads next previous pool.base pool.bytes pointer = some result) :
+    ∃ (handle : Luffs.Containers.Vec.Handle) (abstractNext : Alloc.State),
+      pointer = pool.base + handle.block.offset ∧ handle.len = len ∧
+      handle.capacity = capacity ∧
+      Luffs.Containers.Vec.drop pool
+          { physical := blocks, bins := state } handle = some abstractNext ∧
+      ∀ (values : List (BitVec 8)) (contents : ContentsMap),
+        values.length = len →
+        contentsInterp (G := G) contents ∗
+            (Luffs.Containers.Vec.Owns Scalar.u8 pool handle values ∗
+              Ownership.OwnsFree pool blocks) ==∗
+          contentsInterp
+              (deleteBytes contents (handle.block.region pool).base
+                (Luffs.Containers.Vec.encodeValues Scalar.u8 values)) ∗
+            Ownership.OwnsFree pool abstractNext.physical := by
+  obtain ⟨offset, hpointer, _, hdrop⟩ :=
+    boxDropPointerU8Arrays_result hsuccess
+  obtain ⟨handle, abstractNext, hoffset, hlen, hcapacity, hdropAbstract,
+      howns⟩ := vecDropU8Arrays_owns (GF := GF) hvalid hpoolMax hcountMax
+        hsecond hfirst hbins hdisjoint hphysical hdrop
+  exact ⟨handle, abstractNext, hpointer.trans (congrArg (pool.base + ·)
+    hoffset.symm), hlen, hcapacity, hdropAbstract, howns⟩
+
 def copyByteRange (storage : List Byte) (source destination : Nat) :
     Nat → Option (List Byte)
   | 0 => some storage

@@ -1919,43 +1919,56 @@ fn parse_tlsf_box_drop_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
 
 fn parse_tlsf_box_drop_ptr_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
     let lines = source.lines().collect::<Vec<_>>();
-    let Some(index) = lines
-        .iter()
-        .position(|line| line.trim().starts_with("fn tlsf_box_drop_ptr_u8("))
-    else {
-        return Vec::new();
-    };
-    let Some(target) = index
-        .checked_sub(1)
-        .and_then(|i| lines.get(i))
-        .and_then(|line| line.trim().strip_prefix("// refines "))
-    else {
-        return Vec::new();
-    };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
-    let required = [
-        "let offset: usize = tlsf_pointer_to_offset(pool_base, pool_bytes, pointer)?;",
-        "tlsf_box_drop_u8(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, offset)",
+    let specifications = [
+        (
+            "tlsf_box_drop_ptr_u8",
+            vec![
+                "let offset: usize = tlsf_pointer_to_offset(pool_base, pool_bytes, pointer)?;",
+                "tlsf_box_drop_u8(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, offset)",
+            ],
+        ),
+        (
+            "tlsf_vec_drop_ptr_u8",
+            vec![
+                "tlsf_box_drop_ptr_u8(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, pool_base, pool_bytes, pointer)",
+            ],
+        ),
     ];
-    let mut position = 0;
-    if required.iter().all(|expected| {
-        if let Some(offset) = body[position..].iter().position(|line| line == expected) {
-            position += offset + 1;
-            true
-        } else {
-            false
+    let mut models = Vec::new();
+    for (name, required) in specifications {
+        let Some(index) = lines
+            .iter()
+            .position(|line| line.trim().starts_with(&format!("fn {name}(")))
+        else {
+            continue;
+        };
+        let Some(target) = index
+            .checked_sub(1)
+            .and_then(|i| lines.get(i))
+            .and_then(|line| line.trim().strip_prefix("// refines "))
+        else {
+            continue;
+        };
+        let body = lines[index + 1..]
+            .iter()
+            .map(|line| line.trim())
+            .collect::<Vec<_>>();
+        let mut position = 0;
+        if required.iter().all(|expected| {
+            if let Some(offset) = body[position..].iter().position(|line| line == expected) {
+                position += offset + 1;
+                true
+            } else {
+                false
+            }
+        }) {
+            models.push(TlsfCoalescePhysicalModel {
+                name: name.to_owned(),
+                refines: target.trim().to_owned(),
+            });
         }
-    }) {
-        vec![TlsfCoalescePhysicalModel {
-            name: "tlsf_box_drop_ptr_u8".to_owned(),
-            refines: target.trim().to_owned(),
-        }]
-    } else {
-        Vec::new()
     }
+    models
 }
 
 fn parse_tlsf_vec_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
@@ -3556,6 +3569,9 @@ mod tests {
             "theorem tlsf_vec_drop_u8_refines : tlsf_vec_drop_u8_model = Luffs.Runtime.Containers.boxDropU8Arrays"
         ));
         assert!(generated.contains(
+            "theorem tlsf_vec_drop_ptr_u8_refines : tlsf_vec_drop_ptr_u8_model = Luffs.Runtime.Containers.boxDropPointerU8Arrays"
+        ));
+        assert!(generated.contains(
             "theorem tlsf_vec_grow_u8_refines : tlsf_vec_grow_u8_model = Luffs.Runtime.Containers.vecGrowU8Arrays"
         ));
         assert!(generated.contains(
@@ -3643,7 +3659,25 @@ mod tests {
             "let offset: usize = pointer;",
         );
         let m = parse(&source).unwrap();
-        assert!(m.tlsf_box_drop_ptr_models.is_empty());
+        assert!(
+            !m.tlsf_box_drop_ptr_models
+                .iter()
+                .any(|model| model.name == "tlsf_box_drop_ptr_u8")
+        );
+    }
+
+    #[test]
+    fn tlsf_vec_drop_ptr_refinement_rejects_offset_only_drop() {
+        let source = include_str!("../stdlib/tlsf.luffs").replace(
+            "tlsf_box_drop_ptr_u8(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, pool_base, pool_bytes, pointer)",
+            "tlsf_box_drop_u8(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, pointer)",
+        );
+        let m = parse(&source).unwrap();
+        assert!(
+            !m.tlsf_box_drop_ptr_models
+                .iter()
+                .any(|model| model.name == "tlsf_vec_drop_ptr_u8")
+        );
     }
 
     #[test]

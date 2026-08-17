@@ -218,6 +218,13 @@ points to a set class bit, proves every result decodes to an in-range
 `Bins.Valid`, every successful concrete lookup therefore selects an abstract
 class whose intrusive chain is nonempty. Full minimality/completeness under the
 first-level cache relation and the mutating candidate-state refinement remain.
+The logical 2048-bit search is also proved equal to a chunked search that
+examines only the suffix of the starting `u32` and then the remaining complete
+second-level words. For each `u32`, masked `ctz` is proved exactly equal to its
+logical suffix search, including the zero-mask failure case. The first-level
+cache relation is stated extensionally as equality between its 64 bits and the
+64-element map of second-level-word nonemptiness; proving that cached jump
+equal to the remaining complete-word search is the next refinement step.
 The current linear size/free-array fallback also has executable list semantics.
 Success is proved to return an in-bounds entry whose flag is nonzero and whose
 size satisfies the request; conversely, any such entry proves lookup cannot

@@ -722,6 +722,24 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
 }
 
 fn read_result_expr(expr: &str, array: &str) -> String {
+    if let Some(bytes) = expr
+        .trim()
+        .strip_prefix("u16::from_le_bytes([")
+        .and_then(|rest| rest.strip_suffix("])"))
+        && let Some((low, high)) = bytes.split_once(',')
+    {
+        let low = model_expr(low.trim(), array);
+        let high = model_expr(high.trim(), array);
+        if low.starts_with(&format!("{array}["))
+            && low.ends_with(']')
+            && high.starts_with(&format!("{array}["))
+            && high.ends_with(']')
+        {
+            return format!(
+                "do\n    let low ← {low}?\n    let high ← {high}?\n    Luffs.Memory.Scalar.decode16 [low, high]"
+            );
+        }
+    }
     let expression = model_expr(expr, array);
     if let Some(subscript) = expression
         .strip_prefix(&format!("{array}["))
@@ -773,6 +791,8 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
             let return_text = &trimmed[close + 1..];
             let result_type = if return_text.contains("-> Option<u8>") {
                 "Fin 256"
+            } else if return_text.contains("-> Option<u16>") {
+                "BitVec 16"
             } else if return_text.contains("-> Option<&[u8]>")
                 || return_text.contains("-> Option<&mut [u8]>")
             {
@@ -3903,6 +3923,19 @@ mod tests {
         assert!(generated.contains("(value : BitVec 16)"));
         assert!(generated.contains("storage.set begin (Luffs.Memory.Scalar.byteAt value 0)"));
         assert!(generated.contains("storage.set (begin + 1) (Luffs.Memory.Scalar.byteAt value 8)"));
+    }
+
+    #[test]
+    fn lowers_u16_little_endian_byte_loads() {
+        let m = parse(
+            "fn load_u16(storage: &[u8], begin: usize) -> Option<u16> {\nif begin == usize::MAX { return None; }\nif begin + 1 >= storage.len() { return None; }\nSome(u16::from_le_bytes([storage[begin], storage[begin + 1]]))\n}",
+        )
+        .unwrap();
+        let generated = lean(&m);
+        assert!(generated.contains(": Option (BitVec 16)"));
+        assert!(generated.contains("let low ← storage[begin]?"));
+        assert!(generated.contains("let high ← storage[begin + 1]?"));
+        assert!(generated.contains("Luffs.Memory.Scalar.decode16 [low, high]"));
     }
 
     #[test]

@@ -55,6 +55,59 @@ theorem writeBytes_pair_eq_set {α : Type} (values : List α)
           simpa [Nat.succ_eq_add_one, Nat.add_assoc] using
             ih offset htail
 
+theorem writeBytes_length (values : List Byte) (offset : Nat)
+    (replacement : List Byte) (hbound : offset + replacement.length ≤ values.length) :
+    (writeBytes values offset replacement).length = values.length := by
+  simp [writeBytes, List.length_take, List.length_drop]
+  omega
+
+theorem writeBytes_read_back (values : List Byte) (offset : Nat)
+    (replacement : List Byte) (hbound : offset + replacement.length ≤ values.length) :
+    ((writeBytes values offset replacement).drop offset).take replacement.length =
+      replacement := by
+  induction values generalizing offset with
+  | nil =>
+      simp only [List.length_nil, Nat.le_zero] at hbound
+      have hoffset : offset = 0 := by omega
+      have hlength : replacement.length = 0 := by omega
+      have hempty := List.eq_nil_of_length_eq_zero hlength
+      subst offset
+      subst replacement
+      rfl
+  | cons head tail ih =>
+      cases offset with
+      | zero => simp [writeBytes]
+      | succ offset =>
+          have htail : offset + replacement.length ≤ tail.length := by
+            simp only [List.length_cons] at hbound
+            omega
+          simpa [writeBytes, Nat.succ_add] using ih offset htail
+
+theorem drop_take_pair_of_getElem? {α : Type} (values : List α) (offset : Nat)
+    (first second : α) (hfirst : values[offset]? = some first)
+    (hsecond : values[offset + 1]? = some second) :
+    (values.drop offset).take 2 = [first, second] := by
+  induction values generalizing offset with
+  | nil => simp at hfirst
+  | cons head tail ih =>
+      cases offset with
+      | zero =>
+          simp only [List.getElem?_cons_zero, Option.some.injEq] at hfirst
+          subst first
+          cases tail with
+          | nil => simp at hsecond
+          | cons next rest =>
+              simp only [Nat.zero_add, List.getElem?_cons_succ,
+                List.getElem?_cons_zero, Option.some.injEq] at hsecond
+              subst second
+              simp
+      | succ offset =>
+          simp only [List.getElem?_cons_succ] at hfirst
+          have hsecond' : tail[offset + 1]? = some second := by
+            simpa [Nat.succ_eq_add_one, Nat.add_assoc] using hsecond
+          simp only [List.drop_succ_cons]
+          exact ih offset hfirst hsecond'
+
 /-- Codec-generic executable state transformer for allocator-backed Box
 construction. A Luffs monomorphization supplies one of the verified scalar
 codecs and lowers the finite encoding to byte stores. -/
@@ -250,6 +303,19 @@ theorem boxLoad_of_encoded {α : Type} (codec : Codec α)
     (hencoded : (storage.drop offset).take codec.size = codec.encode value) :
     boxLoad codec storage offset = some value := by
   simp [boxLoad, Nat.not_lt_of_ge hbound, hencoded, codec.decode_encode]
+
+theorem boxLoad_after_boxStore {α : Type} (codec : Codec α)
+    (storage : List Byte) (offset : Nat) (value : α) (result : List Byte)
+    (hsuccess : boxStore codec storage offset value = some result) :
+    boxLoad codec result offset = some value := by
+  obtain ⟨hbound, rfl⟩ := boxStore_result hsuccess
+  apply boxLoad_of_encoded codec _ offset value
+  · rw [writeBytes_length storage offset (codec.encode value)]
+    · simpa [codec.encode_length] using hbound
+    · simpa [codec.encode_length] using hbound
+  · have hread := writeBytes_read_back storage offset (codec.encode value)
+      (by simpa [codec.encode_length] using hbound)
+    simpa only [codec.encode_length] using hread
 
 /-- Exact state transformer for allocator-backed `tlsf_box_new_u8`. The
 allocator transition precedes initialization of the returned pool byte. -/
@@ -1721,6 +1787,14 @@ return value; the Rust functions mutate the first component in place. -/
 def boxLoadU8 (storage : List Byte) (begin : Nat) : Option Byte :=
   storage[begin]?
 
+def boxLoadU16 (storage : List Byte) (begin : Nat) : Option (BitVec 16) := do
+  if begin = Luffs.Runtime.TLSF.usizeMax then none
+  let second := begin + 1
+  if second ≥ storage.length then none
+  let low ← storage[begin]?
+  let high ← storage[second]?
+  Scalar.decode16 [low, high]
+
 def boxStoreU8 (storage : List Byte) (begin : Nat) (value : Byte) :
     Option (List Byte) :=
   if begin ≥ storage.length then none else some (storage.set begin value)
@@ -1733,6 +1807,42 @@ def boxStoreU16 (storage : List Byte) (begin : Nat) (value : BitVec 16) :
     if second ≥ storage.length then none
     else some ((storage.set begin (Scalar.byteAt value 0)).set second
       (Scalar.byteAt value 8))
+
+theorem boxLoadU16_eq_generic (storage : List Byte) (begin : Nat)
+    (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax) :
+    boxLoadU16 storage begin = boxLoad Scalar.u16 storage begin := by
+  by_cases hmax : begin = Luffs.Runtime.TLSF.usizeMax
+  · have hgeneric : begin + Scalar.u16.size > storage.length := by
+      simp only [Scalar.u16]
+      omega
+    have hleft : boxLoadU16 storage begin = none := by
+      simp [boxLoadU16, hmax]
+    have hright : boxLoad Scalar.u16 storage begin = none := by
+      simp [boxLoad, hgeneric]
+    rw [hleft, hright]
+  · by_cases hbound : begin + 1 ≥ storage.length
+    · have hgeneric : begin + Scalar.u16.size > storage.length := by
+        simp only [Scalar.u16]
+        omega
+      simp [boxLoadU16, boxLoad, hmax, hbound, hgeneric]
+    · have hfit : begin + 2 ≤ storage.length := by omega
+      have hgeneric : ¬begin + Scalar.u16.size > storage.length := by
+        simp only [Scalar.u16]
+        omega
+      have hlowBound : begin < storage.length := by omega
+      have hhighBound : begin + 1 < storage.length := by omega
+      let low := storage[begin]'hlowBound
+      let high := storage[begin + 1]'hhighBound
+      have hlowValue : storage[begin]? = some low :=
+        List.getElem?_eq_getElem hlowBound
+      have hhighValue : storage[begin + 1]? = some high :=
+        List.getElem?_eq_getElem hhighBound
+      rw [boxLoadU16, if_neg hmax, if_neg hbound, boxLoad, if_neg hgeneric]
+      rw [hlowValue, hhighValue]
+      simp only [Option.bind_eq_bind, Option.bind_some, Scalar.u16]
+      congr 1
+      exact (drop_take_pair_of_getElem? storage begin low high hlowValue
+        hhighValue).symm
 
 theorem boxStoreU16_eq_generic (storage : List Byte) (begin : Nat)
     (value : BitVec 16)
@@ -1760,6 +1870,21 @@ theorem boxStoreU16_eq_generic (storage : List Byte) (begin : Nat)
       exact ⟨hfit, by
         simpa only [List.cons_append, List.nil_append, List.append_assoc] using
           hwrite.symm⟩
+
+theorem boxLoadU16_after_boxStoreU16 (storage result : List Byte) (begin : Nat)
+    (value : BitVec 16)
+    (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hsuccess : boxStoreU16 storage begin value = some result) :
+    boxLoadU16 result begin = some value := by
+  have hgenericStore : boxStore Scalar.u16 storage begin value = some result := by
+    rw [← boxStoreU16_eq_generic storage begin value hstorageMax]
+    exact hsuccess
+  obtain ⟨hbound, hresult⟩ := boxStore_result hgenericStore
+  have hresultLength : result.length = storage.length := by
+    rw [hresult, writeBytes_length storage begin (Scalar.u16.encode value)]
+    simpa [Scalar.u16, Scalar.encode16] using hbound
+  rw [boxLoadU16_eq_generic result begin (by omega)]
+  exact boxLoad_after_boxStore Scalar.u16 storage begin value result hgenericStore
 
 theorem boxStoreU8_eq_generic (storage : List Byte) (begin : Nat)
     (value : Byte) :

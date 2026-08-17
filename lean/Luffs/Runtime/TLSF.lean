@@ -119,46 +119,74 @@ theorem findFit_complete {sizes : List Nat} {flags : List (Fin 256)}
           exact ⟨found + 1, by
             simp only [findFit, hsuitable, if_false, hfound, Option.map_some]⟩
 
-def wordBits (word : Nat) : List Bool :=
-  List.ofFn fun bit : Fin 64 => word.testBit bit.val
+def wordBits (word : BitVec 64) : List Bool :=
+  List.ofFn fun bit : Fin 64 => word.getLsbD bit.val
 
-def bitmapBits : List Nat → List Bool
+def bitmapBits : List (BitVec 64) → List Bool
   | [] => []
   | word :: rest => wordBits word ++ bitmapBits rest
 
 /-- Flat semantics of the four-word nonempty-bin bitmap search. -/
-def findNonemptyBin (words : List Nat) (start : Nat) : Option Nat :=
+def findNonemptyBin (words : List (BitVec 64)) (start : Nat) : Option Nat :=
   firstSetFrom (bitmapBits words) start
 
-theorem wordBits_length (word : Nat) : (wordBits word).length = 64 := by
+theorem wordBits_length (word : BitVec 64) : (wordBits word).length = 64 := by
   simp [wordBits]
 
-theorem bitmapBits_length (words : List Nat) :
+theorem wordBits_get (word : BitVec 64) (index : Nat) (hindex : index < 64) :
+    (wordBits word)[index]? = some (word.getLsbD index) := by
+  simp only [wordBits, List.getElem?_ofFn, hindex, dite_true]
+
+theorem firstTrueIndex_wordBits_ctz {word : BitVec 64} (hnonzero : word ≠ 0) :
+    firstTrueIndex (wordBits word) = some word.ctz.toNat := by
+  have hctzBound : word.ctz.toNat < 64 := by
+    exact (BitVec.ctz_lt_iff_ne_zero (x := word)).2 hnonzero
+  have hctzBit : (wordBits word)[word.ctz.toNat]? = some true := by
+    rw [wordBits_get word word.ctz.toNat hctzBound]
+    exact congrArg some (BitVec.getLsbD_true_ctz_of_ne_zero hnonzero)
+  obtain ⟨found, hfound⟩ := firstTrueIndex_complete hctzBit
+  have hfoundBit := firstTrueIndex_sound hfound
+  have hfoundBound := firstTrueIndex_lt_length hfound
+  have hnotBefore : ¬ found < word.ctz.toNat := by
+    intro hbefore
+    have hfalse := BitVec.getLsbD_false_of_lt_ctz (x := word) hbefore
+    have hfound64 : found < 64 := by simpa [wordBits_length] using hfoundBound
+    rw [wordBits_get word found hfound64, hfalse] at hfoundBit
+    contradiction
+  have hnotAfter : ¬ word.ctz.toNat < found := by
+    intro hafter
+    have hfalse := firstTrueIndex_minimal hfound hafter
+    rw [hctzBit] at hfalse
+    contradiction
+  have : found = word.ctz.toNat := by omega
+  simpa [this] using hfound
+
+theorem bitmapBits_length (words : List (BitVec 64)) :
     (bitmapBits words).length = words.length * 64 := by
   induction words with
   | nil => rfl
   | cons word rest => simp [bitmapBits, wordBits_length, *]; omega
 
-theorem findNonemptyBin_sound {words : List Nat} {start found : Nat}
+theorem findNonemptyBin_sound {words : List (BitVec 64)} {start found : Nat}
     (hfind : findNonemptyBin words start = some found) :
     start ≤ found ∧ found < words.length * 64 ∧
       (bitmapBits words)[found]? = some true := by
   have hsound := firstSetFrom_sound hfind
   simpa [findNonemptyBin, bitmapBits_length] using hsound
 
-theorem findNonemptyBin_bounded {words : List Nat} {start found : Nat}
+theorem findNonemptyBin_bounded {words : List (BitVec 64)} {start found : Nat}
     (hwords : words.length ≤ 4)
     (hfind : findNonemptyBin words start = some found) : found < 256 := by
   have hsound := findNonemptyBin_sound hfind
   omega
 
-theorem findNonemptyBin_complete {words : List Nat} {start index : Nat}
+theorem findNonemptyBin_complete {words : List (BitVec 64)} {start index : Nat}
     (hstart : start ≤ index)
     (hset : (bitmapBits words)[index]? = some true) :
     ∃ found, findNonemptyBin words start = some found := by
   exact firstSetFrom_complete hstart hset
 
-theorem findNonemptyBin_minimal {words : List Nat} {start found earlier : Nat}
+theorem findNonemptyBin_minimal {words : List (BitVec 64)} {start found earlier : Nat}
     (hfind : findNonemptyBin words start = some found)
     (hstart : start ≤ earlier) (hearlier : earlier < found) :
     (bitmapBits words)[earlier]? = some false := by

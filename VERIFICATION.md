@@ -59,8 +59,11 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   request through 256 bytes. Luffs now implements the 64-bit mapping-down path
   used for free-block insertion: a source-shape checked refinement maps every
   accepted positive size to the encoded Lean `sizeClass`, whose result is
-  proved below 2048. The mapping-up request path and a word-level theorem for
-  the `leading_zeros` lowering remain.
+  proved below 2048. The mapping-down source model is no longer an alias of
+  the specification: it executes an independent 64-bit `leading_zeros`,
+  shift, subtraction, quotient, and checked encoded-index path, proved
+  extensionally equal to `sizeClass`; generated refinement uses that proof
+  rather than `rfl`. The mapping-up request path remains.
 - [ ] Implement bitmap search and prove it returns a nonempty suitable bin.
   The reference search is proved in-bounds, set-bit sound, and minimal from its
   starting index. Cached first/second-level bits are now proved equivalent to

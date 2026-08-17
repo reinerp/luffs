@@ -3195,11 +3195,11 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
     }
     for model in &module.tlsf_classify_size_models {
         out.push_str(&format!(
-            "def {}_model (size : Nat) : Option Nat :=\n  {} size\n\n",
-            model.name, model.refines
+            "def {}_model (size : Nat) : Option Nat :=\n  Luffs.Runtime.TLSF.classifySizeBinLowered size\n\n",
+            model.name
         ));
         out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
+            "theorem {}_refines : {}_model = {} := by\n  funext size\n  exact Luffs.Runtime.TLSF.classifySizeBinLowered_eq size\n\n",
             model.name, model.name, model.refines
         ));
     }
@@ -3636,6 +3636,10 @@ mod tests {
         ));
         assert!(generated.contains(
             "theorem tlsf_classify_size_refines : tlsf_classify_size_model = Luffs.Runtime.TLSF.classifySizeBin"
+        ));
+        assert!(generated.contains("Luffs.Runtime.TLSF.classifySizeBinLowered size"));
+        assert!(!generated.contains(
+            "def tlsf_classify_size_model (size : Nat) : Option Nat :=\n  Luffs.Runtime.TLSF.classifySizeBin size"
         ));
         assert!(generated.contains(
             "theorem tlsf_classify_request_refines : tlsf_classify_request_model = Luffs.Runtime.TLSF.classifyRequestBin"

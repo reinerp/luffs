@@ -117,6 +117,98 @@ theorem classifyRequestBin_result {request encoded : Nat}
       simp only [encodeSizeClass, firstLevelCount, secondLevelCount] at hfl hsl ⊢
       omega
 
+/-- Mathematical value of Rust's `u64::leading_zeros` on a nonzero word.
+The explicit out-of-range branch makes this a total model on `Nat`. -/
+def leadingZeros64 (value : Nat) : Nat :=
+  if value = 0 then 64
+  else if value < 2 ^ 64 then 63 - value.log2
+  else 0
+
+theorem leadingZeros64_eq {value : Nat} (hpositive : 0 < value)
+    (hmax : value < 2 ^ 64) :
+    leadingZeros64 value = 63 - value.log2 := by
+  simp [leadingZeros64, Nat.ne_of_gt hpositive, hmax]
+
+/-- Independent, word-operation-shaped semantics of `tlsf_classify_size`.
+Unlike `classifySizeBin`, this follows the source's `leading_zeros`, shifts,
+subtractions, quotient, and final encoded-index checks. -/
+def classifySizeBinLowered (size : Nat) : Option Nat :=
+  if size > usizeMax then none
+  else if size = 0 then none
+  else if size ≤ 256 then
+    some ((size - 1) >>> 3)
+  else
+    let leading := leadingZeros64 size
+    if leading > 63 then none
+    else
+      let fl := 63 - leading
+      if fl < 5 then none
+      else
+        let base := 1 <<< fl
+        if base > size then none
+        else
+          let shift := fl - 5
+          let step := 1 <<< shift
+          let delta := size - base
+          let sl := delta / step
+          if sl ≥ 32 then none
+          else
+            let encodedBase := fl * 32
+            let encoded := encodedBase + sl
+            if encoded > usizeMax then none else some encoded
+
+theorem classifySizeBinLowered_eq (size : Nat) :
+    classifySizeBinLowered size = classifySizeBin size := by
+  by_cases hzero : size = 0
+  · simp [classifySizeBinLowered, classifySizeBin, hzero, usizeMax]
+  have hpositive : 0 < size := Nat.pos_of_ne_zero hzero
+  by_cases hmax : size < 2 ^ 64
+  · have hlogMax : size.log2 < 64 :=
+      (Nat.log2_lt (Nat.ne_of_gt hpositive)).2 hmax
+    have hword : ¬size > usizeMax := by
+      simp only [usizeMax]
+      omega
+    have hfl : 63 - (63 - size.log2) = size.log2 := by omega
+    have hleading := leadingZeros64_eq hpositive hmax
+    by_cases hlinear : size ≤ 256
+    · have hshift : (size - 1) >>> 3 = (size - 1) / 8 := by
+        simp [Nat.shiftRight_eq_div_pow]
+      simp [classifySizeBinLowered, classifySizeBin, hword, hzero, hlinear,
+        hshift, sizeClass, linearCutoff, alignment, encodeSizeClass,
+        secondLevelCount, firstLevelCount]
+      exact ⟨hpositive, by simpa using hmax⟩
+    · have hhigh : linearCutoff < size := by
+        simp only [linearCutoff, alignment, secondLevelCount]
+        omega
+      have hlog : 5 ≤ size.log2 := high_log_at_least_five size hhigh
+      have hbase : 2 ^ size.log2 ≤ size :=
+        Nat.log2_self_le (Nat.ne_of_gt hpositive)
+      have hquotient := high_sizeClass_quotient_lt size hpositive hlog
+      have hencoded : size.log2 * 32 +
+          (size - 2 ^ size.log2) / 2 ^ (size.log2 - 5) ≤ usizeMax := by
+        simp only [usizeMax]
+        have : size.log2 ≤ 63 := by omega
+        have hq : (size - 2 ^ size.log2) / 2 ^ (size.log2 - 5) < 32 := by
+          simpa [secondLevelCount] using hquotient
+        omega
+      simp only [classifySizeBinLowered, hword, ↓reduceIte, hzero, hlinear,
+        leadingZeros64_eq hpositive hmax]
+      simp only [show ¬63 < 63 - size.log2 by omega, ↓reduceIte, hfl,
+        Nat.not_lt_of_ge hlog, Nat.shiftLeft_eq, Nat.one_mul,
+        Nat.not_lt_of_ge hbase, Nat.not_le.mpr (by simpa using hquotient),
+        hencoded]
+      simp [classifySizeBin, hpositive, hmax, sizeClass,
+        Nat.not_le_of_gt hhigh, encodeSizeClass, secondLevelCount,
+        firstLevelCount, high_sizeClass_no_wrap size hpositive hlog]
+      exact ⟨by simpa [secondLevelCount] using hquotient, hencoded,
+        (high_sizeClass_no_wrap size hpositive hlog).symm⟩
+  · have hout : ¬size < 2 ^ firstLevelCount := by
+      simpa [firstLevelCount] using hmax
+    have hword : size > usizeMax := by
+      simp only [usizeMax]
+      omega
+    simp [classifySizeBinLowered, classifySizeBin, hword, hpositive, hout]
+
 /-- Pure state used by the fixed parallel-array TLSF lowering. -/
 structure Metadata where
   heads : List Nat

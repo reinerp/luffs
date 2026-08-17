@@ -1499,6 +1499,11 @@ fn parse_tlsf_deallocate_uncoalesced_models(source: &str) -> Vec<TlsfDeallocateU
         .map(|line| line.trim())
         .collect::<Vec<_>>();
     let required = [
+        "if block_count > offsets.len() { return None; }",
+        "if block_count > sizes.len() { return None; }",
+        "if block_count > is_free.len() { return None; }",
+        "if block_count > prev_free.len() { return None; }",
+        "if block >= block_count { return None; }",
         "if block >= offsets.len() { return None; }",
         "if sizes[block] != returned_bytes { return None; }",
         "let bin: usize = tlsf_classify_size(returned_bytes)?;",
@@ -2179,7 +2184,7 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
     }
     for model in &module.tlsf_deallocate_uncoalesced_models {
         out.push_str(&format!(
-            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (block returned_offset returned_bytes : Nat) : Option Luffs.Runtime.TLSF.DeallocateUncoalescedResult :=\n  {} offsets sizes is_free prev_free second first heads next previous block returned_offset returned_bytes\n\n",
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (count block returned_offset returned_bytes : Nat) : Option Luffs.Runtime.TLSF.DeallocateUncoalescedResult :=\n  {} offsets sizes is_free prev_free second first heads next previous count block returned_offset returned_bytes\n\n",
             model.name, model.refines
         ));
         out.push_str(&format!(

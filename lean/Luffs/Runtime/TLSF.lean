@@ -3201,6 +3201,34 @@ def blockOffsets (blocks : List Block) : List Nat := blocks.map Block.offset
 
 def blockSizes (blocks : List Block) : List Nat := blocks.map Block.bytes
 
+/-- Representation of the active prefix of the fixed physical-header arrays.
+Slots at or above `count` are spare capacity and are deliberately excluded
+from allocator operations. This is the deletion model needed by coalescing. -/
+def RepresentsPhysicalArrays (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count : Nat)
+    (blocks : List Block) : Prop :=
+  count = blocks.length ∧
+  count ≤ offsets.length ∧ count ≤ sizes.length ∧
+  count ≤ isFree.length ∧ count ≤ prevFree.length ∧
+  offsets.take count = blockOffsets blocks ∧
+  sizes.take count = blockSizes blocks ∧
+  isFree.take count = freeFlags blocks ∧
+  prevFree.take count = prevFreeFlags blocks
+
+theorem canonical_representsPhysicalArrays (blocks : List Block) :
+    RepresentsPhysicalArrays (blockOffsets blocks) (blockSizes blocks)
+      (freeFlags blocks) (prevFreeFlags blocks) blocks.length blocks := by
+  refine ⟨rfl, by simp [blockOffsets], by simp [blockSizes],
+    by simp [freeFlags], by simp [prevFreeFlags], ?_, ?_, ?_, ?_⟩
+  · simpa only [blockOffsets, List.length_map] using
+      (List.take_length (l := blockOffsets blocks))
+  · simpa only [blockSizes, List.length_map] using
+      (List.take_length (l := blockSizes blocks))
+  · simpa only [freeFlags, List.length_map] using
+      (List.take_length (l := freeFlags blocks))
+  · simpa only [prevFreeFlags, List.length_map] using
+      (List.take_length (l := prevFreeFlags blocks))
+
 structure DeallocateUncoalescedResult where
   isFree : List (Fin 256)
   prevFree : List (Fin 256)
@@ -3213,13 +3241,16 @@ first write; this pure model makes their successful composition explicit. -/
 def deallocateUncoalescedArrays (offsets sizes : List Nat)
     (isFree prevFree : List (Fin 256)) (second : List (BitVec 32))
     (first : BitVec 64) (heads next previous : List Nat)
-    (block returnedOffset returnedBytes : Nat) :
+    (count block returnedOffset returnedBytes : Nat) :
     Option DeallocateUncoalescedResult := do
-  let (nextIsFree, nextPrevFree) ←
-    markFreeArrays offsets sizes isFree prevFree block returnedOffset returnedBytes
-  let bin ← classifySizeBin returnedBytes
-  let insertion ← insertClassArrays second first heads next previous bin returnedOffset
-  pure { isFree := nextIsFree, prevFree := nextPrevFree, insertion }
+  if count ≤ offsets.length ∧ count ≤ sizes.length ∧
+      count ≤ isFree.length ∧ count ≤ prevFree.length ∧ block < count then
+    let (nextIsFree, nextPrevFree) ←
+      markFreeArrays offsets sizes isFree prevFree block returnedOffset returnedBytes
+    let bin ← classifySizeBin returnedBytes
+    let insertion ← insertClassArrays second first heads next previous bin returnedOffset
+    pure { isFree := nextIsFree, prevFree := nextPrevFree, insertion }
+  else none
 
 /-- The concrete flag writes are exactly the projection of the abstract
 `markFreeAt` physical-header transition. This includes the successor boundary
@@ -3290,7 +3321,7 @@ theorem deallocateUncoalescedArrays_refines
     (hsuccess : deallocateUncoalescedArrays
       (blockOffsets blocks) (blockSizes blocks)
       (freeFlags blocks) (prevFreeFlags blocks) second first
-      heads next previous i selected.offset selected.bytes = some result) :
+      heads next previous blocks.length i selected.offset selected.bytes = some result) :
     ∃ cls,
       classifyBlock? (Dealloc.freedBlock selected) = some cls ∧
       result.isFree = freeFlags (markFreeAt blocks i) ∧
@@ -3306,6 +3337,13 @@ theorem deallocateUncoalescedArrays_refines
       FirstBitmapRep result.insertion.first result.insertion.second := by
   have hmark := markFreeArrays_refines_markFreeAt hget hallocated
   unfold deallocateUncoalescedArrays at hsuccess
+  have hi : i < blocks.length := (List.getElem?_eq_some_iff.mp hget).1
+  have hpre : blocks.length ≤ (blockOffsets blocks).length ∧
+      blocks.length ≤ (blockSizes blocks).length ∧
+      blocks.length ≤ (freeFlags blocks).length ∧
+      blocks.length ≤ (prevFreeFlags blocks).length ∧ i < blocks.length := by
+    simp [blockOffsets, blockSizes, freeFlags, prevFreeFlags, hi]
+  rw [if_pos hpre] at hsuccess
   rw [hmark] at hsuccess
   cases hclass : classifySizeBin selected.bytes with
   | none => simp [hclass] at hsuccess
@@ -3343,7 +3381,7 @@ theorem deallocateUncoalescedArrays_ownsFree
     (hallocated : selected.free = false)
     (hsuccess : deallocateUncoalescedArrays
       (blockOffsets blocks) (blockSizes blocks) isFree prevFree second first
-      heads next previous i selected.offset selected.bytes = some result) :
+      heads next previous blocks.length i selected.offset selected.bytes = some result) :
     ∃ cls abstractNext,
       Dealloc.deallocateUncoalesced pool ⟨blocks, state⟩ i
           (selected.region pool) = some abstractNext ∧
@@ -3353,6 +3391,7 @@ theorem deallocateUncoalescedArrays_ownsFree
           Luffs.Allocator.TLSF.Ownership.OwnsFree pool blocks ⊣⊢
         Luffs.Allocator.TLSF.Ownership.OwnsFree pool abstractNext.physical) := by
   unfold deallocateUncoalescedArrays at hsuccess
+  split at hsuccess <;> try contradiction
   cases hmark : markFreeArrays (blockOffsets blocks) (blockSizes blocks)
       isFree prevFree i selected.offset selected.bytes with
   | none => simp [hmark] at hsuccess

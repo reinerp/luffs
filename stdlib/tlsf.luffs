@@ -256,7 +256,12 @@ fn tlsf_mark_free(offsets: &[usize; 4096], sizes: &[usize; 4096], is_free: &mut 
 // `block` is a physical-header array index; free-list links use byte offsets.
 // Every fallible condition is checked before tlsf_mark_free performs a write.
 // refines Luffs.Runtime.TLSF.deallocateUncoalescedArrays
-fn tlsf_deallocate_uncoalesced(offsets: &[usize; 4096], sizes: &[usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block: usize, returned_offset: usize, returned_bytes: usize) -> Option<()> {
+fn tlsf_deallocate_uncoalesced(offsets: &[usize; 4096], sizes: &[usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: usize, block: usize, returned_offset: usize, returned_bytes: usize) -> Option<()> {
+    if block_count > offsets.len() { return None; }
+    if block_count > sizes.len() { return None; }
+    if block_count > is_free.len() { return None; }
+    if block_count > prev_free.len() { return None; }
+    if block >= block_count { return None; }
     if block >= offsets.len() { return None; }
     if block >= sizes.len() { return None; }
     if block >= is_free.len() { return None; }

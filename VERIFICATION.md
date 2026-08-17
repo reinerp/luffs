@@ -187,8 +187,12 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   is proved to refine the corresponding abstract physical and bin transitions
   without conflating a physical-array index with the block's byte offset.
   Concrete neighbor removal/reinsertion and coalescing still remain to be
-  lowered; pointer-to-offset validation belongs at the mmap-backed pool
-  boundary.
+  lowered. The fixed physical-header arrays now have an explicit active-prefix
+  representation and the concrete free entry point rejects selectors outside
+  `block_count`; inactive capacity can no longer masquerade as a live header.
+  This count is also the basis for the compaction required when coalescing
+  deletes a neighbor. Pointer-to-offset validation belongs at the mmap-backed
+  pool boundary.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 
 The first concrete `stdlib/tlsf.luffs` runtime layer now implements bounded

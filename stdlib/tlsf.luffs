@@ -251,3 +251,30 @@ fn tlsf_mark_free(offsets: &[usize; 4096], sizes: &[usize; 4096], is_free: &mut 
     }
     Some(())
 }
+
+// Atomically validate and perform the uncoalesced half of deallocation.
+// `block` is a physical-header array index; free-list links use byte offsets.
+// Every fallible condition is checked before tlsf_mark_free performs a write.
+// refines Luffs.Runtime.TLSF.deallocateUncoalescedArrays
+fn tlsf_deallocate_uncoalesced(offsets: &[usize; 4096], sizes: &[usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block: usize, returned_offset: usize, returned_bytes: usize) -> Option<()> {
+    if block >= offsets.len() { return None; }
+    if block >= sizes.len() { return None; }
+    if block >= is_free.len() { return None; }
+    if block >= prev_free.len() { return None; }
+    if is_free[block] != 0 { return None; }
+    if offsets[block] != returned_offset { return None; }
+    if sizes[block] != returned_bytes { return None; }
+    if block == usize::MAX { return None; }
+
+    let bin: usize = tlsf_classify_size(returned_bytes)?;
+    if bin >= heads.len() { return None; }
+    let fl: usize = bin >> 5;
+    if fl >= second_nonempty.len() { return None; }
+    if first_nonempty.len() == 0 { return None; }
+    if returned_offset >= next.len() { return None; }
+    if returned_offset >= previous.len() { return None; }
+
+    tlsf_mark_free(offsets, sizes, is_free, prev_free, block, returned_offset, returned_bytes)?;
+    tlsf_insert_class(second_nonempty, first_nonempty, heads, next, previous, bin, returned_offset)?;
+    Some(())
+}

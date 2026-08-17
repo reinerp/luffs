@@ -103,8 +103,13 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   cross-bin offset disjointness, including the selected old head's back-link.
   The final insertion theorem therefore refines exactly `Bins.State.insert`,
   preserves abstract bin validity, represents every successor chain, and
-  preserves both bitmap abstractions. Composing it with the physical free-bit
-  transition is the next bridge.
+  preserves both bitmap abstractions. The concrete uncoalesced-deallocation
+  wrapper now composes exact-region validation, the physical free-bit and
+  successor-boundary-tag writes, mapping-down classification, offset-keyed
+  intrusive insertion, and both bitmap updates. All fallible checks precede
+  its first write. Lean proves the combined array result refines `markFreeAt`
+  and `Bins.State.insert` simultaneously, preserving abstract bin validity and
+  the representations of every chain and both bitmap levels.
 - [ ] Prove physical blocks form a disjoint partition of every mapped pool.
   `partitions` now requires adjacency from offset zero plus exact byte coverage,
   closing the gap permitted by the earlier ordered/sum-only invariant.
@@ -173,8 +178,12 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   source-shape checked against the exact parallel-array model. That model is
   proved to be precisely the free-bit and boundary-tag projection of the
   abstract `markFreeAt` transition, framing every other physical header. Bin
-  insertion and executable neighbor coalescing still remain to be composed
-  around it; pointer-to-offset validation belongs at the mmap-backed pool
+  The concrete Luffs uncoalesced transaction now composes that marking with
+  classification and full bin insertion. Its successful generated semantics
+  is proved to refine the corresponding abstract physical and bin transitions
+  without conflating a physical-array index with the block's byte offset.
+  Concrete neighbor removal/reinsertion and coalescing still remain to be
+  lowered; pointer-to-offset validation belongs at the mmap-backed pool
   boundary.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 

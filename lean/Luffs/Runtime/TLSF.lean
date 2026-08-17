@@ -1,6 +1,7 @@
 import Luffs.Allocator.TLSF.FreeList
 import Luffs.Allocator.TLSF.Bitmap
 import Luffs.Allocator.TLSF.Bins
+import Luffs.Allocator.TLSF.Dealloc
 
 set_option autoImplicit false
 
@@ -3200,6 +3201,26 @@ def blockOffsets (blocks : List Block) : List Nat := blocks.map Block.offset
 
 def blockSizes (blocks : List Block) : List Nat := blocks.map Block.bytes
 
+structure DeallocateUncoalescedResult where
+  isFree : List (Fin 256)
+  prevFree : List (Fin 256)
+  insertion : InsertClassResult
+deriving DecidableEq, Repr
+
+/-- Exact all-or-nothing array semantics of the first deallocation stage.
+The source lowering preflights the same three component operations before its
+first write; this pure model makes their successful composition explicit. -/
+def deallocateUncoalescedArrays (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (second : List (BitVec 32))
+    (first : BitVec 64) (heads next previous : List Nat)
+    (block returnedOffset returnedBytes : Nat) :
+    Option DeallocateUncoalescedResult := do
+  let (nextIsFree, nextPrevFree) ←
+    markFreeArrays offsets sizes isFree prevFree block returnedOffset returnedBytes
+  let bin ← classifySizeBin returnedBytes
+  let insertion ← insertClassArrays second first heads next previous bin returnedOffset
+  pure { isFree := nextIsFree, prevFree := nextPrevFree, insertion }
+
 /-- The concrete flag writes are exactly the projection of the abstract
 `markFreeAt` physical-header transition. This includes the successor boundary
 tag and frames every other physical header. -/
@@ -3248,5 +3269,63 @@ theorem markFreeArrays_refines_markFreeAt {blocks : List Block} {i : Nat}
             simp [hs, prevFreeFlags] at hprev' ⊢
           all_goals
             exact ⟨by simpa [freeFlags] using hfree', hprev'⟩
+
+/-- The combined Luffs transaction refines the abstract uncoalesced TLSF
+transition: its physical flags are `markFreeAt`, and its links and both bitmap
+levels represent insertion of the newly freed block in its verified class. -/
+theorem deallocateUncoalescedArrays_refines
+    {blocks : List Block} {i : Nat} {selected : Block}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {result : DeallocateUncoalescedResult}
+    {state : Bins.State}
+    (hget : blocks[i]? = some selected)
+    (hallocated : selected.free = false)
+    (hvalid : Bins.Valid state)
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hfresh : ∀ query, selected.offset ∉
+      (state.chains query).map Block.offset)
+    (hsuccess : deallocateUncoalescedArrays
+      (blockOffsets blocks) (blockSizes blocks)
+      (freeFlags blocks) (prevFreeFlags blocks) second first
+      heads next previous i selected.offset selected.bytes = some result) :
+    ∃ cls,
+      classifyBlock? (Dealloc.freedBlock selected) = some cls ∧
+      result.isFree = freeFlags (markFreeAt blocks i) ∧
+      result.prevFree = prevFreeFlags (markFreeAt blocks i) ∧
+      Bins.Valid (state.insert cls (Dealloc.freedBlock selected)) ∧
+      RepresentsBins
+        { heads := result.insertion.heads,
+          next := result.insertion.next,
+          previous := result.insertion.previous }
+        (state.insert cls (Dealloc.freedBlock selected)) ∧
+      RepresentsSecondBitmap result.insertion.second
+        (state.insert cls (Dealloc.freedBlock selected)) ∧
+      FirstBitmapRep result.insertion.first result.insertion.second := by
+  have hmark := markFreeArrays_refines_markFreeAt hget hallocated
+  unfold deallocateUncoalescedArrays at hsuccess
+  rw [hmark] at hsuccess
+  cases hclass : classifySizeBin selected.bytes with
+  | none => simp [hclass] at hsuccess
+  | some bin =>
+      cases hinsert : insertClassArrays second first heads next previous
+          bin selected.offset with
+      | none => simp [hclass, hinsert] at hsuccess
+      | some insertion =>
+          simp [hclass, hinsert] at hsuccess
+          subst result
+          obtain ⟨hsize, hmax, hbin, _⟩ := classifySizeBin_result hclass
+          let cls := sizeClass selected.bytes hsize hmax
+          have habstract : classifyBlock? (Dealloc.freedBlock selected) = some cls := by
+            simp [classifyBlock?, Dealloc.freedBlock, cls, hsize, hmax]
+          have hbelongs : Bins.Belongs cls (Dealloc.freedBlock selected) :=
+            classifyBlock?_result habstract
+          have hrefine := insertClassArrays_refines_insert
+            (inserted := Dealloc.freedBlock selected) hvalid hsecond hfirst
+            hbins hdisjoint (by simpa [Dealloc.freedBlock] using hfresh)
+            hbelongs (by simp [Dealloc.freedBlock]) hbin hinsert
+          exact ⟨cls, habstract, rfl, rfl, hrefine⟩
 
 end Luffs.Runtime.TLSF

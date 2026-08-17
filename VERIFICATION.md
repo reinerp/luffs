@@ -649,7 +649,13 @@ concurrency are later extensions and are not prerequisites for `Box` and
   the little-endian encoding. Its source-shape refinement targets the generic
   `boxNewArrays Scalar.u16` transformer, whose Iris theorem yields exclusive
   initialized `Box.Owns Scalar.u16` while preserving TLSF ownership. A
-  regression test rejects deleting the high-byte write.
+  regression test rejects deleting the high-byte write. Allocator-backed
+  Box-u32 and Box-u64 constructors now follow the same path: their Luffs
+  bodies check the complete 4/8-byte ranges, write every little-endian byte,
+  and refine wrappers that are definitionally the generic scalar constructor.
+  The generic Iris constructor theorem therefore yields their exclusive
+  initialized ownership as well; a u64 source-shape regression rejects
+  deleting its most significant byte.
   Codec-generic executable load/store semantics now checks the whole encoded
   range; successful loads expose the exact decoded byte slice, and an exact
   codec encoding decodes to the original value. The existing `u8` store model

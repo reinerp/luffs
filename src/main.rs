@@ -2013,6 +2013,36 @@ fn parse_tlsf_box_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
                 "Some(offset)",
             ],
         ),
+        (
+            "tlsf_box_new_u32",
+            vec![
+                "let offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, 8)?;",
+                "let end: usize = offset.checked_add(4)?;",
+                "if end > pool.len() { return None; }",
+                "pool[offset] = value as u8;",
+                "pool[offset + 1] = (value >> 8) as u8;",
+                "pool[offset + 2] = (value >> 16) as u8;",
+                "pool[offset + 3] = (value >> 24) as u8;",
+                "Some(offset)",
+            ],
+        ),
+        (
+            "tlsf_box_new_u64",
+            vec![
+                "let offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, 8)?;",
+                "let end: usize = offset.checked_add(8)?;",
+                "if end > pool.len() { return None; }",
+                "pool[offset] = value as u8;",
+                "pool[offset + 1] = (value >> 8) as u8;",
+                "pool[offset + 2] = (value >> 16) as u8;",
+                "pool[offset + 3] = (value >> 24) as u8;",
+                "pool[offset + 4] = (value >> 32) as u8;",
+                "pool[offset + 5] = (value >> 40) as u8;",
+                "pool[offset + 6] = (value >> 48) as u8;",
+                "pool[offset + 7] = (value >> 56) as u8;",
+                "Some(offset)",
+            ],
+        ),
     ];
     let mut models = Vec::new();
     for (name, required) in specifications {
@@ -3650,10 +3680,14 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
         ));
     }
     for model in &module.tlsf_box_new_models {
-        if model.name == "tlsf_box_new_u16" {
+        if model.name != "tlsf_box_new_u8" {
+            let width = model
+                .name
+                .strip_prefix("tlsf_box_new_u")
+                .expect("scalar Box constructor name");
             out.push_str(&format!(
-                "def {}_model (storage : List (Fin 256)) (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (value : BitVec 16) : Option Luffs.Runtime.Containers.BoxNewU8ArraysResult :=\n  {} storage offsets sizes is_free prev_free count second first heads next previous value\n\n",
-                model.name, model.refines
+                "def {}_model (storage : List (Fin 256)) (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (value : BitVec {}) : Option Luffs.Runtime.Containers.BoxNewU8ArraysResult :=\n  {} storage offsets sizes is_free prev_free count second first heads next previous value\n\n",
+                model.name, width, model.refines
             ));
             out.push_str(&format!(
                 "theorem {}_refines : {}_model = {} := by rfl\n\n",
@@ -4108,6 +4142,12 @@ mod tests {
             "theorem tlsf_box_new_u8_refines : tlsf_box_new_u8_model = Luffs.Runtime.Containers.boxNewU8Arrays"
         ));
         assert!(generated.contains(
+            "theorem tlsf_box_new_u32_refines : tlsf_box_new_u32_model = Luffs.Runtime.Containers.boxNewU32Arrays"
+        ));
+        assert!(generated.contains(
+            "theorem tlsf_box_new_u64_refines : tlsf_box_new_u64_model = Luffs.Runtime.Containers.boxNewU64Arrays"
+        ));
+        assert!(generated.contains(
             "let allocated ← tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous 8"
         ));
         assert!(generated.contains(
@@ -4237,6 +4277,19 @@ mod tests {
             !m.tlsf_box_new_models
                 .iter()
                 .any(|model| model.name == "tlsf_box_new_u16")
+        );
+    }
+
+    #[test]
+    fn tlsf_box_u64_refinement_rejects_missing_high_byte() {
+        let source = include_str!("../stdlib/tlsf.luffs")
+            .replace("pool[offset + 7] = (value >> 56) as u8;", "");
+        let module = parse(&source).unwrap();
+        assert!(
+            !module
+                .tlsf_box_new_models
+                .iter()
+                .any(|model| model.name == "tlsf_box_new_u64")
         );
     }
 

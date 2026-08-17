@@ -349,6 +349,12 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   bounds through both removals, making the second removal and merged-node
   insertion total; together with physical totality, Lean proves that the
   complete commit phase cannot produce any of its failure states.
+  Conditional coalescing now has a source-shaped stateful wrapper as well:
+  absent or ineligible neighbors are successful identity transitions, every
+  preflight rejection retains the exact input, and an eligible pair enters
+  only the proved-total commit. Consequently every failure preserves the
+  complete physical, bin, link, bitmap, and count state, with an Iris-Lean
+  arbitrary-frame corollary.
 - [x] Prove the bounded-step property of bin lookup and local list updates.
   The exact lowered flat-bitmap cost model counts inspected 64-bit words and
   is bounded by the input word count, hence at most four probes for the fixed

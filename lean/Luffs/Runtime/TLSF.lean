@@ -7569,6 +7569,198 @@ def coalesceIfPossibleArrays (offsets sizes : List Nat)
             heads next previous count left
       | _, _, _ => none
 
+/-- Stateful source semantics of conditional coalescing. Missing or ineligible
+neighbors are successful identity transitions. All genuine rejection precedes
+the stateful coalescing commit. -/
+def coalesceIfPossibleArraysOutcome (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (second : List (BitVec 32))
+    (first : BitVec 64) (heads next previous : List Nat)
+    (count left : Nat) : CoalesceClassOutcome :=
+  let input := allocatorArrays offsets sizes isFree prevFree second first heads
+    next previous count
+  if count > offsets.length ∨ count > sizes.length ∨
+      count > isFree.length ∨ count > prevFree.length then .failure input
+  else if left = usizeMax then .success input
+  else
+    let right := left + 1
+    if right ≥ count then .success input
+    else if isFree[left]? = some 0 then .success input
+    else if isFree[right]? = some 0 then .success input
+    else match offsets[left]?, sizes[left]?, offsets[right]?, sizes[right]? with
+    | some leftOffset, some leftSize, some rightOffset, some rightSize =>
+      if leftOffset + leftSize ≠ rightOffset then .success input
+      else match classifySizeBin leftSize, classifySizeBin rightSize,
+          classifySizeBin (leftSize + rightSize) with
+      | some leftBin, some rightBin, some mergedBin =>
+        if leftBin ≥ heads.length ∨ rightBin ≥ heads.length ∨
+            mergedBin ≥ heads.length ∨
+            leftBin / secondLevelCount ≥ second.length ∨
+            rightBin / secondLevelCount ≥ second.length ∨
+            mergedBin / secondLevelCount ≥ second.length ∨
+            leftOffset ≥ next.length ∨ leftOffset ≥ previous.length ∨
+            rightOffset ≥ next.length ∨ rightOffset ≥ previous.length then
+          .failure input
+        else commitCoalesceClassOutcome input offsets sizes isFree prevFree
+          second first heads next previous count left leftOffset rightOffset
+          leftBin rightBin mergedBin
+      | _, _, _ => .failure input
+    | _, _, _, _ => .failure input
+
+set_option maxHeartbeats 1000000 in
+/-- Conditional coalescing is transactional: every failure carries the exact
+complete metadata state supplied by its caller. -/
+theorem coalesceIfPossibleArraysOutcome_failure_eq_input
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {count left : Nat}
+    {failed : CoalesceClassResult}
+    (hfailure : coalesceIfPossibleArraysOutcome offsets sizes isFree prevFree
+      second first heads next previous count left = .failure failed) :
+    failed = allocatorArrays offsets sizes isFree prevFree second first heads next
+      previous count := by
+  let input := allocatorArrays offsets sizes isFree prevFree second first heads
+    next previous count
+  let capacityBad := count > offsets.length ∨ count > sizes.length ∨
+    count > isFree.length ∨ count > prevFree.length
+  by_cases hcapacity : capacityBad
+  · simpa [coalesceIfPossibleArraysOutcome, input, capacityBad, hcapacity] using
+      hfailure.symm
+  by_cases hmax : left = usizeMax
+  · simp [coalesceIfPossibleArraysOutcome, input, capacityBad, hcapacity,
+      hmax] at hfailure
+  let right := left + 1
+  by_cases hright : right ≥ count
+  · simp [coalesceIfPossibleArraysOutcome, input, capacityBad, hcapacity,
+      hmax, right, hright] at hfailure
+  by_cases hleftFree : isFree[left]? = some 0
+  · simp [coalesceIfPossibleArraysOutcome, input, capacityBad, hcapacity,
+      hmax, right, hright, hleftFree] at hfailure
+  by_cases hrightFree : isFree[right]? = some 0
+  · simp [coalesceIfPossibleArraysOutcome, input, capacityBad, hcapacity,
+      hmax, right, hright, hleftFree, hrightFree] at hfailure
+  cases hleftOffset : offsets[left]? with
+  | none =>
+      simpa [coalesceIfPossibleArraysOutcome, input, capacityBad, hcapacity,
+        hmax, right, hright, hleftFree, hrightFree, hleftOffset] using
+        hfailure.symm
+  | some leftOffset =>
+    cases hleftSize : sizes[left]? with
+    | none =>
+        simpa [coalesceIfPossibleArraysOutcome, input, capacityBad, hcapacity,
+          hmax, right, hright, hleftFree, hrightFree, hleftOffset, hleftSize]
+          using hfailure.symm
+    | some leftSize =>
+      cases hrightOffset : offsets[right]? with
+      | none =>
+          simpa [coalesceIfPossibleArraysOutcome, input, capacityBad, hcapacity,
+            hmax, right, hright, hleftFree, hrightFree, hleftOffset, hleftSize,
+            hrightOffset] using hfailure.symm
+      | some rightOffset =>
+        cases hrightSize : sizes[right]? with
+        | none =>
+            simpa [coalesceIfPossibleArraysOutcome, input, capacityBad, hcapacity,
+              hmax, right, hright, hleftFree, hrightFree, hleftOffset,
+              hleftSize, hrightOffset, hrightSize] using hfailure.symm
+        | some rightSize =>
+          by_cases hadjacent : leftOffset + leftSize ≠ rightOffset
+          · simp [coalesceIfPossibleArraysOutcome, input, capacityBad,
+              hcapacity, hmax, right, hright, hleftFree, hrightFree,
+              hleftOffset, hleftSize, hrightOffset, hrightSize, hadjacent] at
+              hfailure
+          cases hleftBin : classifySizeBin leftSize with
+          | none =>
+              simpa [coalesceIfPossibleArraysOutcome, input, capacityBad,
+                hcapacity, hmax, right, hright, hleftFree, hrightFree,
+                hleftOffset, hleftSize, hrightOffset, hrightSize, hadjacent,
+                hleftBin] using hfailure.symm
+          | some leftBin =>
+            cases hrightBin : classifySizeBin rightSize with
+            | none =>
+                simpa [coalesceIfPossibleArraysOutcome, input, capacityBad,
+                  hcapacity, hmax, right, hright, hleftFree, hrightFree,
+                  hleftOffset, hleftSize, hrightOffset, hrightSize, hadjacent,
+                  hleftBin, hrightBin] using hfailure.symm
+            | some rightBin =>
+              cases hmergedBin : classifySizeBin (leftSize + rightSize) with
+              | none =>
+                  simpa [coalesceIfPossibleArraysOutcome, input, capacityBad,
+                    hcapacity, hmax, right, hright, hleftFree, hrightFree,
+                    hleftOffset, hleftSize, hrightOffset, hrightSize, hadjacent,
+                    hleftBin, hrightBin, hmergedBin] using hfailure.symm
+              | some mergedBin =>
+                let metadataBad := leftBin ≥ heads.length ∨
+                  rightBin ≥ heads.length ∨ mergedBin ≥ heads.length ∨
+                  leftBin / secondLevelCount ≥ second.length ∨
+                  rightBin / secondLevelCount ≥ second.length ∨
+                  mergedBin / secondLevelCount ≥ second.length ∨
+                  leftOffset ≥ next.length ∨ leftOffset ≥ previous.length ∨
+                  rightOffset ≥ next.length ∨ rightOffset ≥ previous.length
+                by_cases hmetadata : metadataBad
+                · simpa [coalesceIfPossibleArraysOutcome, input, capacityBad,
+                    hcapacity, hmax, right, hright, hleftFree, hrightFree,
+                    hleftOffset, hleftSize, hrightOffset, hrightSize, hadjacent,
+                    hleftBin, hrightBin, hmergedBin, metadataBad, hmetadata]
+                    using hfailure.symm
+                have hphysical : coalescePhysicalArrays offsets sizes isFree
+                    prevFree count left ≠ none := by
+                  apply coalescePhysicalArrays_ne_none_of_preflight
+                  all_goals simp only [capacityBad] at hcapacity
+                  · omega
+                  · omega
+                  · omega
+                  · omega
+                  · simpa [right] using Nat.lt_of_not_ge hright
+                  · exact hleftFree
+                  · simpa [right] using hrightFree
+                  · exact hleftOffset
+                  · exact hleftSize
+                  · simpa [right] using hrightOffset
+                  · simpa [right] using hrightSize
+                  · exact Classical.byContradiction (fun h => hadjacent h)
+                have himpossible :=
+                  commitCoalesceClassOutcome_ne_failure_of_preflight
+                    (input := input) (failed := failed)
+                    (Nat.lt_of_not_ge (fun h => hmetadata (Or.inl h)))
+                    (Nat.lt_of_not_ge (fun h => hmetadata (Or.inr (Or.inl h))))
+                    (Nat.lt_of_not_ge (fun h => hmetadata
+                      (Or.inr (Or.inr (Or.inl h)))))
+                    (Nat.lt_of_not_ge (fun h => hmetadata
+                      (Or.inr (Or.inr (Or.inr (Or.inl h))))))
+                    (Nat.lt_of_not_ge (fun h => hmetadata
+                      (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl h)))))))
+                    (Nat.lt_of_not_ge (fun h => hmetadata
+                      (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl h))))))))
+                    (Nat.lt_of_not_ge (fun h => hmetadata
+                      (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
+                        (Or.inl h)))))))))
+                    (Nat.lt_of_not_ge (fun h => hmetadata
+                      (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
+                        (Or.inr (Or.inl h))))))))))
+                    (Nat.lt_of_not_ge (fun h => hmetadata
+                      (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
+                        (Or.inr (Or.inr (Or.inl h)))))))))))
+                    (Nat.lt_of_not_ge (fun h => hmetadata
+                      (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
+                        (Or.inr (Or.inr (Or.inr h))))))))))) hphysical
+                apply himpossible
+                simpa [coalesceIfPossibleArraysOutcome, input, capacityBad,
+                  hcapacity, hmax, right, hright, hleftFree, hrightFree,
+                  hleftOffset, hleftSize, hrightOffset, hrightSize, hadjacent,
+                  hleftBin, hrightBin, hmergedBin, metadataBad, hmetadata] using
+                  hfailure
+
+theorem coalesceIfPossibleArraysOutcome_failure_preserves_frame
+    {PROP : Type} [Iris.BI PROP]
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {count left : Nat}
+    {failed : CoalesceClassResult} (frame : PROP)
+    (hfailure : coalesceIfPossibleArraysOutcome offsets sizes isFree prevFree
+      second first heads next previous count left = .failure failed) :
+    failed = allocatorArrays offsets sizes isFree prevFree second first heads next
+        previous count ∧ (frame ∗ (emp : PROP) ⊣⊢ frame) := by
+  exact ⟨coalesceIfPossibleArraysOutcome_failure_eq_input hfailure, sep_emp⟩
+
 /-- The full class transaction carries the already-proved physical refinement:
 bin unlink/relink operations cannot change the physical active prefix. -/
 theorem coalesceClassArrays_refines_physical_append

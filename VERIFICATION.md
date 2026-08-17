@@ -976,8 +976,18 @@ alias semantics. This removes the one-store restriction that blocked
   the declared 64-bit target. Thus construction, in-capacity push, indexed
   get, generic pop, and generic drop cover every scalar type currently in the
   Luffs language; allocator-backed growth now has matching coverage. Explicit
-  lifetime lowering is present for byte slices, but source-level typed slice
-  monomorphizations remain before the overall Vec item is complete.
+  lifetime lowering is present for byte slices. Codec-generic element slicing
+  now checks element-to-byte multiplication, allocation offset addition, and
+  the final mapped-storage bound; success is proved to return exactly the
+  encoding of the selected logical elements. Its Iris theorem simultaneously
+  splits exclusive ownership of exactly that byte region from the parent Vec,
+  retaining the prefix and suffix needed for lifetime restoration. Concrete
+  shared and mutable `u16` Luffs functions refine this generic operation while
+  returning encoded byte views, avoiding an unsound native-slice cast: TLSF's
+  base alignment alone does not establish every scalar's Rust alignment or
+  native representation. Remaining scalar encoded-view monomorphizations and
+  any future separately proved native-layout view remain before the overall
+  Vec item is complete.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.
   All four checked-in examples are currently accepted by Lean and compile to

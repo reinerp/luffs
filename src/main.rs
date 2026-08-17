@@ -947,6 +947,13 @@ fn expand_read_effect(mut effect: ReadEffect, lets: &[(String, String)]) -> Read
     effect
 }
 
+fn expand_read_expr(mut expression: String, lets: &[(String, String)]) -> String {
+    for (name, replacement) in lets.iter().rev() {
+        expression = substitute_ident(&expression, name, replacement);
+    }
+    expression
+}
+
 fn parse_read_models(source: &str) -> Vec<ReadModel> {
     #[derive(Default)]
     struct Pending {
@@ -1069,10 +1076,16 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
             if model.eligible
                 && let (Some(result), Some(effect)) = (model.result, model.effect)
             {
+                let guards = model
+                    .guards
+                    .into_iter()
+                    .map(|guard| expand_read_expr(guard, &model.lets))
+                    .collect();
+                let result = expand_read_expr(result, &model.lets);
                 models.push(ReadModel {
                     name: model.name,
                     params: model.params,
-                    guards: model.guards,
+                    guards,
                     lets: model.lets,
                     result,
                     result_type: model.result_type,
@@ -5249,6 +5262,23 @@ mod tests {
             "theorem slice_mut_refines : slice_mut_model = Luffs.Runtime.Containers.vecSliceU8"
         ));
         assert!(generated.contains("theorem slice_mut_program_wp"));
+    }
+
+    #[test]
+    fn expands_slice_let_bindings_into_guards_and_results() {
+        let m = parse(
+            "// refines Luffs.Runtime.Containers.vecSliceU16Bytes\nfn slice<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [u8]> {\nif begin > end { return None; }\nif end > len { return None; }\nif end > usize::MAX / 2 { return None; }\nlet byte_begin: usize = begin * 2;\nlet byte_end: usize = end * 2;\nif offset > usize::MAX - byte_end { return None; }\nlet start: usize = offset + byte_begin;\nlet finish: usize = offset + byte_end;\nif finish > storage.len() { return None; }\nSome(storage[start..<finish])\n}",
+        )
+        .unwrap();
+        let generated = lean(&m);
+        assert!(
+            generated.contains("if offset > Luffs.Runtime.TLSF.usizeMax - (end_ * 2) then none")
+        );
+        assert!(generated.contains(
+            "some ((storage.drop (offset + (begin * 2))).take ((offset + (end_ * 2)) - (offset + (begin * 2))))"
+        ));
+        assert!(!generated.contains("usizeMax - byte_end"));
+        assert!(!generated.contains("if finish > storage.length"));
     }
 
     #[test]

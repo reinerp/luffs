@@ -608,6 +608,37 @@ fn vec_slice_mut_u8<'a>(storage: &'a mut [u8], len: usize, begin: usize, end: us
     Some(storage[begin..<end])
 }
 
+// A u16 vector is represented by its proved little-endian byte encoding.  The
+// returned borrow therefore remains a byte slice; no native-alignment or
+// representation assumption is hidden in this operation.
+// refines Luffs.Runtime.Containers.vecSliceU16Bytes
+fn vec_slice_u16_bytes<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [u8]> {
+    if begin > end { return None; }
+    if end > len { return None; }
+    if end > usize::MAX / 2 { return None; }
+    let byte_begin: usize = begin * 2;
+    let byte_end: usize = end * 2;
+    if offset > usize::MAX - byte_end { return None; }
+    let start: usize = offset + byte_begin;
+    let finish: usize = offset + byte_end;
+    if finish > storage.len() { return None; }
+    Some(storage[start..<finish])
+}
+
+// refines Luffs.Runtime.Containers.vecSliceU16Bytes
+fn vec_slice_mut_u16_bytes<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [u8]> {
+    if begin > end { return None; }
+    if end > len { return None; }
+    if end > usize::MAX / 2 { return None; }
+    let byte_begin: usize = begin * 2;
+    let byte_end: usize = end * 2;
+    if offset > usize::MAX - byte_end { return None; }
+    let start: usize = offset + byte_begin;
+    let finish: usize = offset + byte_end;
+    if finish > storage.len() { return None; }
+    Some(storage[start..<finish])
+}
+
 // refines Luffs.Runtime.Containers.vecCopyGrowU8
 fn vec_copy_grow_u8(source: &[u8], destination: &mut [u8], len: usize) -> Option<()> {
     if len > source.len() { return None; }

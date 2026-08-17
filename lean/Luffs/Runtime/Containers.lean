@@ -1428,6 +1428,139 @@ def vecGet {α : Type} (codec : Codec α) (storage : List Byte)
       if address > Luffs.Runtime.TLSF.usizeMax - codec.size then none
       else boxLoad codec storage address
 
+/-- Return the encoded byte view of an element range.  Keeping the executable
+boundary byte-typed avoids assuming that the allocator's byte storage has the
+alignment or native representation required by a Rust `&[α]`; `codec` is the
+proved connection between elements and bytes. -/
+def vecSlice {α : Type} (codec : Codec α) (storage : List Byte)
+    (offset len begin end_ : Nat) : Option (List Byte) :=
+  if begin > end_ then none
+  else if end_ > len then none
+  else if end_ > Luffs.Runtime.TLSF.usizeMax / codec.size then none
+  else
+    let byteBegin := begin * codec.size
+    let byteEnd := end_ * codec.size
+    if offset > Luffs.Runtime.TLSF.usizeMax - byteEnd then none
+    else
+      let start := offset + byteBegin
+      let finish := offset + byteEnd
+      if finish > storage.length then none
+      else some ((storage.drop start).take (finish - start))
+
+def vecSliceU16Bytes (storage : List Byte) (offset len begin end_ : Nat) :
+    Option (List Byte) :=
+  if begin > end_ then none
+  else if end_ > len then none
+  else if end_ > Luffs.Runtime.TLSF.usizeMax / 2 then none
+  else
+    let byteBegin := begin * 2
+    let byteEnd := end_ * 2
+    if offset > Luffs.Runtime.TLSF.usizeMax - byteEnd then none
+    else
+      let start := offset + byteBegin
+      let finish := offset + byteEnd
+      if finish > storage.length then none
+      else some ((storage.drop start).take (finish - start))
+
+theorem vecSliceU16Bytes_eq_generic :
+    vecSliceU16Bytes = vecSlice Scalar.u16 := by
+  funext storage offset len begin end_
+  simp [vecSliceU16Bytes, vecSlice, Scalar.u16]
+
+theorem vecSlice_result {α : Type} {codec : Codec α} {storage slice : List Byte}
+    {offset len begin end_ : Nat}
+    (hsuccess : vecSlice codec storage offset len begin end_ = some slice) :
+    begin ≤ end_ ∧ end_ ≤ len ∧
+      end_ ≤ Luffs.Runtime.TLSF.usizeMax / codec.size ∧
+      offset ≤ Luffs.Runtime.TLSF.usizeMax - end_ * codec.size ∧
+      offset + end_ * codec.size ≤ storage.length ∧
+      slice = (storage.drop (offset + begin * codec.size)).take
+        ((end_ - begin) * codec.size) := by
+  unfold vecSlice at hsuccess
+  split at hsuccess
+  next => contradiction
+  next hbegin =>
+    split at hsuccess
+    next => contradiction
+    next hend =>
+      split at hsuccess
+      next => contradiction
+      next hmul =>
+        dsimp only at hsuccess
+        split at hsuccess
+        next => contradiction
+        next hoffset =>
+          split at hsuccess
+          next => contradiction
+          next hstorage =>
+            simp only [Option.some.injEq] at hsuccess
+            refine ⟨Nat.le_of_not_gt hbegin, Nat.le_of_not_gt hend,
+              Nat.le_of_not_gt hmul, Nat.le_of_not_gt hoffset,
+              Nat.le_of_not_gt hstorage, ?_⟩
+            rw [← hsuccess]
+            congr 2
+            rw [Nat.add_sub_add_left, Nat.sub_mul]
+
+/-- A successful encoded slice is exactly the encoding of the selected logical
+Vec elements, even when the Vec occupies an interior allocation in a larger
+mapped byte array. -/
+theorem vecSlice_value {α : Type} {codec : Codec α} {storage slice : List Byte}
+    {handle : Luffs.Containers.Vec.Handle} {values : List α}
+    {begin end_ : Nat} {trailing : List Byte}
+    (hlen : values.length = handle.len)
+    (hstorage : storage.drop handle.block.offset =
+      Luffs.Containers.Vec.encodeValues codec values ++ trailing)
+    (hsuccess : vecSlice codec storage handle.block.offset handle.len
+      begin end_ = some slice) :
+    slice = Luffs.Containers.Vec.encodeValues codec
+      (Luffs.Containers.Vec.sliceValues values ⟨begin, end_⟩) := by
+  have hresult := vecSlice_result hsuccess
+  have hbegin : begin ≤ end_ := hresult.1
+  have hend : end_ ≤ values.length := by simpa [hlen] using hresult.2.1
+  have hdecomp := Luffs.Containers.Vec.encodeValues_slice_decomposition
+    codec values ⟨begin, end_⟩ hbegin hend
+  have hmiddleLength :
+      (Luffs.Containers.Vec.encodeValues codec
+        (Luffs.Containers.Vec.sliceValues values ⟨begin, end_⟩)).length =
+          (end_ - begin) * codec.size := by
+    rw [Luffs.Containers.Vec.encodeValues_length]
+    have hsliceFit : end_ - begin ≤ values.length - begin := by omega
+    simp [Luffs.Containers.Vec.sliceValues, List.length_take,
+      List.length_drop, Nat.min_eq_left hsliceFit]
+  rw [hresult.2.2.2.2.2, ← List.drop_drop, hstorage, hdecomp]
+  simp [Luffs.Containers.Vec.encodeValues_length, List.length_take,
+    Nat.min_eq_left (Nat.le_trans hbegin hend), ← hmiddleLength]
+
+/-- The executable encoded view and the Iris mutable-borrow operation agree:
+the returned bytes are the selected logical values, while ownership of exactly
+that region is split from the parent Vec and can later be recombined. -/
+theorem vecSlice_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [Luffs.Memory.ByteContentsGS GF]
+    {α : Type} {codec : Codec α} {pool : Region} {storage slice : List Byte}
+    {handle : Luffs.Containers.Vec.Handle} {values : List α}
+    {begin end_ : Nat} {trailing : List Byte}
+    (hvalid : Luffs.Containers.Vec.Valid codec handle)
+    (hlen : values.length = handle.len)
+    (hstorage : storage.drop handle.block.offset =
+      Luffs.Containers.Vec.encodeValues codec values ++ trailing)
+    (hsuccess : vecSlice codec storage handle.block.offset handle.len
+      begin end_ = some slice) :
+    let selected : Luffs.Containers.Vec.SliceHandle := ⟨begin, end_⟩
+    slice = Luffs.Containers.Vec.encodeValues codec
+        (Luffs.Containers.Vec.sliceValues values selected) ∧
+      (Luffs.Containers.Vec.Owns (GF := GF) codec pool handle values ⊣⊢
+        Luffs.Containers.Vec.MutSliceOwns codec pool handle selected
+            (Luffs.Containers.Vec.sliceValues values selected) ∗
+          Luffs.Containers.Vec.MutSliceRest codec pool handle selected
+            (values.take begin) (values.drop end_)) := by
+  dsimp only
+  have hresult := vecSlice_result hsuccess
+  have hslice : Luffs.Containers.Vec.SliceValid handle ⟨begin, end_⟩ :=
+    ⟨hresult.1, hresult.2.1⟩
+  exact ⟨vecSlice_value hlen hstorage hsuccess,
+    Luffs.Containers.Vec.mutSlice_split codec pool handle values hlen
+      ⟨begin, end_⟩ hvalid hslice⟩
+
 theorem vecGet_result {α : Type} {codec : Codec α} {storage : List Byte}
     {offset len index : Nat} {value : α}
     (hsuccess : vecGet codec storage offset len index = some value) :

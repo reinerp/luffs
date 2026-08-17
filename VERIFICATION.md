@@ -186,8 +186,11 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   classification and full bin insertion. Its successful generated semantics
   is proved to refine the corresponding abstract physical and bin transitions
   without conflating a physical-array index with the block's byte offset.
-  Concrete neighbor removal/reinsertion and coalescing still remain to be
-  lowered. The fixed physical-header arrays now have an explicit active-prefix
+  Concrete arbitrary-node class removal is now lowered from Luffs. It updates
+  intrusive links and clears the selected second-level bit, plus its
+  first-level bit exactly when that word becomes empty; its compiler-generated
+  model is definitionally tied to the checked Lean transformer. The fixed
+  physical-header arrays now have an explicit active-prefix
   representation and the concrete free entry point rejects selectors outside
   `block_count`; inactive capacity can no longer masquerade as a live header.
   This count is also the basis for the compaction required when coalescing
@@ -201,9 +204,13 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   `coalesceAt` at every physical-list position, not merely at the head: the
   untouched prefix is framed, the adjacent pair becomes its merged header,
   the suffix shifts left, and the old final active slot becomes spare capacity.
-  Composing concrete bin removal/reinsertion with this physical transition
-  remains. Pointer-to-offset validation belongs at the mmap-backed pool
-  boundary.
+  Luffs now also lowers the complete adjacent-pair metadata transaction: it
+  preflights both old and merged classes, removes both old nodes, compacts the
+  physical arrays, and reinserts the merged node. The generated transaction is
+  tied to its exact Lean composition, and its physical projection is proved to
+  refine arbitrary-position `coalesceAt`. Proving that the composed concrete
+  bin arrays preserve the complete abstract bin relation remains.
+  Pointer-to-offset validation belongs at the mmap-backed pool boundary.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 
 The first concrete `stdlib/tlsf.luffs` runtime layer now implements bounded

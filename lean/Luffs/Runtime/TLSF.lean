@@ -3369,6 +3369,19 @@ structure CoalescePhysicalResult where
   count : Nat
 deriving DecidableEq, Repr
 
+structure CoalesceClassResult where
+  offsets : List Nat
+  sizes : List Nat
+  isFree : List (Fin 256)
+  prevFree : List (Fin 256)
+  count : Nat
+  second : List (BitVec 32)
+  first : BitVec 64
+  heads : List Nat
+  next : List Nat
+  previous : List Nat
+deriving DecidableEq, Repr
+
 /-- Exact fixed-array effect of `tlsf_coalesce_physical`. The active right
 header is deleted by left-compacting the suffix; the final array slot is spare
 capacity and therefore need not be cleared. -/
@@ -3535,6 +3548,165 @@ theorem coalescePhysicalArrays_refines_append (pre : List Block)
     freeFlags, prevFreeFlags, hleftFree, hrightFree, hadjacent,
     RepresentsPhysicalArrays, coalesceAt_append_pair, coalesceBlocks,
     hoffsets, hsizes, hfree, hprev, hoffsetsLen, hsizesLen, hfreeLen, hprevLen]
+
+/-- Full metadata transaction for coalescing an adjacent free pair: detach both
+old size-class nodes, compact the physical headers, and insert the merged node
+into its newly classified bin. -/
+def coalesceClassArrays (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (second : List (BitVec 32))
+    (first : BitVec 64) (heads next previous : List Nat)
+    (count left : Nat) : Option CoalesceClassResult := do
+  let right := left + 1
+  let leftOffset ← offsets[left]?
+  let rightOffset ← offsets[right]?
+  let leftSize ← sizes[left]?
+  let rightSize ← sizes[right]?
+  let leftBin ← classifySizeBin leftSize
+  let rightBin ← classifySizeBin rightSize
+  let withoutLeft ← removeClassArrays second first heads next previous
+    leftBin leftOffset
+  let withoutRight ← removeClassArrays withoutLeft.second withoutLeft.first
+    withoutLeft.heads withoutLeft.next withoutLeft.previous rightBin rightOffset
+  let physical ← coalescePhysicalArrays offsets sizes isFree prevFree count left
+  let mergedSize ← physical.sizes[left]?
+  let mergedBin ← classifySizeBin mergedSize
+  let inserted ← insertClassArrays withoutRight.second withoutRight.first
+    withoutRight.heads withoutRight.next withoutRight.previous mergedBin leftOffset
+  pure {
+    offsets := physical.offsets, sizes := physical.sizes,
+    isFree := physical.isFree, prevFree := physical.prevFree,
+    count := physical.count, second := inserted.second, first := inserted.first,
+    heads := inserted.heads, next := inserted.next,
+    previous := inserted.previous }
+
+theorem coalesceClassArrays_result
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {count left : Nat}
+    {result : CoalesceClassResult}
+    (hsuccess : coalesceClassArrays offsets sizes isFree prevFree second first
+      heads next previous count left = some result) :
+    ∃ leftOffset rightOffset leftSize rightSize leftBin rightBin
+        withoutLeft withoutRight physical mergedSize mergedBin inserted,
+      offsets[left]? = some leftOffset ∧
+      offsets[left + 1]? = some rightOffset ∧
+      sizes[left]? = some leftSize ∧ sizes[left + 1]? = some rightSize ∧
+      classifySizeBin leftSize = some leftBin ∧
+      classifySizeBin rightSize = some rightBin ∧
+      removeClassArrays second first heads next previous leftBin leftOffset =
+        some withoutLeft ∧
+      removeClassArrays withoutLeft.second withoutLeft.first withoutLeft.heads
+        withoutLeft.next withoutLeft.previous rightBin rightOffset =
+        some withoutRight ∧
+      coalescePhysicalArrays offsets sizes isFree prevFree count left =
+        some physical ∧
+      physical.sizes[left]? = some mergedSize ∧
+      classifySizeBin mergedSize = some mergedBin ∧
+      insertClassArrays withoutRight.second withoutRight.first withoutRight.heads
+        withoutRight.next withoutRight.previous mergedBin leftOffset =
+        some inserted ∧
+      result.offsets = physical.offsets ∧ result.sizes = physical.sizes ∧
+      result.isFree = physical.isFree ∧ result.prevFree = physical.prevFree ∧
+      result.count = physical.count ∧ result.second = inserted.second ∧
+      result.first = inserted.first ∧ result.heads = inserted.heads ∧
+      result.next = inserted.next ∧ result.previous = inserted.previous := by
+  unfold coalesceClassArrays at hsuccess
+  cases hleftOffset : offsets[left]? with
+  | none => simp [hleftOffset] at hsuccess
+  | some leftOffset =>
+    cases hrightOffset : offsets[left + 1]? with
+    | none => simp [hleftOffset, hrightOffset] at hsuccess
+    | some rightOffset =>
+      cases hleftSize : sizes[left]? with
+      | none => simp [hleftOffset, hrightOffset, hleftSize] at hsuccess
+      | some leftSize =>
+        cases hrightSize : sizes[left + 1]? with
+        | none =>
+          simp [hleftOffset, hrightOffset, hleftSize, hrightSize] at hsuccess
+        | some rightSize =>
+          cases hleftBin : classifySizeBin leftSize with
+          | none => simp [hleftOffset, hrightOffset, hleftSize, hrightSize,
+              hleftBin] at hsuccess
+          | some leftBin =>
+            cases hrightBin : classifySizeBin rightSize with
+            | none => simp [hleftOffset, hrightOffset, hleftSize, hrightSize,
+                hleftBin, hrightBin] at hsuccess
+            | some rightBin =>
+              cases hwithoutLeft : removeClassArrays second first heads next
+                  previous leftBin leftOffset with
+              | none => simp [hleftOffset, hrightOffset, hleftSize, hrightSize,
+                  hleftBin, hrightBin, hwithoutLeft] at hsuccess
+              | some withoutLeft =>
+                cases hwithoutRight : removeClassArrays withoutLeft.second
+                    withoutLeft.first withoutLeft.heads withoutLeft.next
+                    withoutLeft.previous rightBin rightOffset with
+                | none => simp [hleftOffset, hrightOffset, hleftSize, hrightSize,
+                    hleftBin, hrightBin, hwithoutLeft, hwithoutRight] at hsuccess
+                | some withoutRight =>
+                  cases hphysical : coalescePhysicalArrays offsets sizes isFree
+                      prevFree count left with
+                  | none => simp [hleftOffset, hrightOffset, hleftSize,
+                      hrightSize, hleftBin, hrightBin, hwithoutLeft,
+                      hwithoutRight, hphysical] at hsuccess
+                  | some physical =>
+                    cases hmergedSize : physical.sizes[left]? with
+                    | none => simp [hleftOffset, hrightOffset, hleftSize,
+                        hrightSize, hleftBin, hrightBin, hwithoutLeft,
+                        hwithoutRight, hphysical, hmergedSize] at hsuccess
+                    | some mergedSize =>
+                      cases hmergedBin : classifySizeBin mergedSize with
+                      | none => simp [hleftOffset, hrightOffset, hleftSize,
+                          hrightSize, hleftBin, hrightBin, hwithoutLeft,
+                          hwithoutRight, hphysical, hmergedSize,
+                          hmergedBin] at hsuccess
+                      | some mergedBin =>
+                        cases hinserted : insertClassArrays withoutRight.second
+                            withoutRight.first withoutRight.heads
+                            withoutRight.next withoutRight.previous mergedBin
+                            leftOffset with
+                        | none => simp [hleftOffset, hrightOffset, hleftSize,
+                            hrightSize, hleftBin, hrightBin, hwithoutLeft,
+                            hwithoutRight, hphysical, hmergedSize, hmergedBin,
+                            hinserted] at hsuccess
+                        | some inserted =>
+                          simp [hleftOffset, hrightOffset, hleftSize, hrightSize,
+                            hleftBin, hrightBin, hwithoutLeft, hwithoutRight,
+                            hphysical, hmergedSize, hmergedBin, hinserted] at hsuccess
+                          subst result
+                          exact ⟨leftOffset, rightOffset, leftSize, rightSize,
+                            leftBin, rightBin, withoutLeft, withoutRight,
+                            physical, mergedSize, mergedBin, inserted,
+                            rfl, rfl, rfl, rfl,
+                            hleftBin, hrightBin, hwithoutLeft, hwithoutRight,
+                            rfl, hmergedSize, hmergedBin, hinserted,
+                            rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- The full class transaction carries the already-proved physical refinement:
+bin unlink/relink operations cannot change the physical active prefix. -/
+theorem coalesceClassArrays_refines_physical_append
+    (pre : List Block) (leftBlock rightBlock : Block) (rest : List Block)
+    (hcan : canCoalesce leftBlock rightBlock)
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {result : CoalesceClassResult}
+    (hsuccess : coalesceClassArrays
+      (blockOffsets (pre ++ leftBlock :: rightBlock :: rest))
+      (blockSizes (pre ++ leftBlock :: rightBlock :: rest))
+      (freeFlags (pre ++ leftBlock :: rightBlock :: rest))
+      (prevFreeFlags (pre ++ leftBlock :: rightBlock :: rest))
+      second first heads next previous
+      (pre ++ leftBlock :: rightBlock :: rest).length pre.length = some result) :
+    RepresentsPhysicalArrays result.offsets result.sizes result.isFree
+      result.prevFree result.count
+      (coalesceAt (pre ++ leftBlock :: rightBlock :: rest) pre.length) := by
+  obtain ⟨_, _, _, _, _, _, _, _, physical, _, _, _, _, _, _, _, _, _, _, _,
+      hphysical, _, _, _, hoffsets, hsizes, hfree, hprevFree, hcount, _⟩ :=
+    coalesceClassArrays_result hsuccess
+  obtain ⟨expected, hexpected, hrep⟩ :=
+    coalescePhysicalArrays_refines_append pre leftBlock rightBlock rest hcan
+  have heq : physical = expected := by
+    exact Option.some.inj (hphysical.symm.trans hexpected)
+  subst expected
+  simpa [hoffsets, hsizes, hfree, hprevFree, hcount] using hrep
 
 /-- Exact all-or-nothing array semantics of the first deallocation stage.
 The source lowering preflights the same three component operations before its

@@ -77,6 +77,63 @@ fn box_store_u64(storage: &mut [u8], begin: usize, value: u64) -> Option<()> {
     Some(())
 }
 
+// Signed scalars use the same two's-complement BitVec byte semantics.
+// refines Luffs.Runtime.Containers.boxLoadU16
+fn box_load_i16(storage: &[u8], begin: usize) -> Option<i16> {
+    if begin == usize::MAX { return None; }
+    if begin + 1 >= storage.len() { return None; }
+    Some(i16::from_le_bytes([storage[begin], storage[begin + 1]]))
+}
+
+// refines Luffs.Runtime.Containers.boxStoreU16
+fn box_store_i16(storage: &mut [u8], begin: usize, value: i16) -> Option<()> {
+    if begin == usize::MAX { return None; }
+    if begin + 1 >= storage.len() { return None; }
+    storage[begin] = (value & 255) as u8;
+    storage[begin + 1] = (value >> 8) as u8;
+    Some(())
+}
+
+// refines Luffs.Runtime.Containers.boxLoadU32
+fn box_load_i32(storage: &[u8], begin: usize) -> Option<i32> {
+    if begin > usize::MAX - 3 { return None; }
+    if begin + 3 >= storage.len() { return None; }
+    Some(i32::from_le_bytes([storage[begin], storage[begin + 1], storage[begin + 2], storage[begin + 3]]))
+}
+
+// refines Luffs.Runtime.Containers.boxStoreU32
+fn box_store_i32(storage: &mut [u8], begin: usize, value: i32) -> Option<()> {
+    if begin > usize::MAX - 3 { return None; }
+    if begin + 3 >= storage.len() { return None; }
+    storage[begin] = (value & 255) as u8;
+    storage[begin + 1] = (value >> 8) as u8;
+    storage[begin + 2] = (value >> 16) as u8;
+    storage[begin + 3] = (value >> 24) as u8;
+    Some(())
+}
+
+// refines Luffs.Runtime.Containers.boxLoadU64
+fn box_load_i64(storage: &[u8], begin: usize) -> Option<i64> {
+    if begin > usize::MAX - 7 { return None; }
+    if begin + 7 >= storage.len() { return None; }
+    Some(i64::from_le_bytes([storage[begin], storage[begin + 1], storage[begin + 2], storage[begin + 3], storage[begin + 4], storage[begin + 5], storage[begin + 6], storage[begin + 7]]))
+}
+
+// refines Luffs.Runtime.Containers.boxStoreU64
+fn box_store_i64(storage: &mut [u8], begin: usize, value: i64) -> Option<()> {
+    if begin > usize::MAX - 7 { return None; }
+    if begin + 7 >= storage.len() { return None; }
+    storage[begin] = (value & 255) as u8;
+    storage[begin + 1] = (value >> 8) as u8;
+    storage[begin + 2] = (value >> 16) as u8;
+    storage[begin + 3] = (value >> 24) as u8;
+    storage[begin + 4] = (value >> 32) as u8;
+    storage[begin + 5] = (value >> 40) as u8;
+    storage[begin + 6] = (value >> 48) as u8;
+    storage[begin + 7] = (value >> 56) as u8;
+    Some(())
+}
+
 // refines Luffs.Runtime.Containers.vecPushU8
 fn vec_push_u8(storage: &mut [u8], len: usize, capacity: usize, value: u8) -> Option<usize> {
     if len >= capacity { return None; }

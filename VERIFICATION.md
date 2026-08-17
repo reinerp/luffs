@@ -746,6 +746,11 @@ alias semantics. This removes the one-store restriction that blocked
   eight sequential writes/reads; compiler-derived Lean semantics is accepted,
   and `boxLoadU64_after_boxStoreU64` proves the exact little-endian round trip
   for every `BitVec 64` value.
+  Signed `box_load`/`box_store` monomorphizations now cover `i16`, `i32`, and
+  `i64`. The compiler's same-width `BitVec` semantics checks each directly
+  against the corresponding exact two's-complement byte transformer, so the
+  existing width-specific round-trip theorems apply without a second trusted
+  signed representation.
   The same monomorphization now covers `vec_push_u16`: its Rust-like Luffs
   source performs every checked 64-bit address calculation and the two
   little-endian writes, while `vecPushU16_refines_generic` connects each

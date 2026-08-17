@@ -573,6 +573,94 @@ theorem boxDropU8Arrays_owns
   intro value contents
   exact Luffs.Containers.Box.drop_owns Scalar.u8 value contents hdrop
 
+/-- Codec-generic executable allocation boundary for Vec. The two guards are
+the source-level `checked_mul` and rounding-addition checks needed before the
+TLSF request is formed on a 64-bit target. -/
+def vecNewArrays {α : Type} (codec : Codec α) (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (capacity : Nat) :
+    Option Luffs.Runtime.TLSF.AllocateArraysResult :=
+  if capacity = 0 ∨ capacity > Luffs.Runtime.TLSF.usizeMax / codec.size then none
+  else if capacity * codec.size > Luffs.Runtime.TLSF.usizeMax - 7 then none
+  else Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree prevFree count
+    second first heads next previous
+      (Luffs.Containers.Vec.allocationBytes codec capacity)
+
+theorem vecNewArrays_result {α : Type} {codec : Codec α}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count : Nat} {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {capacity : Nat}
+    {result : Luffs.Runtime.TLSF.AllocateArraysResult}
+    (hsuccess : vecNewArrays codec offsets sizes isFree prevFree count second
+      first heads next previous capacity = some result) :
+    0 < capacity ∧
+      capacity ≤ Luffs.Runtime.TLSF.usizeMax / codec.size ∧
+      capacity * codec.size ≤ Luffs.Runtime.TLSF.usizeMax - 7 ∧
+      Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree prevFree count
+        second first heads next previous
+          (Luffs.Containers.Vec.allocationBytes codec capacity) = some result := by
+  unfold vecNewArrays at hsuccess
+  split at hsuccess
+  next hbad => contradiction
+  next hmul =>
+    split at hsuccess
+    next hround => contradiction
+    next hround =>
+      exact ⟨Nat.pos_of_ne_zero (fun hzero => hmul (Or.inl hzero)),
+        Nat.le_of_not_gt (fun hlarge => hmul (Or.inr hlarge)),
+        Nat.le_of_not_gt hround, hsuccess⟩
+
+set_option maxHeartbeats 1200000 in
+theorem vecNewArrays_refines_vec
+    {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
+    [Luffs.Memory.ByteContentsGS GF] {α : Type} {codec : Codec α}
+    {pool : Region} {blocks : List Block} {state : Bins.State}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {heads next previous : List Nat} {capacity : Nat}
+    {result : Luffs.Runtime.TLSF.AllocateArraysResult}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins { heads, next, previous } state)
+    (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
+    (hsuccess : vecNewArrays codec offsets sizes isFree prevFree count second
+      first heads next previous capacity = some result) :
+    ∃ (hcapacity : 0 < capacity)
+        (hkeyMax : requestKey
+          (Luffs.Containers.Vec.allocationBytes codec capacity) <
+            2 ^ firstLevelCount)
+        (vecResult : Luffs.Containers.Vec.AllocResult),
+      Luffs.Containers.Vec.allocate codec capacity hcapacity
+          { physical := blocks, bins := state } hkeyMax = some vecResult ∧
+      result.allocatedOffset = vecResult.handle.block.offset ∧
+      result.allocatedBytes = vecResult.handle.block.bytes ∧
+      vecResult.handle.len = 0 ∧ vecResult.handle.capacity = capacity ∧
+      (Ownership.OwnsFree (PROP := Iris.IProp GF) pool blocks ⊣⊢
+        Luffs.Containers.Vec.Owns codec pool vecResult.handle [] ∗
+          Ownership.OwnsFree pool vecResult.state.physical) := by
+  obtain ⟨hcapacity, _, _, halloc⟩ := vecNewArrays_result hsuccess
+  obtain ⟨_, hkeyMax, abstractResult, habstract, hoffset, hbytes,
+      _, _, _, _, _, _, howns⟩ :=
+    Luffs.Runtime.TLSF.allocateArrays_ownsFree
+      (PROP := Iris.IProp GF) hvalid hsecond hfirst hbins hdisjoint hphysical
+      halloc
+  let vecResult : Luffs.Containers.Vec.AllocResult := {
+    handle := ⟨abstractResult.allocated, 0, capacity⟩
+    state := abstractResult.state }
+  have hvec : Luffs.Containers.Vec.allocate codec capacity hcapacity
+      { physical := blocks, bins := state } hkeyMax = some vecResult := by
+    simp [Luffs.Containers.Vec.allocate, vecResult, habstract]
+  refine ⟨hcapacity, hkeyMax, vecResult, hvec, ?_, ?_, rfl, rfl, ?_⟩
+  · simpa [vecResult] using hoffset
+  · simpa [vecResult] using hbytes
+  · simpa [vecResult, Luffs.Containers.Vec.Owns,
+      Luffs.Containers.Vec.encodeValues, PointsToBytes] using
+        howns.trans (Iris.BI.sep_congr_left Iris.BI.sep_emp.symm)
+
 def vecNewU8Arrays (offsets sizes : List Nat)
     (isFree prevFree : List (Fin 256)) (count : Nat)
     (second : List (BitVec 32)) (first : BitVec 64)
@@ -582,6 +670,23 @@ def vecNewU8Arrays (offsets sizes : List Nat)
   else Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree prevFree count
     second first heads next previous
       (Luffs.Containers.Vec.allocationBytes Scalar.u8 capacity)
+
+theorem vecNewU8Arrays_eq_generic :
+    vecNewU8Arrays = vecNewArrays Scalar.u8 := by
+  funext offsets sizes isFree prevFree count second first heads next previous capacity
+  simp only [vecNewU8Arrays, vecNewArrays, Scalar.u8, Scalar.encode8]
+  by_cases hzero : capacity = 0
+  · simp [hzero]
+  · by_cases hlarge : capacity > Luffs.Runtime.TLSF.usizeMax - 7
+    · have hover : capacity * 1 > Luffs.Runtime.TLSF.usizeMax - 7 := by omega
+      simp [hzero, hlarge, hover]
+    · have hmax : capacity ≤ Luffs.Runtime.TLSF.usizeMax := by
+        unfold Luffs.Runtime.TLSF.usizeMax at hlarge ⊢
+        omega
+      have hmul : ¬capacity * 1 > Luffs.Runtime.TLSF.usizeMax - 7 := by omega
+      have hnmax : ¬Luffs.Runtime.TLSF.usizeMax < capacity :=
+        Nat.not_lt_of_ge hmax
+      simp [hzero, hlarge, hnmax, hmul]
 
 theorem vecNewU8Arrays_result
     {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
@@ -635,24 +740,11 @@ theorem vecNewU8Arrays_refines_vec
       (Ownership.OwnsFree (PROP := Iris.IProp GF) pool blocks ⊣⊢
         Luffs.Containers.Vec.Owns Scalar.u8 pool vecResult.handle [] ∗
           Ownership.OwnsFree pool vecResult.state.physical) := by
-  obtain ⟨hcapacity, _, halloc⟩ := vecNewU8Arrays_result hsuccess
-  obtain ⟨_, hkeyMax, abstractResult, habstract, hoffset, hbytes,
-      _, _, _, _, _, _, howns⟩ :=
-    Luffs.Runtime.TLSF.allocateArrays_ownsFree
-      (PROP := Iris.IProp GF) hvalid hsecond hfirst hbins hdisjoint hphysical
-      halloc
-  let vecResult : Luffs.Containers.Vec.AllocResult := {
-    handle := ⟨abstractResult.allocated, 0, capacity⟩
-    state := abstractResult.state }
-  have hvec : Luffs.Containers.Vec.allocate Scalar.u8 capacity hcapacity
-      { physical := blocks, bins := state } hkeyMax = some vecResult := by
-    simp [Luffs.Containers.Vec.allocate, vecResult, habstract]
-  refine ⟨hcapacity, hkeyMax, vecResult, hvec, ?_, ?_, rfl, rfl, ?_⟩
-  · simpa [vecResult] using hoffset
-  · simpa [vecResult] using hbytes
-  · simpa [vecResult, Luffs.Containers.Vec.Owns,
-      Luffs.Containers.Vec.encodeValues, PointsToBytes] using
-        howns.trans (Iris.BI.sep_congr_left Iris.BI.sep_emp.symm)
+  have hgeneric : vecNewArrays Scalar.u8 offsets sizes isFree prevFree count
+      second first heads next previous capacity = some result := by
+    simpa only [← vecNewU8Arrays_eq_generic] using hsuccess
+  exact vecNewArrays_refines_vec hvalid hsecond hfirst hbins hdisjoint
+    hphysical hgeneric
 
 structure VecPushU8OffsetResult where
   storage : List Byte

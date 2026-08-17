@@ -545,6 +545,13 @@ concurrency are later extensions and are not prerequisites for `Box` and
   physical-header arrays. The generalized public allocation theorem proves
   the active prefix refines abstract TLSF while framing unused slots, closing
   the previous gap where canonical input arrays could not accommodate a split.
+  The executable allocation boundary is now codec-generic as well. It checks
+  both `capacity * codec.size` overflow and the subsequent TLSF rounding-add
+  overflow, invokes the concrete allocator with `Vec.allocationBytes codec`,
+  and proves the result is the generic abstract `Vec.allocate` transition with
+  an empty `Vec.Owns codec` Iris capability. The existing `u8` runtime model is
+  proved equal to this generic specialization, and its end-to-end theorem now
+  delegates to the generic proof.
   Generated Vec-construction semantics now calls the generated TLSF allocator
   model with the verified byte-capacity request rather than directly aliasing
   the hand-written Vec constructor transformer. The specialized source checker

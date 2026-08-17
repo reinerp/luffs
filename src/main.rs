@@ -3762,6 +3762,23 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
             "theorem {}_refines : {}_model = {} := by rfl\n\n",
             model.name, model.name, model.refines
         ));
+        let copied_len = if model.name == "tlsf_vec_grow_u16" {
+            "len * 2"
+        } else {
+            "len"
+        };
+        out.push_str(&format!(
+            "def {}_copy_program (oldBase newBase len : Nat) : Luffs.Memory.Program :=\n  Luffs.Memory.Program.copyLoop oldBase newBase ({copied_len})\n\n",
+            model.name
+        ));
+        out.push_str(&format!(
+            "theorem {}_copy_program_is_forRange (oldBase newBase len : Nat) :\n    {}_copy_program oldBase newBase len =\n      Luffs.Memory.Program.forRange 0 ({copied_len})\n        (Luffs.Memory.Program.copyLoopBody oldBase newBase) := rfl\n\n",
+            model.name, model.name
+        ));
+        out.push_str(&format!(
+            "theorem {}_copy_program_wp {{GF : Iris.BundledGFunctors}}\n    (oldBase newBase len : Nat) (mem : Luffs.Memory.Memory)\n    (hsrc : ∀ i, i < {copied_len} → mem.mapped (oldBase + i))\n    (hdst : ∀ i, i < {copied_len} → mem.mapped (newBase + i)) :\n    ⊢@{{Iris.IProp GF}} Luffs.Memory.Program.wp\n      ({}_copy_program oldBase newBase len) mem\n      (fun final =>\n        (∀ i, i < {copied_len} → final.mapped (oldBase + i)) ∧\n        (∀ i, i < {copied_len} → final.mapped (newBase + i))) := by\n  exact Luffs.Memory.Program.copyLoop_wp oldBase newBase ({copied_len}) mem hsrc hdst\n\n",
+            model.name, model.name
+        ));
     }
     for model in &module.tlsf_deallocate_uncoalesced_models {
         out.push_str(&format!(
@@ -4126,6 +4143,11 @@ mod tests {
         assert!(generated.contains(
             "theorem tlsf_vec_grow_u16_refines : tlsf_vec_grow_u16_model = Luffs.Runtime.Containers.vecGrowU16Arrays"
         ));
+        assert!(generated.contains(
+            "Luffs.Memory.Program.forRange 0 (len * 2)\n        (Luffs.Memory.Program.copyLoopBody oldBase newBase)"
+        ));
+        assert!(generated.contains("theorem tlsf_vec_grow_u16_copy_program_wp"));
+        assert!(generated.contains("hsrc : ∀ i, i < len * 2 → mem.mapped (oldBase + i)"));
         assert!(generated.contains(
             "theorem tlsf_remove_class_refines : tlsf_remove_class_model = Luffs.Runtime.TLSF.removeClassArrays"
         ));

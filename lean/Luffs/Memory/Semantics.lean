@@ -459,6 +459,85 @@ theorem Program.wp_forRange {GF : BundledGFunctors} (body : Nat → Program)
       have hindex : start + 1 + count = start + (count + 1) := by omega
       simpa [Program.forRange, hindex] using htail
 
+theorem Program.wp_forRange_bounded {GF : BundledGFunctors}
+    (body : Nat → Program) (invariant : Nat → Memory → Prop)
+    (start count : Nat) (mem : Memory)
+    (hinit : invariant start mem)
+    (hbody : ∀ i current, start ≤ i → i < start + count →
+      invariant i current →
+      ⊢@{IProp GF} Program.wp (body i) current (invariant (i + 1))) :
+    ⊢@{IProp GF} Program.wp (Program.forRange start count body) mem
+      (invariant (start + count)) := by
+  induction count generalizing start mem with
+  | zero =>
+      simpa [Program.forRange] using
+        (Program.wp_done (GF := GF) mem (invariant start) hinit)
+  | succ count ih =>
+      apply Program.wp_then (hbody start mem (by omega) (by omega) hinit)
+      intro after hnext
+      have htail := ih (start := start + 1) (mem := after) hnext (by
+        intro i current hlo hi hinvariant
+        apply hbody i current (by omega) (by omega) hinvariant)
+      have hindex : start + 1 + count = start + (count + 1) := by omega
+      simpa [hindex] using htail
+
+/-- The effect of the Rust-shaped Vec relocation loop. The loaded byte is fed
+directly to the corresponding store, exactly as in the source loop body. -/
+def Program.copyLoopBody (src dst : Addr) (i : Nat) : Program :=
+  .call (.load (src + i)) (fun result =>
+    match result with
+    | .byte value => .call (.store (dst + i) value) (fun _ => .done)
+    | _ => .done)
+
+def Program.copyLoop (src dst count : Nat) : Program :=
+  Program.forRange 0 count (Program.copyLoopBody src dst)
+
+/-- Whole-loop safety from the facts tracked by the CFG: every source and
+destination byte is mapped. Stores preserve mappedness, including for
+overlapping ranges, so this rule does not need a stronger non-alias premise. -/
+theorem Program.copyLoop_wp {GF : BundledGFunctors}
+    (src dst count : Nat) (mem : Memory)
+    (hsrc : ∀ i, i < count → mem.mapped (src + i))
+    (hdst : ∀ i, i < count → mem.mapped (dst + i)) :
+    ⊢@{IProp GF} Program.wp (Program.copyLoop src dst count) mem
+      (fun final =>
+        (∀ i, i < count → final.mapped (src + i)) ∧
+        (∀ i, i < count → final.mapped (dst + i))) := by
+  let invariant : Nat → Memory → Prop := fun cursor current =>
+    cursor ≤ count ∧
+    (∀ i, i < count → current.mapped (src + i)) ∧
+    (∀ i, i < count → current.mapped (dst + i))
+  unfold Program.copyLoop
+  have hloop := Program.wp_forRange_bounded (GF := GF)
+    (Program.copyLoopBody src dst) invariant 0 count mem
+    (by exact ⟨by omega, hsrc, hdst⟩) (by
+    intro i current hlo hi hinvariant
+    apply Program.wp_call
+    · exact (load_safe_iff current (src + i)).2
+        (hinvariant.2.1 i (by omega))
+    · intro result after hload
+      cases hload with
+      | @load _ _ value hvalue =>
+          have hstoreSafe :
+              Prim.safe (.store (dst + i) value) current :=
+            (store_safe_iff current (dst + i) value).2
+              (hinvariant.2.2 i (by omega))
+          apply pure_soundness (PROP := IProp GF)
+          apply Program.wp_call hstoreSafe
+          intro storeResult storeAfter hstore
+          cases hstore with
+          | store hold =>
+              have hnext : invariant (i + 1)
+                  (current.write (dst + i) value) := by
+                refine ⟨by omega, ?_, ?_⟩
+                · intro j hj
+                  exact Memory.mapped_write (hinvariant.2.1 j hj)
+                · intro j hj
+                  exact Memory.mapped_write (hinvariant.2.2 j hj)
+              exact pure_soundness (PROP := IProp GF)
+                (Program.wp_done _ _ hnext))
+  simpa [invariant] using hloop
+
 /-- The effect program emitted for a contiguous checked byte read. Results of
 individual loads are consumed by the value-level generated semantics; this
 program records the memory effects and stuckness obligations. -/

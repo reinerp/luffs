@@ -71,8 +71,13 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   scalar Box/Vec loads preserve their exact source evaluation order as
   \`readOffsets\`, while begin/end slices become contiguous \`readBytes\`
   programs. Guard fall-through facts and mapped-address premises generate
-  closed unchanged-memory WPs for both forms. General emission for arbitrary
-  nested branches and loop bodies still needs composition before this
+  closed unchanged-memory WPs for both forms. The actual allocator-backed Vec
+  growth loops now lower to \`Program.forRange\`: each iteration loads the
+  checked old-buffer byte and feeds that result to the checked new-buffer
+  store. A bounded loop-invariant WP proves the complete u8 and u16 relocation
+  loops non-stuck from mapped source/destination ranges, with u16 using the
+  source-checked \`len * 2\` byte count. General emission for arbitrary nested
+  branches and non-copy loop bodies still needs composition before this
   end-to-end item can be checked off.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.

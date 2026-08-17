@@ -157,8 +157,7 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   is composed with that ownership law. Both directions of physical/bin
   agreement, size-class membership, bitmap consistency, and intrusive-link
   consistency are now proved for that stage, yielding preservation of the
-  complete allocator invariant. Neighbor removal/reinsertion around
-  coalescing remains. A checked arbitrary-offset free-list removal primitive
+  complete allocator invariant. A checked arbitrary-offset free-list removal primitive
   now exists: it detaches the selected header, rebuilds canonical intrusive
   links and bitmap caches, and is proved to preserve chain validity and
   size-class membership. Removal is also proved to preserve forward physical
@@ -240,10 +239,18 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   it performs the verified uncoalesced stage, conditionally merges the right
   neighbor, then conditionally merges the left neighbor. Both the conditional
   helper and full transaction have compiler-recognized exact Lean models, and
-  a source-shape regression rejects omission of the left stage. Proving this
-  public composition requires the adjacent-pair refinement to accept any
-  represented active array prefix (including spare capacity left by the first
-  merge), rather than only canonical freshly projected arrays.
+  a source-shape regression rejects omission of the left stage. The
+  adjacent-pair refinement now accepts any represented active array prefix,
+  including spare capacity left by the first merge. The conditional wrapper
+  refines both identity and merge branches at arbitrary indices, and the full
+  concrete transaction is composed through both calls. Its resulting physical
+  prefix, bins, intrusive links, cross-bin disjointness, and both bitmap levels
+  represent the abstract public `deallocate` successor. An Iris-Lean corollary
+  proves that the concrete transaction consumes exactly the returned client
+  capability and restores those bytes to allocator ownership; optional merges
+  only regroup that ownership. This proof also found and fixed an abstract
+  zero-index mismatch: like the Luffs implementation, the specification now
+  skips the nonexistent left-neighbor pass instead of repeating index zero.
   Pointer-to-offset validation belongs at the mmap-backed pool boundary.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 

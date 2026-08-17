@@ -4979,6 +4979,252 @@ theorem coalesceClassArrays_refines_allocator_append
     hfirstResult, hheads, hnext, hprevious] using
     And.intro hphysical hsteps
 
+set_option maxHeartbeats 500000 in
+/-- A successful conditional concrete coalescing call refines the abstract
+identity-or-coalesce transition. The backing arrays may contain inactive spare
+capacity, so this theorem composes across consecutive coalescing calls. -/
+theorem coalesceIfPossibleArrays_refines_allocator_append
+    {pool : Luffs.Memory.Region}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count : Nat}
+    (pre : List Block) (leftBlock rightBlock : Block) (rest : List Block)
+    {state : Bins.State}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {result : CoalesceClassResult}
+    (hallocValid : Alloc.Valid pool
+      { physical := pre ++ leftBlock :: rightBlock :: rest, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hphysicalInput : RepresentsPhysicalArrays offsets sizes isFree prevFree
+      count (pre ++ leftBlock :: rightBlock :: rest))
+    (hcountMax : count ≤ usizeMax)
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hsuccess : coalesceIfPossibleArrays offsets sizes isFree prevFree second
+      first heads next previous count pre.length = some result) :
+    ∃ abstractNext,
+      Dealloc.coalesceIfPossible
+          { physical := pre ++ leftBlock :: rightBlock :: rest, bins := state }
+          pre.length = some abstractNext ∧
+      RepresentsPhysicalArrays result.offsets result.sizes result.isFree
+          result.prevFree result.count abstractNext.physical ∧
+      Bins.Valid abstractNext.bins ∧
+      RepresentsBins (Metadata.mk result.heads result.next result.previous)
+          abstractNext.bins ∧
+      BinsOffsetsDisjoint abstractNext.bins ∧
+      RepresentsSecondBitmap result.second abstractNext.bins ∧
+      FirstBitmapRep result.first result.second := by
+  have hbounds : ¬(count > offsets.length ∨ count > sizes.length ∨
+      count > isFree.length ∨ count > prevFree.length) := by
+    have := hphysicalInput.2.1
+    have := hphysicalInput.2.2.1
+    have := hphysicalInput.2.2.2.1
+    have := hphysicalInput.2.2.2.2.1
+    omega
+  have hleftNotMax : pre.length ≠ usizeMax := by
+    have := hphysicalInput.1
+    simp only [List.length_append, List.length_cons] at this
+    omega
+  have hrightBound : ¬pre.length + 1 ≥ count := by
+    rw [hphysicalInput.1]
+    simp
+  have hleftGet : (pre ++ leftBlock :: rightBlock :: rest)[pre.length]? =
+      some leftBlock := by simp
+  have hrightGet :
+      (pre ++ leftBlock :: rightBlock :: rest)[pre.length + 1]? =
+        some rightBlock := by simp
+  have hleftFlag := representsPhysicalArrays_get_free hphysicalInput hleftGet
+  have hrightFlag := representsPhysicalArrays_get_free hphysicalInput hrightGet
+  have hleftOffset := representsPhysicalArrays_get_offset hphysicalInput hleftGet
+  have hrightOffset := representsPhysicalArrays_get_offset hphysicalInput hrightGet
+  have hleftSize := representsPhysicalArrays_get_size hphysicalInput hleftGet
+  by_cases hcan : canCoalesce leftBlock rightBlock
+  · rcases hcan with ⟨hleftFree, hrightFree, hadjacent⟩
+    have hclassSuccess : coalesceClassArrays offsets sizes isFree prevFree
+        second first heads next previous count pre.length = some result := by
+      unfold coalesceIfPossibleArrays at hsuccess
+      simp only [hbounds, if_false, hleftNotMax, hrightBound,
+        hleftFlag, hrightFlag, hleftFree, hrightFree, hleftOffset, hleftSize,
+        hrightOffset, hadjacent, ne_eq, not_true_eq_false] at hsuccess
+      exact hsuccess
+    obtain ⟨abstractNext, hpair⟩ := Dealloc.coalescePair_complete hallocValid
+      hpoolMax hleftGet hrightGet ⟨hleftFree, hrightFree, hadjacent⟩
+    have hconditional : Dealloc.coalesceIfPossible
+        { physical := pre ++ leftBlock :: rightBlock :: rest, bins := state }
+        pre.length = some abstractNext := by
+      simp [Dealloc.coalesceIfPossible, hleftGet, hrightGet, hleftFree,
+        hrightFree, hadjacent, hpair, canCoalesce]
+    obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _,
+        hphysicalNext, _⟩ := Dealloc.coalescePair_result hpair
+    cases abstractNext with
+    | mk abstractPhysical abstractBins =>
+        change abstractPhysical = coalesceAt
+          (pre ++ leftBlock :: rightBlock :: rest) pre.length at hphysicalNext
+        subst abstractPhysical
+        have hrefine := coalesceClassArrays_refines_allocator_append pre
+          leftBlock rightBlock rest ⟨hleftFree, hrightFree, hadjacent⟩
+          (hvalid := hallocValid.2.1) hsecond hfirst hbins hdisjoint
+          hphysicalInput hpair hclassSuccess
+        let final : Alloc.State := {
+          physical := coalesceAt
+            (pre ++ leftBlock :: rightBlock :: rest) pre.length
+          bins := abstractBins }
+        exact ⟨final, by simpa [final] using hconditional, by
+          simpa [final] using hrefine⟩
+  · have hresult : result = allocatorArrays offsets sizes isFree prevFree
+        second first heads next previous count := by
+      unfold coalesceIfPossibleArrays at hsuccess
+      rw [if_neg hbounds, if_neg hleftNotMax, if_neg hrightBound]
+        at hsuccess
+      rw [hleftFlag, hrightFlag, hleftOffset, hleftSize, hrightOffset]
+        at hsuccess
+      cases hleftFree : leftBlock.free
+      · simpa [hleftFree] using hsuccess.symm
+      · cases hrightFree : rightBlock.free
+        · simpa [hleftFree, hrightFree] using hsuccess.symm
+        · have hadjacent : leftBlock.offset + leftBlock.bytes ≠
+              rightBlock.offset := by
+            intro heq
+            apply hcan
+            exact ⟨hleftFree, hrightFree, heq.symm⟩
+          simpa [hleftFree, hrightFree, hadjacent] using hsuccess.symm
+    subst result
+    let original : Alloc.State :=
+      { physical := pre ++ leftBlock :: rightBlock :: rest, bins := state }
+    have hconditional : Dealloc.coalesceIfPossible original pre.length =
+        some original := by
+      simp [Dealloc.coalesceIfPossible, original, hcan]
+    refine ⟨original, hconditional, ?_⟩
+    change RepresentsPhysicalArrays offsets sizes isFree prevFree count
+        (pre ++ leftBlock :: rightBlock :: rest) ∧
+      Bins.Valid state ∧ RepresentsBins (Metadata.mk heads next previous) state ∧
+      BinsOffsetsDisjoint state ∧ RepresentsSecondBitmap second state ∧
+      FirstBitmapRep first second
+    exact ⟨hphysicalInput, hallocValid.2.1, hbins, hdisjoint, hsecond, hfirst⟩
+
+theorem exists_append_pair_of_getElem?
+    {α : Type} {values : List α} {i : Nat} {left right : α}
+    (hleft : values[i]? = some left)
+    (hright : values[i + 1]? = some right) :
+    ∃ pre rest, values = pre ++ left :: right :: rest ∧ pre.length = i := by
+  induction values generalizing i with
+  | nil => simp at hleft
+  | cons head tail ih =>
+      cases i with
+      | zero =>
+          simp only [List.getElem?_cons_zero, Option.some.injEq] at hleft
+          subst head
+          cases tail with
+          | nil => simp at hright
+          | cons next rest =>
+              simp only [List.getElem?_cons_succ, List.getElem?_cons_zero,
+                Option.some.injEq] at hright
+              subst next
+              exact ⟨[], rest, by simp⟩
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at hleft
+          have hright' : tail[j + 1]? = some right := by
+            simpa [Nat.succ_eq_add_one, Nat.add_assoc] using hright
+          obtain ⟨pre, rest, htail, hlen⟩ := ih hleft hright'
+          exact ⟨head :: pre, rest, by simp [htail], by simp [hlen]⟩
+
+set_option maxHeartbeats 600000 in
+/-- Arbitrary-index form of conditional coalescing refinement. Missing
+neighbors are proved to be identity transitions; an existing adjacent pair is
+delegated to `coalesceIfPossibleArrays_refines_allocator_append`. -/
+theorem coalesceIfPossibleArrays_refines_allocator
+    {pool : Luffs.Memory.Region} {blocks : List Block}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count i : Nat} {state : Bins.State}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {result : CoalesceClassResult}
+    (hallocValid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hphysicalInput : RepresentsPhysicalArrays offsets sizes isFree prevFree
+      count blocks)
+    (hcountMax : count ≤ usizeMax)
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hsuccess : coalesceIfPossibleArrays offsets sizes isFree prevFree second
+      first heads next previous count i = some result) :
+    ∃ abstractNext,
+      Dealloc.coalesceIfPossible { physical := blocks, bins := state } i =
+          some abstractNext ∧
+      RepresentsPhysicalArrays result.offsets result.sizes result.isFree
+          result.prevFree result.count abstractNext.physical ∧
+      Bins.Valid abstractNext.bins ∧
+      RepresentsBins (Metadata.mk result.heads result.next result.previous)
+          abstractNext.bins ∧
+      BinsOffsetsDisjoint abstractNext.bins ∧
+      RepresentsSecondBitmap result.second abstractNext.bins ∧
+      FirstBitmapRep result.first result.second := by
+  have hbounds : ¬(count > offsets.length ∨ count > sizes.length ∨
+      count > isFree.length ∨ count > prevFree.length) := by
+    have := hphysicalInput.2.1
+    have := hphysicalInput.2.2.1
+    have := hphysicalInput.2.2.2.1
+    have := hphysicalInput.2.2.2.2.1
+    omega
+  cases hleft : blocks[i]? with
+  | none =>
+      have hi : count ≤ i := by
+        rw [hphysicalInput.1]
+        exact List.getElem?_eq_none_iff.mp hleft
+      have hresult : result = allocatorArrays offsets sizes isFree prevFree
+          second first heads next previous count := by
+        unfold coalesceIfPossibleArrays at hsuccess
+        rw [if_neg hbounds] at hsuccess
+        by_cases hmax : i = usizeMax
+        · simpa [hmax] using hsuccess.symm
+        · have hright : i + 1 ≥ count := by omega
+          simpa [hmax, hright] using hsuccess.symm
+      subst result
+      let original : Alloc.State := { physical := blocks, bins := state }
+      have habstract : Dealloc.coalesceIfPossible original i = some original := by
+        simp [Dealloc.coalesceIfPossible, original, hleft]
+      refine ⟨original, habstract, ?_⟩
+      change RepresentsPhysicalArrays offsets sizes isFree prevFree count blocks ∧
+        Bins.Valid state ∧ RepresentsBins (Metadata.mk heads next previous) state ∧
+        BinsOffsetsDisjoint state ∧ RepresentsSecondBitmap second state ∧
+        FirstBitmapRep first second
+      exact ⟨hphysicalInput, hallocValid.2.1, hbins, hdisjoint, hsecond, hfirst⟩
+  | some leftBlock =>
+      cases hright : blocks[i + 1]? with
+      | none =>
+          have hrightBound : i + 1 ≥ count := by
+            rw [hphysicalInput.1]
+            exact List.getElem?_eq_none_iff.mp hright
+          have hresult : result = allocatorArrays offsets sizes isFree prevFree
+              second first heads next previous count := by
+            unfold coalesceIfPossibleArrays at hsuccess
+            rw [if_neg hbounds] at hsuccess
+            by_cases hmax : i = usizeMax
+            · simpa [hmax] using hsuccess.symm
+            · simpa [hmax, hrightBound] using hsuccess.symm
+          subst result
+          let original : Alloc.State := { physical := blocks, bins := state }
+          have habstract : Dealloc.coalesceIfPossible original i =
+              some original := by
+            simp [Dealloc.coalesceIfPossible, original, hleft, hright]
+          refine ⟨original, habstract, ?_⟩
+          change RepresentsPhysicalArrays offsets sizes isFree prevFree count blocks ∧
+            Bins.Valid state ∧
+            RepresentsBins (Metadata.mk heads next previous) state ∧
+            BinsOffsetsDisjoint state ∧ RepresentsSecondBitmap second state ∧
+            FirstBitmapRep first second
+          exact ⟨hphysicalInput, hallocValid.2.1, hbins, hdisjoint, hsecond, hfirst⟩
+      | some rightBlock =>
+          obtain ⟨pre, rest, hblocks, hlen⟩ :=
+            exists_append_pair_of_getElem? hleft hright
+          subst blocks
+          subst i
+          exact coalesceIfPossibleArrays_refines_allocator_append pre leftBlock
+            rightBlock rest hallocValid hpoolMax hphysicalInput hcountMax
+            hsecond hfirst hbins hdisjoint hsuccess
+
 theorem coalesceClassArrays_complete_refinement
     (pool : Luffs.Memory.Region) (pre : List Block)
     (leftBlock rightBlock : Block) (rest : List Block)
@@ -5229,6 +5475,47 @@ theorem markFreeArrays_refines_markFreeAt {blocks : List Block} {i : Nat}
           all_goals
             exact ⟨by simpa [freeFlags] using hfree', hprev'⟩
 
+theorem markFreeAt_length (blocks : List Block) (i : Nat) :
+    (markFreeAt blocks i).length = blocks.length := by
+  induction blocks generalizing i with
+  | nil => simp [markFreeAt]
+  | cons head tail ih =>
+      cases i <;> cases tail <;> simp [markFreeAt, ih]
+
+theorem blockOffsets_markFreeAt (blocks : List Block) (i : Nat) :
+    blockOffsets (markFreeAt blocks i) = blockOffsets blocks := by
+  induction blocks generalizing i with
+  | nil => simp [markFreeAt, blockOffsets]
+  | cons head tail ih =>
+      cases i <;> cases tail <;> simp [markFreeAt, blockOffsets]
+      exact ih _
+
+theorem blockSizes_markFreeAt (blocks : List Block) (i : Nat) :
+    blockSizes (markFreeAt blocks i) = blockSizes blocks := by
+  induction blocks generalizing i with
+  | nil => simp [markFreeAt, blockSizes]
+  | cons head tail ih =>
+      cases i <;> cases tail <;> simp [markFreeAt, blockSizes]
+      exact ih _
+
+theorem marked_representsPhysicalArrays (blocks : List Block) (i : Nat) :
+    RepresentsPhysicalArrays (blockOffsets blocks) (blockSizes blocks)
+      (freeFlags (markFreeAt blocks i)) (prevFreeFlags (markFreeAt blocks i))
+      blocks.length (markFreeAt blocks i) := by
+  refine ⟨(markFreeAt_length blocks i).symm, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · simp [blockOffsets]
+  · simp [blockSizes]
+  · simp [freeFlags, markFreeAt_length]
+  · simp [prevFreeFlags, markFreeAt_length]
+  · rw [blockOffsets_markFreeAt]
+    exact (canonical_representsPhysicalArrays blocks).2.2.2.2.2.1
+  · rw [blockSizes_markFreeAt]
+    exact (canonical_representsPhysicalArrays blocks).2.2.2.2.2.2.1
+  · simpa [markFreeAt_length] using
+      (canonical_representsPhysicalArrays (markFreeAt blocks i)).2.2.2.2.2.2.2.1
+  · simpa [markFreeAt_length] using
+      (canonical_representsPhysicalArrays (markFreeAt blocks i)).2.2.2.2.2.2.2.2
+
 /-- The combined Luffs transaction refines the abstract uncoalesced TLSF
 transition: its physical flags are `markFreeAt`, and its links and both bitmap
 levels represent insertion of the newly freed block in its verified class. -/
@@ -5260,6 +5547,7 @@ theorem deallocateUncoalescedArrays_refines
           next := result.insertion.next,
           previous := result.insertion.previous }
         (state.insert cls (Dealloc.freedBlock selected)) ∧
+      BinsOffsetsDisjoint (state.insert cls (Dealloc.freedBlock selected)) ∧
       RepresentsSecondBitmap result.insertion.second
         (state.insert cls (Dealloc.freedBlock selected)) ∧
       FirstBitmapRep result.insertion.first result.insertion.second := by
@@ -5292,7 +5580,144 @@ theorem deallocateUncoalescedArrays_refines
             (inserted := Dealloc.freedBlock selected) hvalid hsecond hfirst
             hbins hdisjoint (by simpa [Dealloc.freedBlock] using hfresh)
             hbelongs (by simp [Dealloc.freedBlock]) hbin hinsert
-          exact ⟨cls, habstract, rfl, rfl, hrefine⟩
+          exact ⟨cls, habstract, rfl, rfl, hrefine.1, hrefine.2.1,
+            insert_preserves_offsets_disjoint hdisjoint
+              (by simpa [Dealloc.freedBlock] using hfresh),
+            hrefine.2.2.1, hrefine.2.2.2⟩
+
+set_option maxHeartbeats 1000000 in
+/-- End-to-end pure refinement of the public Luffs deallocator. This composes
+the verified flag/bin insertion with right coalescing and, for nonzero block
+indices, left coalescing over the compacted active prefix. -/
+theorem deallocateArrays_refines
+    {pool : Luffs.Memory.Region} {blocks : List Block} {i : Nat}
+    {selected : Block} {state : Bins.State}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {result : CoalesceClassResult}
+    (hget : blocks[i]? = some selected)
+    (hallocated : selected.free = false)
+    (hallocValid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hcountMax : blocks.length ≤ usizeMax)
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hfresh : ∀ query, selected.offset ∉
+      (state.chains query).map Block.offset)
+    (hsuccess : deallocateArrays (blockOffsets blocks) (blockSizes blocks)
+      (freeFlags blocks) (prevFreeFlags blocks) second first heads next previous
+      blocks.length i selected.offset selected.bytes = some result) :
+    ∃ abstractNext,
+      Dealloc.deallocate pool { physical := blocks, bins := state } i
+          (selected.region pool) = some abstractNext ∧
+      RepresentsPhysicalArrays result.offsets result.sizes result.isFree
+          result.prevFree result.count abstractNext.physical ∧
+      Bins.Valid abstractNext.bins ∧
+      RepresentsBins (Metadata.mk result.heads result.next result.previous)
+          abstractNext.bins ∧
+      BinsOffsetsDisjoint abstractNext.bins ∧
+      RepresentsSecondBitmap result.second abstractNext.bins ∧
+      FirstBitmapRep result.first result.second := by
+  obtain ⟨marked, afterRight, hmarked, hright, hlast⟩ :=
+    deallocateArrays_result hsuccess
+  obtain ⟨cls, hclass, hmarkedFree, hmarkedPrev, hmarkedBinsValid,
+      hmarkedBins, hmarkedDisjoint, hmarkedSecond, hmarkedFirst⟩ :=
+    deallocateUncoalescedArrays_refines hget hallocated hallocValid.2.1
+      hsecond hfirst hbins hdisjoint hfresh hmarked
+  let markedAbstract : Alloc.State := {
+    physical := markFreeAt blocks i
+    bins := state.insert cls (Dealloc.freedBlock selected) }
+  have hmarkedAbstract : Dealloc.deallocateUncoalesced pool
+      { physical := blocks, bins := state } i (selected.region pool) =
+      some markedAbstract := by
+    simp [Dealloc.deallocateUncoalesced, deallocateAt, hget,
+      hallocated, hclass, markedAbstract]
+  have hmarkedValid : Alloc.Valid pool markedAbstract :=
+    Dealloc.deallocateUncoalesced_preserves_valid hallocValid hmarkedAbstract
+  have hmarkedPhysical : RepresentsPhysicalArrays (blockOffsets blocks)
+      (blockSizes blocks) marked.isFree marked.prevFree blocks.length
+      markedAbstract.physical := by
+    rw [hmarkedFree, hmarkedPrev]
+    exact marked_representsPhysicalArrays blocks i
+  obtain ⟨abstractAfterRight, hrightAbstract, hrightPhysical,
+      hrightBinsValid, hrightBins, hrightDisjoint, hrightSecond,
+      hrightFirst⟩ :=
+    coalesceIfPossibleArrays_refines_allocator hmarkedValid hpoolMax
+      hmarkedPhysical hcountMax hmarkedSecond hmarkedFirst hmarkedBins
+      hmarkedDisjoint hright
+  have hrightValid : Alloc.Valid pool abstractAfterRight :=
+    Dealloc.coalesceIfPossible_preserves_valid hmarkedValid hrightAbstract
+  rcases hlast with ⟨hzero, hresult⟩ | ⟨hnonzero, hleft⟩
+  · subst result
+    have hdeallocate : Dealloc.deallocate pool
+        { physical := blocks, bins := state } i (selected.region pool) =
+        some abstractAfterRight := by
+      unfold Dealloc.deallocate
+      apply Option.bind_eq_some_iff.mpr
+      refine ⟨markedAbstract, hmarkedAbstract, ?_⟩
+      apply Option.bind_eq_some_iff.mpr
+      refine ⟨abstractAfterRight, hrightAbstract, ?_⟩
+      simp [hzero]
+    exact ⟨abstractAfterRight, hdeallocate, hrightPhysical,
+      hrightBinsValid, hrightBins, hrightDisjoint, hrightSecond, hrightFirst⟩
+  · have hrightCountMax : afterRight.count ≤ usizeMax := by
+      have hlength := Dealloc.coalesceIfPossible_physical_length_le
+        hrightAbstract
+      have hcount := hrightPhysical.1
+      have hmarkedLength := markFreeAt_length blocks i
+      dsimp only [markedAbstract] at hlength
+      omega
+    obtain ⟨abstractAfterLeft, hleftAbstract, hleftPhysical,
+        hleftBinsValid, hleftBins, hleftDisjoint, hleftSecond, hleftFirst⟩ :=
+      coalesceIfPossibleArrays_refines_allocator hrightValid hpoolMax
+        hrightPhysical hrightCountMax hrightSecond hrightFirst hrightBins
+        hrightDisjoint hleft
+    have hdeallocate : Dealloc.deallocate pool
+        { physical := blocks, bins := state } i (selected.region pool) =
+        some abstractAfterLeft := by
+      unfold Dealloc.deallocate
+      apply Option.bind_eq_some_iff.mpr
+      refine ⟨markedAbstract, hmarkedAbstract, ?_⟩
+      apply Option.bind_eq_some_iff.mpr
+      refine ⟨abstractAfterRight, hrightAbstract, ?_⟩
+      simpa [hnonzero, Nat.pred_eq_sub_one] using hleftAbstract
+    exact ⟨abstractAfterLeft, hdeallocate, hleftPhysical, hleftBinsValid,
+      hleftBins, hleftDisjoint, hleftSecond, hleftFirst⟩
+
+/-- Iris ownership corollary for the complete concrete public deallocator.
+The returned client capability is consumed exactly once; both optional
+coalescing stages merely regroup the allocator's owned free bytes. -/
+theorem deallocateArrays_ownsFree
+    {PROP : Type} [Iris.BI PROP] [Luffs.Memory.ByteRegionLogic PROP]
+    {pool : Luffs.Memory.Region} {blocks : List Block} {i : Nat}
+    {selected : Block} {state : Bins.State}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {result : CoalesceClassResult}
+    (hget : blocks[i]? = some selected)
+    (hallocated : selected.free = false)
+    (hallocValid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hcountMax : blocks.length ≤ usizeMax)
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hfresh : ∀ query, selected.offset ∉
+      (state.chains query).map Block.offset)
+    (hsuccess : deallocateArrays (blockOffsets blocks) (blockSizes blocks)
+      (freeFlags blocks) (prevFreeFlags blocks) second first heads next previous
+      blocks.length i selected.offset selected.bytes = some result) :
+    ∃ abstractNext,
+      Dealloc.deallocate pool { physical := blocks, bins := state } i
+          (selected.region pool) = some abstractNext ∧
+      (Luffs.Memory.OwnsBytes (PROP := PROP) (selected.region pool) ∗
+          Luffs.Allocator.TLSF.Ownership.OwnsFree pool blocks ⊣⊢
+        Luffs.Allocator.TLSF.Ownership.OwnsFree pool abstractNext.physical) := by
+  obtain ⟨abstractNext, habstract, _⟩ := deallocateArrays_refines hget
+    hallocated hallocValid hpoolMax hcountMax hsecond hfirst hbins hdisjoint
+    hfresh hsuccess
+  exact ⟨abstractNext, habstract, Dealloc.deallocate_ownsFree habstract⟩
 
 /-- Iris ownership corollary for the concrete Luffs transaction. A successful
 array execution witnesses the corresponding abstract allocator transition;

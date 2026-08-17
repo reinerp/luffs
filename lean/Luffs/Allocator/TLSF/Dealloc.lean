@@ -701,6 +701,31 @@ theorem coalesceIfPossible_result {state next : Alloc.State} {i : Nat}
           · simp [hleft, hright, hcan] at hsuccess
             exact Or.inl hsuccess.symm
 
+theorem coalesceAt_length_le (blocks : List Block) (i : Nat) :
+    (coalesceAt blocks i).length ≤ blocks.length := by
+  induction blocks generalizing i with
+  | nil => simp [coalesceAt]
+  | cons head tail ih =>
+      cases i with
+      | zero => cases tail <;> simp [coalesceAt]
+      | succ j => simp [coalesceAt, ih]
+
+theorem coalescePair_physical_length_le {state next : Alloc.State} {i : Nat}
+    (hsuccess : coalescePair state i = some next) :
+    next.physical.length ≤ state.physical.length := by
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _,
+      hphysical, _⟩ := coalescePair_result hsuccess
+  rw [hphysical]
+  exact coalesceAt_length_le state.physical i
+
+theorem coalesceIfPossible_physical_length_le
+    {state next : Alloc.State} {i : Nat}
+    (hsuccess : coalesceIfPossible state i = some next) :
+    next.physical.length ≤ state.physical.length := by
+  rcases coalesceIfPossible_result hsuccess with rfl | hpair
+  · exact Nat.le_refl _
+  · exact coalescePair_physical_length_le hpair
+
 theorem coalesceIfPossible_preserves_valid {pool : Region}
     {state next : Alloc.State} (hvalid : Alloc.Valid pool state) {i : Nat}
     (hsuccess : coalesceIfPossible state i = some next) :
@@ -725,6 +750,7 @@ def deallocate (pool : Region) (state : Alloc.State) (i : Nat)
     (returned : Region) : Option Alloc.State := do
   let marked ← deallocateUncoalesced pool state i returned
   let afterRight ← coalesceIfPossible marked i
+  if i = 0 then return afterRight
   coalesceIfPossible afterRight i.pred
 
 theorem deallocate_result {pool : Region} {state next : Alloc.State}
@@ -733,16 +759,18 @@ theorem deallocate_result {pool : Region} {state next : Alloc.State}
     ∃ marked afterRight,
       deallocateUncoalesced pool state i returned = some marked ∧
       coalesceIfPossible marked i = some afterRight ∧
-      coalesceIfPossible afterRight i.pred = some next := by
+      ((i = 0 ∧ next = afterRight) ∨
+        (i ≠ 0 ∧ coalesceIfPossible afterRight i.pred = some next)) := by
   unfold deallocate at hsuccess
-  cases hmarked : deallocateUncoalesced pool state i returned with
-  | none => simp [hmarked] at hsuccess
-  | some marked =>
-      cases hright : coalesceIfPossible marked i with
-      | none => simp [hmarked, hright] at hsuccess
-      | some afterRight =>
-          exact ⟨marked, afterRight, rfl, hright, by
-            simpa [hmarked, hright] using hsuccess⟩
+  obtain ⟨marked, hmarked, hrest⟩ := Option.bind_eq_some_iff.mp hsuccess
+  obtain ⟨afterRight, hright, hlast⟩ := Option.bind_eq_some_iff.mp hrest
+  by_cases hi : i = 0
+  · have hnext : next = afterRight := by
+      simpa [hi] using hlast.symm
+    exact ⟨marked, afterRight, hmarked, hright, Or.inl ⟨hi, hnext⟩⟩
+  · have hleft : coalesceIfPossible afterRight i.pred = some next := by
+      simpa [hi] using hlast
+    exact ⟨marked, afterRight, hmarked, hright, Or.inr ⟨hi, hleft⟩⟩
 
 theorem deallocateUncoalesced_result {pool : Region} {state : Alloc.State}
     {i : Nat} {returned : Region} {next : Alloc.State}
@@ -882,11 +910,13 @@ theorem deallocate_preserves_valid {pool : Region} {state next : Alloc.State}
     (hvalid : Alloc.Valid pool state) {i : Nat} {returned : Region}
     (hsuccess : deallocate pool state i returned = some next) :
     Alloc.Valid pool next := by
-  obtain ⟨marked, afterRight, hmarked, hright, hleft⟩ :=
+  obtain ⟨marked, afterRight, hmarked, hright, hlast⟩ :=
     deallocate_result hsuccess
-  exact coalesceIfPossible_preserves_valid
-    (coalesceIfPossible_preserves_valid
-      (deallocateUncoalesced_preserves_valid hvalid hmarked) hright) hleft
+  have hrightValid := coalesceIfPossible_preserves_valid
+    (deallocateUncoalesced_preserves_valid hvalid hmarked) hright
+  rcases hlast with ⟨_, rfl⟩ | ⟨_, hleft⟩
+  · exact hrightValid
+  · exact coalesceIfPossible_preserves_valid hrightValid hleft
 
 theorem deallocate_ownsFree {PROP : Type} [BI PROP] [ByteRegionLogic PROP]
     {pool : Region} {state next : Alloc.State} {i : Nat} {returned : Region}
@@ -894,11 +924,14 @@ theorem deallocate_ownsFree {PROP : Type} [BI PROP] [ByteRegionLogic PROP]
     OwnsBytes (PROP := PROP) returned ∗
         Ownership.OwnsFree pool state.physical ⊣⊢
       Ownership.OwnsFree pool next.physical := by
-  obtain ⟨marked, afterRight, hmarked, hright, hleft⟩ :=
+  obtain ⟨marked, afterRight, hmarked, hright, hlast⟩ :=
     deallocate_result hsuccess
-  exact (deallocateUncoalesced_ownsFree hmarked).trans
-    ((coalesceIfPossible_ownsFree pool hright).trans
-      (coalesceIfPossible_ownsFree pool hleft))
+  rcases hlast with ⟨_, rfl⟩ | ⟨_, hleft⟩
+  · exact (deallocateUncoalesced_ownsFree hmarked).trans
+      (coalesceIfPossible_ownsFree pool hright)
+  · exact (deallocateUncoalesced_ownsFree hmarked).trans
+      ((coalesceIfPossible_ownsFree pool hright).trans
+        (coalesceIfPossible_ownsFree pool hleft))
 
 theorem deallocateUncoalesced_complete {pool : Region}
     {state : Alloc.State} (hvalid : Alloc.Valid pool state)
@@ -952,10 +985,13 @@ theorem deallocate_complete {pool : Region} {state : Alloc.State}
   obtain ⟨afterRight, hright⟩ :=
     coalesceIfPossible_complete hmarkedValid hpoolMax i
   have hrightValid := coalesceIfPossible_preserves_valid hmarkedValid hright
-  obtain ⟨afterLeft, hleft⟩ :=
-    coalesceIfPossible_complete hrightValid hpoolMax i.pred
-  exact ⟨afterLeft, by
-    simp [deallocate, hmarked, hright]
-    simpa [Nat.pred_eq_sub_one] using hleft⟩
+  by_cases hi : i = 0
+  · subst i
+    exact ⟨afterRight, by simp [deallocate, hmarked, hright]⟩
+  · obtain ⟨afterLeft, hleft⟩ :=
+      coalesceIfPossible_complete hrightValid hpoolMax i.pred
+    exact ⟨afterLeft, by
+      simp [deallocate, hmarked, hright, hi]
+      simpa [Nat.pred_eq_sub_one] using hleft⟩
 
 end Luffs.Allocator.TLSF.Dealloc

@@ -2,6 +2,33 @@
 // headers as parallel arrays, keeping Luffs' initial aggregate-free subset.
 // `next.len()` is the detached/end-of-chain sentinel.
 
+// Map a positive block size down to its 64 × 32 TLSF class, encoded as
+// `fl * 32 + sl`. Luffs currently targets 64-bit Rust for allocator metadata.
+// refines Luffs.Runtime.TLSF.classifySizeBin
+fn tlsf_classify_size(size: usize) -> Option<usize> {
+    if size == 0 { return None; }
+    if size <= 256 {
+        let predecessor: usize = size - 1;
+        let sl: usize = predecessor >> 3;
+        return Some(sl);
+    }
+
+    let leading: usize = size.leading_zeros() as usize;
+    if leading > 63 { return None; }
+    let fl: usize = 63 - leading;
+    if fl < 5 { return None; }
+    let base: usize = 1 << fl;
+    if base > size { return None; }
+    let shift: usize = fl - 5;
+    let step: usize = 1 << shift;
+    let delta: usize = size - base;
+    let sl: usize = delta / step;
+    if sl >= 32 { return None; }
+    let encoded_base: usize = fl.checked_mul(32)?;
+    let encoded: usize = encoded_base.checked_add(sl)?;
+    Some(encoded)
+}
+
 // refines Luffs.Runtime.TLSF.insertArrays
 fn tlsf_insert(heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], bin: usize, block: usize) -> Option<()> {
     if bin >= heads.len() { return None; }

@@ -9,6 +9,36 @@ namespace Luffs.Runtime.TLSF
 open Luffs.Allocator.TLSF
 open Luffs.Allocator.TLSF.Bins
 
+def encodeSizeClass (cls : SizeClass) : Nat :=
+  cls.fl.val * secondLevelCount + cls.sl.val
+
+/-- The 64-bit executable mapping-down classifier used by free-list insertion.
+The source computes this with `leading_zeros`, shifts, and checked arithmetic;
+its source-shape refinement declaration targets this proof-oriented form. -/
+def classifySizeBin (size : Nat) : Option Nat :=
+  if hsize : 0 < size then
+    if hmax : size < 2 ^ firstLevelCount then
+      some (encodeSizeClass (sizeClass size hsize hmax))
+    else none
+  else none
+
+theorem classifySizeBin_result {size encoded : Nat}
+    (hclass : classifySizeBin size = some encoded) :
+    ∃ (hsize : 0 < size) (hmax : size < 2 ^ firstLevelCount),
+      encoded = encodeSizeClass (sizeClass size hsize hmax) ∧ encoded < 2048 := by
+  unfold classifySizeBin at hclass
+  split at hclass <;> try contradiction
+  next hsize =>
+    split at hclass <;> try contradiction
+    next hmax =>
+      simp only [Option.some.injEq] at hclass
+      subst encoded
+      refine ⟨hsize, hmax, rfl, ?_⟩
+      have hfl := (sizeClass size hsize hmax).fl.isLt
+      have hsl := (sizeClass size hsize hmax).sl.isLt
+      simp only [encodeSizeClass, firstLevelCount, secondLevelCount] at hfl hsl ⊢
+      omega
+
 /-- Pure state used by the fixed parallel-array TLSF lowering. -/
 structure Metadata where
   heads : List Nat

@@ -39,7 +39,11 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   The Lean reference mapping returns `Fin 64 × Fin 32`; its high-range quotient
   is proved not to wrap and its selected interval is proved to contain the
   request. The corrected 32-bin linear branch is also proved to contain every
-  request through 256 bytes. The Luffs implementation remains.
+  request through 256 bytes. Luffs now implements the 64-bit mapping-down path
+  used for free-block insertion: a source-shape checked refinement maps every
+  accepted positive size to the encoded Lean `sizeClass`, whose result is
+  proved below 2048. The mapping-up request path and a word-level theorem for
+  the `leading_zeros` lowering remain.
 - [ ] Implement bitmap search and prove it returns a nonempty suitable bin.
   The reference search is proved in-bounds, set-bit sound, and minimal from its
   starting index. Cached first/second-level bits are now proved equivalent to

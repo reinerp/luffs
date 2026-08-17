@@ -201,8 +201,10 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   correctly ruled out. A stateful execution model retains concrete metadata
   on failure and distinguishes the input, post-removal, and post-physical
   states. Physical mutation and remainder insertion are separately proved
-  infallible from their preflight facts. Composing these with transactional
-  candidate removal into the operational failure theorem remains.
+  infallible from their preflight facts. Candidate removal's nested intrusive
+  removal is now also proved infallible after its lookup and index guards, so
+  all three mutation stages have no post-guard failure edge. Composing these
+  local totality results into the operational failure theorem remains.
 - [ ] Prove `dealloc`: consuming exactly a live allocation restores it to the
   allocator without leaks, overlap, or double-free.
   The executable deallocation transition now requires the exact returned

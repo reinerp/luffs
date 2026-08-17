@@ -584,6 +584,17 @@ theorem removeArrays_result {heads next previous : List Nat} {bin block : Nat}
       obtain ⟨rfl, rfl, rfl⟩ := hremove
       simpa using hstate
 
+/-- Once its three guards pass, intrusive removal has no remaining failure
+edge. In particular, every conditional link repair is a checked write and the
+two detach writes use the already-validated block index. -/
+theorem removeArrays_ne_none_of_bounds
+    {heads next previous : List Nat} {bin block : Nat}
+    (hbin : bin < heads.length) (hnext : block < next.length)
+    (hprevious : block < previous.length) :
+    removeArrays heads next previous bin block ≠ none := by
+  simp [removeArrays, remove, Nat.not_le.mpr hbin, Nat.not_le.mpr hnext,
+    Nat.not_le.mpr hprevious]
+
 /-- Exact list semantics of the current linear `tlsf_find_fit` fallback. -/
 def findFit (sizes : List Nat) (flags : List (Fin 256))
     (request : Nat) : Option Nat :=
@@ -2590,6 +2601,24 @@ theorem takeCandidateClassArrays_result
               · simp only [Option.some.injEq] at htake
                 subst result
                 simp_all [ClassCandidateResult.mk.injEq] <;> omega
+
+/-- Candidate removal is transactional at its call boundary: after lookup and
+the four index guards, its only nested fallible operation is `removeArrays`,
+which is total from exactly those validated indices. -/
+theorem takeCandidateClassArrays_ne_none_of_preflight
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {startFl startSl bin block : Nat}
+    (hfind : findNonemptyClassLowered second first startFl startSl = some bin)
+    (hbin : bin < heads.length) (hfl : bin / 32 < second.length)
+    (hblock : block = heads[bin]?.getD next.length)
+    (hnext : block < next.length) (hprevious : block < previous.length) :
+    takeCandidateClassArrays second first heads next previous startFl startSl ≠
+      none := by
+  subst block
+  simp [takeCandidateClassArrays, hfind, Nat.not_le.mpr hbin,
+    Nat.not_le.mpr hfl, Nat.not_le.mpr hnext,
+    Nat.not_le.mpr hprevious, removeArrays, remove]
+  split <;> simp
 
 structure CandidateResult where
   block : Nat

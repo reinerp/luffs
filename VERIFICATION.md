@@ -157,9 +157,10 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   Lean array transformer covering request classification, bitmap search,
   bounded offset-to-header lookup, atomic candidate removal, physical
   allocation, and conditional remainder insertion. Its offset scan is proved
-  equivalent to abstract physical lookup under pool well-formedness. Composing
-  this transformer with the abstract public allocator and Iris ownership
-  transfer remains.
+  equivalent to abstract physical lookup under pool well-formedness, and every
+  successful transaction is decomposed into checked candidate, physical, and
+  finishing-stage witnesses. Composing those witnesses with the abstract
+  public allocator and Iris ownership transfer remains.
 - [ ] Prove `dealloc`: consuming exactly a live allocation restores it to the
   allocator without leaks, overlap, or double-free.
   The executable deallocation transition now requires the exact returned

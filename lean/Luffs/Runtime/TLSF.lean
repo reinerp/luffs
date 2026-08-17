@@ -4979,6 +4979,22 @@ structure AllocateArraysResult where
   allocatedBytes : Nat
 deriving DecidableEq, Repr
 
+def finishAllocateArrays (removed : ClassCandidateResult)
+    (physical : AllocatePhysicalResult) (split : Prop) [Decidable split]
+    (remainderBin remainderOffset : Nat) : Option AllocateArraysResult := do
+  if split then
+    let inserted ← insertClassArrays removed.second removed.first
+      removed.heads removed.next removed.previous remainderBin remainderOffset
+    some ⟨physical.offsets, physical.sizes, physical.isFree,
+      physical.prevFree, physical.count, inserted.second, inserted.first,
+      inserted.heads, inserted.next, inserted.previous,
+      physical.allocatedOffset, physical.allocatedBytes⟩
+  else
+    some ⟨physical.offsets, physical.sizes, physical.isFree,
+      physical.prevFree, physical.count, removed.second, removed.first,
+      removed.heads, removed.next, removed.previous,
+      physical.allocatedOffset, physical.allocatedBytes⟩
+
 /-- Exact pure state transformer for the public `tlsf_allocate` lowering.
 Every check before `removeClassArrays` is a preflight check, so `none` leaves
 all caller-owned arrays unchanged. -/
@@ -5010,18 +5026,121 @@ def allocateArrays (offsets sizes : List Nat)
     (startBin / secondLevelCount) (startBin % secondLevelCount)
   let physical ← allocatePhysicalArrays offsets sizes isFree prevFree count
     block request
-  if split then
-    let inserted ← insertClassArrays removed.second removed.first
-      removed.heads removed.next removed.previous remainderBin remainderOffset
-    some ⟨physical.offsets, physical.sizes, physical.isFree,
-      physical.prevFree, physical.count, inserted.second, inserted.first,
-      inserted.heads, inserted.next, inserted.previous,
-      physical.allocatedOffset, physical.allocatedBytes⟩
-  else
-    some ⟨physical.offsets, physical.sizes, physical.isFree,
-      physical.prevFree, physical.count, removed.second, removed.first,
-      removed.heads, removed.next, removed.previous,
-      physical.allocatedOffset, physical.allocatedBytes⟩
+  finishAllocateArrays removed physical split remainderBin remainderOffset
+
+theorem allocateArrays_result
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count : Nat} {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {request : Nat}
+    {result : AllocateArraysResult}
+    (hsuccess : allocateArrays offsets sizes isFree prevFree count second first
+      heads next previous request = some result) :
+    ∃ startBin foundBin selectedOffset block selectedSize remainderBin
+        removed physical,
+      classifyRequestBin request = some startBin ∧
+      findNonemptyClassLowered second first
+        (startBin / secondLevelCount) (startBin % secondLevelCount) =
+          some foundBin ∧
+      heads[foundBin]? = some selectedOffset ∧
+      findOffsetIndex offsets count selectedOffset = some block ∧
+      sizes[block]? = some selectedSize ∧
+      takeCandidateClassArrays second first heads next previous
+        (startBin / secondLevelCount) (startBin % secondLevelCount) =
+          some removed ∧
+      allocatePhysicalArrays offsets sizes isFree prevFree count block request =
+        some physical ∧
+      finishAllocateArrays removed physical
+        (minimumBlockBytes ≤ selectedSize - request) remainderBin
+          (selectedOffset + request) = some result := by
+  by_cases hguard : request = 0 ∨ request % alignment ≠ 0
+  · simp [allocateArrays, hguard] at hsuccess
+  cases hstart : classifyRequestBin request with
+  | none => simp [allocateArrays, hguard, hstart] at hsuccess
+  | some startBin =>
+    cases hfind : findNonemptyClassLowered second first
+        (startBin / secondLevelCount) (startBin % secondLevelCount) with
+    | none => simp [allocateArrays, hguard, hstart, hfind] at hsuccess
+    | some foundBin =>
+      by_cases hfound : foundBin ≥ heads.length
+      · simp [allocateArrays, hguard, hstart, hfind, hfound] at hsuccess
+      cases hhead : heads[foundBin]? with
+      | none => simp [allocateArrays, hguard, hstart, hfind, hfound, hhead] at hsuccess
+      | some selectedOffset =>
+        let bad := selectedOffset ≥ next.length ∨
+          selectedOffset ≥ previous.length ∨ count = 0 ∨
+          count > offsets.length ∨ count > sizes.length ∨
+          count > isFree.length ∨ count > prevFree.length
+        by_cases hbad : bad
+        · simp [allocateArrays, hguard, hstart, hfind, hfound, hhead,
+            bad, hbad] at hsuccess
+        cases hblock : findOffsetIndex offsets count selectedOffset with
+        | none =>
+            simp [allocateArrays, hguard, hstart, hfind, hfound, hhead,
+              bad, hbad, hblock] at hsuccess
+        | some block =>
+          cases hsize : sizes[block]? with
+          | none =>
+              simp [allocateArrays, hguard, hstart, hfind, hfound, hhead,
+                bad, hbad, hblock, hsize] at hsuccess
+          | some selectedSize =>
+            by_cases hsuitable : isFree[block]? = some 0 ∨ selectedSize < request
+            · simp [allocateArrays, hguard, hstart, hfind, hfound, hhead,
+                bad, hbad, hblock, hsize, hsuitable] at hsuccess
+            let split := minimumBlockBytes ≤ selectedSize - request
+            let remainderOffset := selectedOffset + request
+            let overflow := split ∧ (remainderOffset ≥ 2 ^ 64 ∨
+              remainderOffset ≥ next.length ∨
+              remainderOffset ≥ previous.length)
+            by_cases hoverflow : overflow
+            · simp [allocateArrays, hguard, hstart, hfind, hfound, hhead,
+                bad, hbad, hblock, hsize, hsuitable, split, remainderOffset,
+                overflow, hoverflow] at hsuccess
+            simp [allocateArrays, hguard, hstart, hfind,
+              hfound, hhead, bad, hbad, hblock, hsize, hsuitable, split,
+              remainderOffset, overflow, hoverflow] at hsuccess
+            by_cases hsplit : minimumBlockBytes ≤ selectedSize - request
+            · simp only [hsplit, if_true] at hsuccess
+              cases hrembin : classifySizeBin (selectedSize - request) with
+              | none => simp [hrembin] at hsuccess
+              | some remainderBin =>
+                simp only [hrembin, Option.bind_some] at hsuccess
+                by_cases hrembound : remainderBin ≥ heads.length
+                · simp [hrembound] at hsuccess
+                simp only [hrembound, if_false] at hsuccess
+                cases htake : takeCandidateClassArrays second first heads next
+                    previous (startBin / secondLevelCount)
+                      (startBin % secondLevelCount) with
+                | none => simp [htake] at hsuccess
+                | some removed =>
+                  simp only [htake, Option.bind_some] at hsuccess
+                  cases hphysical : allocatePhysicalArrays offsets sizes isFree
+                      prevFree count block request with
+                  | none => simp [hphysical] at hsuccess
+                  | some physical =>
+                    simp only [hphysical, Option.bind_some] at hsuccess
+                    refine ⟨startBin, foundBin, selectedOffset, block,
+                      selectedSize, remainderBin, removed, physical, rfl,
+                      hfind, hhead, hblock, hsize, htake, hphysical, ?_⟩
+                    simpa [hsplit] using hsuccess
+            · simp only [hsplit, if_false, Option.bind_some] at hsuccess
+              let remainderBin := 0
+              have hrembound : ¬(split ∧ remainderBin ≥ heads.length) := by
+                simp [split, hsplit]
+              cases htake : takeCandidateClassArrays second first heads next
+                  previous (startBin / secondLevelCount)
+                    (startBin % secondLevelCount) with
+              | none => simp [htake] at hsuccess
+              | some removed =>
+                simp only [htake, Option.bind_some] at hsuccess
+                cases hphysical : allocatePhysicalArrays offsets sizes isFree
+                    prevFree count block request with
+                | none => simp [hphysical] at hsuccess
+                | some physical =>
+                  simp only [hphysical, Option.bind_some] at hsuccess
+                  refine ⟨startBin, foundBin, selectedOffset, block,
+                    selectedSize, remainderBin, removed, physical, rfl,
+                    hfind, hhead, hblock, hsize, htake, hphysical, ?_⟩
+                  simpa [remainderBin, hsplit] using hsuccess
 
 /-- Exact fixed-array effect of `tlsf_coalesce_physical`. The active right
 header is deleted by left-compacting the suffix; the final array slot is spare

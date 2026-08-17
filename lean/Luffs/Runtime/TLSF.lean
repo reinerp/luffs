@@ -27,6 +27,27 @@ def insert (state : Metadata) (bin block : Nat) : Option Metadata :=
       else previous
     some { heads := state.heads.set bin block, next, previous }
 
+/-- Exact pure effect of `tlsf_remove` in `stdlib/tlsf.luffs`. -/
+def remove (state : Metadata) (bin block : Nat) : Option Metadata :=
+  if bin ≥ state.heads.length then none
+  else if block ≥ state.next.length then none
+  else if block ≥ state.previous.length then none
+  else
+    let successor := state.next[block]?.getD state.next.length
+    let predecessor := state.previous[block]?.getD state.next.length
+    let heads :=
+      if predecessor ≥ state.next.length then state.heads.set bin successor
+      else state.heads
+    let next :=
+      if predecessor < state.next.length then state.next.set predecessor successor
+      else state.next
+    let previous :=
+      if successor < state.previous.length then state.previous.set successor predecessor
+      else state.previous
+    let next := next.set block state.next.length
+    let previous := previous.set block state.previous.length
+    some { heads, next, previous }
+
 def linked (state : Metadata) : Nat → List Nat → Prop
   | _, [] => True
   | expectedPrevious, block :: rest =>
@@ -220,5 +241,50 @@ theorem insert_represents {state nextState : Metadata} {bin block : Nat}
             rw [List.getElem?_set_ne (Ne.symm hnodeHead),
               List.getElem?_set_ne (Ne.symm hnodeBlock)]
           · exact htail
+
+theorem remove_result {state nextState : Metadata} {bin block : Nat}
+    (hremove : remove state bin block = some nextState) :
+    bin < state.heads.length ∧ block < state.next.length ∧
+      block < state.previous.length := by
+  unfold remove at hremove
+  split at hremove <;> try contradiction
+  next hbin =>
+    split at hremove <;> try contradiction
+    next hnext =>
+      split at hremove <;> try contradiction
+      next hprevious =>
+        exact ⟨by omega, by omega, by omega⟩
+
+theorem remove_preserves_lengths {state nextState : Metadata} {bin block : Nat}
+    (hremove : remove state bin block = some nextState) :
+    nextState.heads.length = state.heads.length ∧
+      nextState.next.length = state.next.length ∧
+      nextState.previous.length = state.previous.length := by
+  unfold remove at hremove
+  split at hremove <;> try contradiction
+  next =>
+    split at hremove <;> try contradiction
+    next =>
+      split at hremove <;> try contradiction
+      next =>
+        dsimp at hremove
+        split at hremove <;> split at hremove <;> split at hremove <;>
+          simp only [Option.some.injEq] at hremove
+        all_goals subst nextState
+        all_goals simp
+
+theorem remove_detaches {state nextState : Metadata} {bin block : Nat}
+    (hremove : remove state bin block = some nextState) :
+    nextState.next[block]? = some state.next.length ∧
+      nextState.previous[block]? = some state.previous.length := by
+  have hbounds := remove_result hremove
+  rcases hbounds with ⟨hbin, hblockNext, hblockPrevious⟩
+  unfold remove at hremove
+  simp only [Nat.not_le.mpr hbin, Nat.not_le.mpr hblockNext,
+    Nat.not_le.mpr hblockPrevious, if_false] at hremove
+  split at hremove <;> split at hremove <;> split at hremove <;>
+    simp only [Option.some.injEq] at hremove
+  all_goals subst nextState
+  all_goals simp_all
 
 end Luffs.Runtime.TLSF

@@ -91,7 +91,14 @@ struct ReadModel {
     lets: Vec<(String, String)>,
     result: String,
     result_type: String,
+    effect: ReadEffect,
     refines: Option<String>,
+}
+
+#[derive(Debug)]
+enum ReadEffect {
+    Offsets(Vec<String>),
+    Range { begin: String, end: String },
 }
 
 #[derive(Debug)]
@@ -793,6 +800,68 @@ fn read_result_expr(expr: &str, array: &str) -> String {
     }
 }
 
+fn read_effect(expr: &str, array: &str) -> Option<ReadEffect> {
+    let marker = format!("{array}[");
+    let mut rest = expr;
+    let mut offsets = Vec::new();
+    while let Some(start) = rest.find(&marker) {
+        let subscript = &rest[start + marker.len()..];
+        let end = subscript.find(']')?;
+        let index = subscript[..end].trim();
+        if let Some((begin, end)) = index.split_once("..<") {
+            return Some(ReadEffect::Range {
+                begin: model_expr(begin.trim(), array),
+                end: model_expr(end.trim(), array),
+            });
+        }
+        offsets.push(model_expr(index, array));
+        rest = &subscript[end + 1..];
+    }
+    (!offsets.is_empty()).then_some(ReadEffect::Offsets(offsets))
+}
+
+fn substitute_ident(expr: &str, name: &str, replacement: &str) -> String {
+    let bytes = expr.as_bytes();
+    let needle = name.as_bytes();
+    let mut out = String::new();
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        let matches = bytes[cursor..].starts_with(needle)
+            && (cursor == 0
+                || !(bytes[cursor - 1].is_ascii_alphanumeric() || bytes[cursor - 1] == b'_'))
+            && (cursor + needle.len() == bytes.len()
+                || !(bytes[cursor + needle.len()].is_ascii_alphanumeric()
+                    || bytes[cursor + needle.len()] == b'_'));
+        if matches {
+            out.push('(');
+            out.push_str(replacement);
+            out.push(')');
+            cursor += needle.len();
+        } else {
+            out.push(bytes[cursor] as char);
+            cursor += 1;
+        }
+    }
+    out
+}
+
+fn expand_read_effect(mut effect: ReadEffect, lets: &[(String, String)]) -> ReadEffect {
+    for (name, expression) in lets.iter().rev() {
+        match &mut effect {
+            ReadEffect::Offsets(offsets) => {
+                for offset in offsets {
+                    *offset = substitute_ident(offset, name, expression);
+                }
+            }
+            ReadEffect::Range { begin, end } => {
+                *begin = substitute_ident(begin, name, expression);
+                *end = substitute_ident(end, name, expression);
+            }
+        }
+    }
+    effect
+}
+
 fn parse_read_models(source: &str) -> Vec<ReadModel> {
     #[derive(Default)]
     struct Pending {
@@ -802,6 +871,7 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
         guards: Vec<String>,
         lets: Vec<(String, String)>,
         result: Option<String>,
+        effect: Option<ReadEffect>,
         result_type: String,
         refines: Option<String>,
         depth: usize,
@@ -900,6 +970,8 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
             .strip_prefix("Some(")
             .and_then(|rest| rest.strip_suffix(')'))
         {
+            model.effect = read_effect(result, &model.array)
+                .map(|effect| expand_read_effect(effect, &model.lets));
             model.result = Some(read_result_expr(result, &model.array));
         } else if trimmed != "}" {
             model.eligible = false;
@@ -911,7 +983,7 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
         if model.depth == 0 {
             let model = pending.take().expect("pending model exists");
             if model.eligible
-                && let Some(result) = model.result
+                && let (Some(result), Some(effect)) = (model.result, model.effect)
             {
                 models.push(ReadModel {
                     name: model.name,
@@ -920,6 +992,7 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
                     lets: model.lets,
                     result,
                     result_type: model.result_type,
+                    effect,
                     refines: model.refines,
                 });
             }
@@ -2884,7 +2957,10 @@ fn validate(module: &Module) -> Result<(), String> {
 
 fn lean(module: &Module) -> String {
     let mut out = String::from("import Init.Omega\n");
-    if !module.copy_models.is_empty() || !module.array_models.is_empty() {
+    if !module.copy_models.is_empty()
+        || !module.array_models.is_empty()
+        || !module.read_models.is_empty()
+    {
         out.push_str("import Luffs.Memory.Semantics\n");
     }
     if module
@@ -3215,6 +3291,86 @@ fn lean(module: &Module) -> String {
                 format!("{}_model", model.name),
                 target
             ));
+        }
+        let array = model
+            .params
+            .iter()
+            .find(|(_, ty)| ty == "List (Fin 256)")
+            .map(|(name, _)| name.as_str())
+            .expect("read model has an array");
+        out.push_str(&format!("def {}_program ({}Base : Nat)", model.name, array));
+        for (name, ty) in &model.params {
+            out.push_str(&format!(" ({name} : {ty})"));
+        }
+        out.push_str(" : Luffs.Memory.Program :=\n  ");
+        for (name, expression) in &model.lets {
+            out.push_str(&format!("let {name} := {expression}\n  "));
+        }
+        for guard in &model.guards {
+            out.push_str(&format!(
+                "Luffs.Memory.Program.branch (decide ({guard})) .done (\n    "
+            ));
+        }
+        match &model.effect {
+            ReadEffect::Offsets(offsets) => {
+                out.push_str(&format!(
+                    "Luffs.Memory.Program.readOffsets {array}Base [{}]",
+                    offsets.join(", ")
+                ));
+            }
+            ReadEffect::Range { begin, end } => {
+                out.push_str(&format!(
+                    "Luffs.Memory.Program.readBytes ({array}Base + {begin}) ({end} - {begin})"
+                ));
+            }
+        }
+        for _ in &model.guards {
+            out.push(')');
+        }
+        out.push_str("\n\n");
+
+        out.push_str(&format!(
+            "theorem {}_program_wp {{GF : Iris.BundledGFunctors}} ({}Base : Nat)",
+            model.name, array
+        ));
+        for (name, ty) in &model.params {
+            out.push_str(&format!(" ({name} : {ty})"));
+        }
+        out.push_str(" (mem : Luffs.Memory.Memory)\n");
+        for (index, guard) in model.guards.iter().enumerate() {
+            out.push_str(&format!("    (hguard{index} : ¬({guard}))\n"));
+        }
+        match &model.effect {
+            ReadEffect::Offsets(offsets) => out.push_str(&format!(
+                "    (hmapped : ∀ targetOffset ∈ [{}], mem.mapped ({array}Base + targetOffset)) :\n",
+                offsets.join(", ")
+            )),
+            ReadEffect::Range { begin, end } => out.push_str(&format!(
+                "    (hmapped : ∀ i, i < {end} - {begin} → mem.mapped ({array}Base + {begin} + i)) :\n"
+            )),
+        }
+        out.push_str("    ⊢@{Iris.IProp GF} Luffs.Memory.Program.wp (");
+        out.push_str(&format!("{}_program {array}Base", model.name));
+        for (name, _) in &model.params {
+            out.push(' ');
+            out.push_str(name);
+        }
+        out.push_str(") mem (fun final => final = mem) := by\n  simp only [");
+        out.push_str(&format!("{}_program", model.name));
+        for index in 0..model.guards.len() {
+            out.push_str(&format!(
+                ", hguard{index}, decide_false, Luffs.Memory.Program.branch"
+            ));
+        }
+        out.push_str("]\n  ");
+        match &model.effect {
+            ReadEffect::Offsets(offsets) => out.push_str(&format!(
+                "exact Luffs.Memory.Program.readOffsets_wp_of_mapped {array}Base [{}] mem hmapped\n\n",
+                offsets.join(", ")
+            )),
+            ReadEffect::Range { begin, end } => out.push_str(&format!(
+                "exact Luffs.Memory.Program.readBytes_wp ({array}Base + {begin}) ({end} - {begin}) mem hmapped\n\n"
+            )),
         }
     }
     for model in &module.copy_models {
@@ -4311,6 +4467,9 @@ mod tests {
         assert!(generated.contains("let b0 ← storage[begin]?"));
         assert!(generated.contains("let b1 ← storage[begin + 1]?"));
         assert!(generated.contains("Luffs.Memory.Scalar.decode16 [b0, b1]"));
+        assert!(
+            generated.contains("Luffs.Memory.Program.readOffsets storageBase [begin, begin + 1]")
+        );
     }
 
     #[test]
@@ -4365,6 +4524,11 @@ mod tests {
             "def load_model (storage : List (Fin 256)) (begin : Nat) : Option (Fin 256)"
         ));
         assert!(generated.contains("storage[begin]?"));
+        assert!(generated.contains("Luffs.Memory.Program.readOffsets storageBase [begin]"));
+        assert!(generated.contains("theorem load_program_wp"));
+        assert!(generated.contains(
+            "hmapped : ∀ targetOffset ∈ [begin], mem.mapped (storageBase + targetOffset)"
+        ));
         assert!(
             generated
                 .contains("theorem load_refines : load_model = Luffs.Runtime.Containers.boxLoadU8")
@@ -4381,6 +4545,14 @@ mod tests {
         let generated = lean(&m);
         assert!(generated.contains("(end_ : Nat) : Option (List (Fin 256))"));
         assert!(generated.contains("some ((storage.drop begin).take (end_ - begin))"));
+        assert!(
+            generated
+                .contains("Luffs.Memory.Program.readBytes (storageBase + begin) (end_ - begin)")
+        );
+        assert!(
+            generated
+                .contains("hmapped : ∀ i, i < end_ - begin → mem.mapped (storageBase + begin + i)")
+        );
     }
 
     #[test]

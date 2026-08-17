@@ -485,6 +485,72 @@ theorem Program.readBytes_wp {GF : BundledGFunctors} (base count : Nat)
             have h := hmapped (i + 1) (by omega)
             simpa [Nat.add_assoc, Nat.add_comm 1 i] using h
 
+/-- Loads emitted for ordinary indexed reads. Offsets retain source evaluation
+order and need not be contiguous. -/
+def Program.readOffsets (base : Addr) : List Nat → Program
+  | [] => .done
+  | offset :: rest =>
+      .call (.load (base + offset)) (fun _ => readOffsets base rest)
+
+inductive ReadOffsetSteps (base : Addr) :
+    List Nat → Memory → Prop where
+  | nil {mem} : ReadOffsetSteps base [] mem
+  | cons {offset rest mem value}
+      (hload : PrimStep (.load (base + offset)) mem (.byte value) mem)
+      (htail : ReadOffsetSteps base rest mem) :
+      ReadOffsetSteps base (offset :: rest) mem
+
+theorem readOffsetSteps_exists (base : Addr) (offsets : List Nat)
+    (mem : Memory)
+    (hmapped : ∀ offset ∈ offsets, mem.mapped (base + offset)) :
+    ReadOffsetSteps base offsets mem := by
+  induction offsets with
+  | nil => exact .nil
+  | cons offset rest ih =>
+      obtain ⟨value, hvalue⟩ : ∃ value, mem (base + offset) = some value := by
+        have h := hmapped offset (by simp)
+        unfold Memory.mapped at h
+        cases hmem : mem (base + offset) with
+        | none => simp [hmem] at h
+        | some value => exact ⟨value, rfl⟩
+      exact .cons (.load hvalue) (ih (by
+        intro tail htail
+        exact hmapped tail (by simp [htail])))
+
+theorem ReadOffsetSteps.program_exec {base : Addr} {offsets : List Nat}
+    {mem : Memory} (hsteps : ReadOffsetSteps base offsets mem) :
+    Program.Exec (Program.readOffsets base offsets) mem mem := by
+  induction hsteps with
+  | nil => exact .done
+  | cons hload htail ih => exact .call hload ih
+
+theorem ReadOffsetSteps.program_exec_final {base : Addr}
+    {offsets : List Nat} {mem final : Memory}
+    (hexec : Program.Exec (Program.readOffsets base offsets) mem final) :
+    final = mem := by
+  induction offsets generalizing mem final with
+  | nil => cases hexec; rfl
+  | cons offset rest ih =>
+      cases hexec with
+      | call hload htail => cases hload; exact ih htail
+
+theorem ReadOffsetSteps.program_wp {GF : BundledGFunctors} {base : Addr}
+    {offsets : List Nat} {mem : Memory}
+    (hsteps : ReadOffsetSteps base offsets mem) :
+    ⊢@{IProp GF} Program.wp (Program.readOffsets base offsets) mem
+      (fun final => final = mem) := by
+  unfold Program.wp
+  ipureintro
+  exact ⟨⟨mem, hsteps.program_exec⟩,
+    fun final hexec => ReadOffsetSteps.program_exec_final hexec⟩
+
+theorem Program.readOffsets_wp_of_mapped {GF : BundledGFunctors}
+    (base : Addr) (offsets : List Nat) (mem : Memory)
+    (hmapped : ∀ offset ∈ offsets, mem.mapped (base + offset)) :
+    ⊢@{IProp GF} Program.wp (Program.readOffsets base offsets) mem
+      (fun final => final = mem) :=
+  (readOffsetSteps_exists base offsets mem hmapped).program_wp
+
 /-- A generated contiguous read is safe from an Iris-owned region. This is
 the compositional whole-sequence counterpart of `owned_load_wp`. -/
 theorem owned_readBytes_wp {GF : BundledGFunctors} [G : ByteRegionGS GF]

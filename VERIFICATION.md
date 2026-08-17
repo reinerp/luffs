@@ -67,9 +67,13 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   either an exact store trace or only a mapped-address premise; the latter
   constructs the trace and returns an exact-final-memory WP. This covers the
   source-derived scalar Box stores and spare-capacity Vec pushes, including
-  multi-byte encodings. General emission for arbitrary nested branches and
-  loop bodies still needs composition before this end-to-end item can be
-  checked off.
+  multi-byte encodings. Generated reads now have the symmetric treatment:
+  scalar Box/Vec loads preserve their exact source evaluation order as
+  \`readOffsets\`, while begin/end slices become contiguous \`readBytes\`
+  programs. Guard fall-through facts and mapped-address premises generate
+  closed unchanged-memory WPs for both forms. General emission for arbitrary
+  nested branches and loop bodies still needs composition before this
+  end-to-end item can be checked off.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

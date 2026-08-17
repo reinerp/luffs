@@ -3328,4 +3328,55 @@ theorem deallocateUncoalescedArrays_refines
             hbelongs (by simp [Dealloc.freedBlock]) hbin hinsert
           exact ⟨cls, habstract, rfl, rfl, hrefine⟩
 
+/-- Iris ownership corollary for the concrete Luffs transaction. A successful
+array execution witnesses the corresponding abstract allocator transition;
+that transition consumes exactly the client's returned byte capability and
+adds it to the allocator's free-region ownership. -/
+theorem deallocateUncoalescedArrays_ownsFree
+    {PROP : Type} [Iris.BI PROP] [Luffs.Memory.ByteRegionLogic PROP]
+    {pool : Luffs.Memory.Region} {blocks : List Block} {i : Nat}
+    {selected : Block} {state : Bins.State}
+    {isFree prevFree : List (Fin 256)} {second : List (BitVec 32)}
+    {first : BitVec 64} {heads next previous : List Nat}
+    {result : DeallocateUncoalescedResult}
+    (hget : blocks[i]? = some selected)
+    (hallocated : selected.free = false)
+    (hsuccess : deallocateUncoalescedArrays
+      (blockOffsets blocks) (blockSizes blocks) isFree prevFree second first
+      heads next previous i selected.offset selected.bytes = some result) :
+    ∃ cls abstractNext,
+      Dealloc.deallocateUncoalesced pool ⟨blocks, state⟩ i
+          (selected.region pool) = some abstractNext ∧
+      abstractNext.physical = markFreeAt blocks i ∧
+      abstractNext.bins = state.insert cls (Dealloc.freedBlock selected) ∧
+      (Luffs.Memory.OwnsBytes (PROP := PROP) (selected.region pool) ∗
+          Luffs.Allocator.TLSF.Ownership.OwnsFree pool blocks ⊣⊢
+        Luffs.Allocator.TLSF.Ownership.OwnsFree pool abstractNext.physical) := by
+  unfold deallocateUncoalescedArrays at hsuccess
+  cases hmark : markFreeArrays (blockOffsets blocks) (blockSizes blocks)
+      isFree prevFree i selected.offset selected.bytes with
+  | none => simp [hmark] at hsuccess
+  | some flags =>
+      cases hclass : classifySizeBin selected.bytes with
+      | none => simp [hmark, hclass] at hsuccess
+      | some bin =>
+          cases hinsert : insertClassArrays second first heads next previous
+              bin selected.offset with
+          | none => simp [hmark, hclass, hinsert] at hsuccess
+          | some insertion =>
+              obtain ⟨hsize, hmax, _, _⟩ := classifySizeBin_result hclass
+              let cls := sizeClass selected.bytes hsize hmax
+              have hclassAbstract :
+                  classifyBlock? (Dealloc.freedBlock selected) = some cls := by
+                simp [classifyBlock?, Dealloc.freedBlock, cls, hsize, hmax]
+              let abstractNext : Luffs.Allocator.TLSF.Alloc.State :=
+                ⟨markFreeAt blocks i,
+                  state.insert cls (Dealloc.freedBlock selected)⟩
+              have habstract : Dealloc.deallocateUncoalesced pool
+                  ⟨blocks, state⟩ i (selected.region pool) = some abstractNext := by
+                simp [Dealloc.deallocateUncoalesced, hget, deallocateAt,
+                  hallocated, hclassAbstract, abstractNext]
+              refine ⟨cls, abstractNext, habstract, rfl, rfl, ?_⟩
+              exact Dealloc.deallocateUncoalesced_ownsFree habstract
+
 end Luffs.Runtime.TLSF

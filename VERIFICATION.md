@@ -109,7 +109,11 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   intrusive insertion, and both bitmap updates. All fallible checks precede
   its first write. Lean proves the combined array result refines `markFreeAt`
   and `Bins.State.insert` simultaneously, preserving abstract bin validity and
-  the representations of every chain and both bitmap levels.
+  the representations of every chain and both bitmap levels. Successful
+  concrete execution now additionally witnesses the existing abstract
+  `deallocateUncoalesced` transition, so its Iris-Lean ownership theorem applies
+  directly: the client's exact returned `OwnsBytes` capability is consumed and
+  becomes part of the allocator's `OwnsFree` assertion.
 - [ ] Prove physical blocks form a disjoint partition of every mapped pool.
   `partitions` now requires adjacency from offset zero plus exact byte coverage,
   closing the gap permitted by the earlier ordered/sum-only invariant.

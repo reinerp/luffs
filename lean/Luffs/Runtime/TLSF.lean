@@ -63,24 +63,26 @@ def removeArrays (heads next previous : List Nat) (bin block : Nat) :
   | some state => some (state.heads, state.next, state.previous)
 
 /-- Exact list semantics of the current linear `tlsf_find_fit` fallback. -/
-def findFit (sizes flags : List Nat) (request : Nat) : Option Nat :=
+def findFit (sizes : List Nat) (flags : List (Fin 256))
+    (request : Nat) : Option Nat :=
   match sizes, flags with
   | size :: moreSizes, flag :: moreFlags =>
-      if flag ≠ 0 ∧ request ≤ size then some 0
+      if flag.val ≠ 0 ∧ request ≤ size then some 0
       else (findFit moreSizes moreFlags request).map Nat.succ
   | _, _ => none
 
-theorem findFit_sound {sizes flags : List Nat} {request index : Nat}
+theorem findFit_sound {sizes : List Nat} {flags : List (Fin 256)}
+    {request index : Nat}
     (hfind : findFit sizes flags request = some index) :
     ∃ size flag, sizes[index]? = some size ∧ flags[index]? = some flag ∧
-      flag ≠ 0 ∧ request ≤ size := by
+      flag.val ≠ 0 ∧ request ≤ size := by
   induction sizes generalizing flags index with
   | nil => cases flags <;> simp [findFit] at hfind
   | cons size moreSizes ih =>
     cases flags with
     | nil => simp [findFit] at hfind
     | cons flag moreFlags =>
-      by_cases hsuitable : flag ≠ 0 ∧ request ≤ size
+      by_cases hsuitable : flag.val ≠ 0 ∧ request ≤ size
       · simp [findFit, hsuitable] at hfind
         subst index
         exact ⟨size, flag, by simp [hsuitable]⟩
@@ -89,9 +91,10 @@ theorem findFit_sound {sizes flags : List Nat} {request index : Nat}
         obtain ⟨foundSize, foundFlag, hsize, hflag, hnonzero, hbytes⟩ := ih htail
         exact ⟨foundSize, foundFlag, by simp [hsize, hflag, hnonzero, hbytes]⟩
 
-theorem findFit_complete {sizes flags : List Nat} {request index size flag : Nat}
+theorem findFit_complete {sizes : List Nat} {flags : List (Fin 256)}
+    {request index size : Nat} {flag : Fin 256}
     (hsize : sizes[index]? = some size) (hflag : flags[index]? = some flag)
-    (hnonzero : flag ≠ 0) (hbytes : request ≤ size) :
+    (hnonzero : flag.val ≠ 0) (hbytes : request ≤ size) :
     ∃ found, findFit sizes flags request = some found := by
   induction sizes generalizing flags index with
   | nil => simp at hsize
@@ -107,10 +110,11 @@ theorem findFit_complete {sizes flags : List Nat} {request index size flag : Nat
         exact ⟨0, by simp [findFit, hnonzero, hbytes]⟩
       | succ tailIndex =>
         simp only [List.getElem?_cons_succ] at hsize hflag
-        by_cases hsuitable : headFlag ≠ 0 ∧ request ≤ head
+        by_cases hsuitable : headFlag.val ≠ 0 ∧ request ≤ head
         · exact ⟨0, by simp [findFit, hsuitable]⟩
         · obtain ⟨found, hfound⟩ := ih hsize hflag
-          exact ⟨found + 1, by simp [findFit, hsuitable, hfound]⟩
+          exact ⟨found + 1, by
+            simp only [findFit, hsuitable, if_false, hfound, Option.map_some]⟩
 
 def linked (state : Metadata) : Nat → List Nat → Prop
   | _, [] => True

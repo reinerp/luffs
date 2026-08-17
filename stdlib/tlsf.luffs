@@ -40,6 +40,7 @@ fn tlsf_remove(heads: &mut [usize; 256], next: &mut [usize; 4096], previous: &mu
     Some(())
 }
 
+// refines Luffs.Runtime.TLSF.findFit
 fn tlsf_find_fit(sizes: &[usize; 4096], is_free: &[u8; 4096], request: usize) -> Option<usize> {
     let mut block: usize = 0;
     while block < sizes.len() {

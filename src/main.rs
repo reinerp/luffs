@@ -32,6 +32,7 @@ struct Module {
     copy_models: Vec<CopyModel>,
     tlsf_insert_models: Vec<TlsfInsertModel>,
     tlsf_remove_models: Vec<TlsfRemoveModel>,
+    tlsf_find_fit_models: Vec<TlsfFindFitModel>,
 }
 
 #[derive(Debug)]
@@ -86,6 +87,12 @@ struct TlsfInsertModel {
 
 #[derive(Debug)]
 struct TlsfRemoveModel {
+    name: String,
+    refines: String,
+}
+
+#[derive(Debug)]
+struct TlsfFindFitModel {
     name: String,
     refines: String,
 }
@@ -330,6 +337,7 @@ fn parse(source: &str) -> Result<Module, String> {
         copy_models: parse_copy_models(source),
         tlsf_insert_models: parse_tlsf_insert_models(source),
         tlsf_remove_models: parse_tlsf_remove_models(source),
+        tlsf_find_fit_models: parse_tlsf_find_fit_models(source),
     })
 }
 
@@ -970,6 +978,60 @@ fn parse_tlsf_remove_models(source: &str) -> Vec<TlsfRemoveModel> {
     models
 }
 
+fn parse_tlsf_find_fit_models(source: &str) -> Vec<TlsfFindFitModel> {
+    let lines = source.lines().collect::<Vec<_>>();
+    let Some(index) = lines
+        .iter()
+        .position(|line| line.trim().starts_with("fn tlsf_find_fit("))
+    else {
+        return Vec::new();
+    };
+    let Some(target) = index
+        .checked_sub(1)
+        .and_then(|i| lines.get(i))
+        .and_then(|line| line.trim().strip_prefix("// refines "))
+    else {
+        return Vec::new();
+    };
+    let end = lines[index + 1..]
+        .iter()
+        .position(|line| line.trim().starts_with("fn "))
+        .map_or(lines.len(), |offset| index + 1 + offset);
+    let body = lines[index + 1..end]
+        .iter()
+        .map(|line| line.trim())
+        .collect::<Vec<_>>();
+    let required = [
+        "let mut block: usize = 0;",
+        "while block < sizes.len() {",
+        "if block >= is_free.len() { return None; }",
+        "let free: u8 = is_free[block];",
+        "let bytes: usize = sizes[block];",
+        "if free != 0 {",
+        "if request <= bytes {",
+        "return Some(block);",
+        "let next_block: usize = block + 1;",
+        "block = next_block;",
+        "None",
+    ];
+    let mut position = 0;
+    if required.iter().all(|expected| {
+        if let Some(offset) = body[position..].iter().position(|line| line == expected) {
+            position += offset + 1;
+            true
+        } else {
+            false
+        }
+    }) {
+        vec![TlsfFindFitModel {
+            name: "tlsf_find_fit".to_owned(),
+            refines: target.trim().to_owned(),
+        }]
+    } else {
+        Vec::new()
+    }
+}
+
 fn logical_lines(source: &str) -> Result<Vec<(usize, String)>, String> {
     let lines: Vec<&str> = source.lines().collect();
     let mut result = Vec::new();
@@ -1262,7 +1324,10 @@ fn lean(module: &Module) -> String {
     {
         out.push_str("import Luffs.Runtime.Containers\n");
     }
-    if !module.tlsf_insert_models.is_empty() || !module.tlsf_remove_models.is_empty() {
+    if !module.tlsf_insert_models.is_empty()
+        || !module.tlsf_remove_models.is_empty()
+        || !module.tlsf_find_fit_models.is_empty()
+    {
         out.push_str("import Luffs.Runtime.TLSF\n");
     }
     out.push_str(
@@ -1500,6 +1565,34 @@ split <;> simp_all <;> split <;> simp_all\n\n",
             model.name, model.name, model.refines, model.name, model.refines
         ));
     }
+    for model in &module.tlsf_find_fit_models {
+        out.push_str(&format!(
+            "def {}_model (sizes : List Nat) (flags : List (Fin 256)) (request : Nat) : Option Nat :=\n  \
+match sizes, flags with\n  \
+| size :: more_sizes, flag :: more_flags =>\n      \
+if flag.val ≠ 0 ∧ request ≤ size then some 0\n      \
+else ({}_model more_sizes more_flags request).map Nat.succ\n  \
+| _, _ => none\ntermination_by sizes.length\n\n",
+            model.name, model.name
+        ));
+        out.push_str(&format!(
+            "theorem {}_refines : {}_model = {} := by\n  funext sizes flags request\n  \
+induction sizes generalizing flags with\n  \
+| nil => cases flags <;> simp only [{}_model, {}]\n  \
+| cons size more_sizes ih =>\n    cases flags with\n    \
+| nil => simp only [{}_model, {}]\n    \
+| cons flag more_flags => simp only [{}_model, {}, ih]\n\n",
+            model.name,
+            model.name,
+            model.refines,
+            model.name,
+            model.refines,
+            model.name,
+            model.refines,
+            model.name,
+            model.refines
+        ));
+    }
     out.push_str("end LuffsGenerated\n");
     out
 }
@@ -1672,12 +1765,16 @@ mod tests {
         assert!(m.rust.contains("checked_mul"));
         assert_eq!(m.tlsf_insert_models.len(), 1);
         assert_eq!(m.tlsf_remove_models.len(), 1);
+        assert_eq!(m.tlsf_find_fit_models.len(), 1);
         let generated = lean(&m);
         assert!(generated.contains(
             "theorem tlsf_insert_refines : tlsf_insert_model = Luffs.Runtime.TLSF.insertArrays"
         ));
         assert!(generated.contains(
             "theorem tlsf_remove_refines : tlsf_remove_model = Luffs.Runtime.TLSF.removeArrays"
+        ));
+        assert!(generated.contains(
+            "theorem tlsf_find_fit_refines : tlsf_find_fit_model = Luffs.Runtime.TLSF.findFit"
         ));
     }
 

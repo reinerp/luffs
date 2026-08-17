@@ -2489,6 +2489,44 @@ def BinsOffsetsDisjoint (state : Bins.State) : Prop :=
     offset ∈ (state.chains left).map Block.offset →
     offset ∈ (state.chains right).map Block.offset → False
 
+theorem replaceChain_preserves_offsets_disjoint
+    {state : Bins.State} {target : SizeClass} {replacement : List Block}
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hsubset : ∀ offset, offset ∈ replacement.map Block.offset →
+      offset ∈ (state.chains target).map Block.offset) :
+    BinsOffsetsDisjoint (state.replaceChain target replacement) := by
+  intro left right hne offset hleft hright
+  by_cases hleftTarget : left = target
+  · subst left
+    have hrightTarget : right ≠ target := fun h => hne h.symm
+    apply hdisjoint hne offset
+    · apply hsubset offset
+      simpa [Bins.State.replaceChain, Bins.State.fromChains,
+        Bins.Chains.replace] using hleft
+    · simpa [Bins.replaceChain_other state replacement hrightTarget] using hright
+  · by_cases hrightTarget : right = target
+    · subst right
+      apply hdisjoint hne offset
+      · simpa [Bins.replaceChain_other state replacement hleftTarget] using hleft
+      · apply hsubset offset
+        simpa [Bins.State.replaceChain, Bins.State.fromChains,
+          Bins.Chains.replace] using hright
+    · apply hdisjoint hne offset
+      · simpa [Bins.replaceChain_other state replacement hleftTarget] using hleft
+      · simpa [Bins.replaceChain_other state replacement hrightTarget] using hright
+
+theorem takeCandidate_preserves_offsets_disjoint
+    {state next : Bins.State} {start : SizeClass} {removed : Block}
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (htake : state.takeCandidate start = some (removed, next)) :
+    BinsOffsetsDisjoint next := by
+  obtain ⟨cls, rest, _, hremove, rfl⟩ := takeCandidate_result htake
+  apply replaceChain_preserves_offsets_disjoint hdisjoint
+  have hoffsets := FreeList.removeFront_removes_head hremove
+  intro offset hmem
+  rw [hoffsets.2] at hmem
+  exact List.mem_of_mem_tail hmem
+
 theorem represented_front_successor_is_sentinel_iff
     {state : Metadata} {bin block : Nat} {rest : List Nat}
     (hrep : RepresentsBin state bin (block :: rest)) :
@@ -5032,6 +5070,35 @@ theorem finishAllocateArrays_physical
     subst result
     simp
 
+theorem finishAllocateArrays_result
+    {removed : ClassCandidateResult} {physical : AllocatePhysicalResult}
+    {split : Prop} [Decidable split] {remainderBin remainderOffset : Nat}
+    {result : AllocateArraysResult}
+    (hfinish : finishAllocateArrays removed physical split remainderBin
+      remainderOffset = some result) :
+    (split ∧ ∃ inserted,
+      insertClassArrays removed.second removed.first removed.heads removed.next
+        removed.previous remainderBin remainderOffset = some inserted ∧
+      result.second = inserted.second ∧ result.first = inserted.first ∧
+      result.heads = inserted.heads ∧ result.next = inserted.next ∧
+      result.previous = inserted.previous) ∨
+    (¬split ∧ result.second = removed.second ∧
+      result.first = removed.first ∧ result.heads = removed.heads ∧
+      result.next = removed.next ∧ result.previous = removed.previous) := by
+  unfold finishAllocateArrays at hfinish
+  by_cases hsplit : split
+  · simp only [hsplit, if_true] at hfinish
+    cases hinsert : insertClassArrays removed.second removed.first removed.heads
+        removed.next removed.previous remainderBin remainderOffset with
+    | none => simp [hinsert] at hfinish
+    | some inserted =>
+      simp [hinsert] at hfinish
+      subst result
+      exact Or.inl ⟨hsplit, inserted, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  · simp [hsplit] at hfinish
+    subst result
+    exact Or.inr ⟨hsplit, rfl, rfl, rfl, rfl, rfl⟩
+
 /-- Exact pure state transformer for the public `tlsf_allocate` lowering.
 Every check before `removeClassArrays` is a preflight check, so `none` leaves
 all caller-owned arrays unchanged. -/
@@ -5081,6 +5148,9 @@ theorem allocateArrays_result
       heads[foundBin]? = some selectedOffset ∧
       findOffsetIndex offsets count selectedOffset = some block ∧
       sizes[block]? = some selectedSize ∧
+      (if minimumBlockBytes ≤ selectedSize - request then
+          classifySizeBin (selectedSize - request) else some 0) =
+        some remainderBin ∧
       takeCandidateClassArrays second first heads next previous
         (startBin / secondLevelCount) (startBin % secondLevelCount) =
           some removed ∧
@@ -5157,7 +5227,8 @@ theorem allocateArrays_result
                     simp only [hphysical, Option.bind_some] at hsuccess
                     refine ⟨startBin, foundBin, selectedOffset, block,
                       selectedSize, remainderBin, removed, physical, rfl,
-                      hfind, hhead, hblock, hsize, htake, hphysical, ?_⟩
+                      hfind, hhead, hblock, hsize, by simpa [hsplit] using hrembin,
+                      htake, hphysical, ?_⟩
                     simpa [hsplit] using hsuccess
             · simp only [hsplit, if_false, Option.bind_some] at hsuccess
               let remainderBin := 0
@@ -5176,7 +5247,8 @@ theorem allocateArrays_result
                   simp only [hphysical, Option.bind_some] at hsuccess
                   refine ⟨startBin, foundBin, selectedOffset, block,
                     selectedSize, remainderBin, removed, physical, rfl,
-                    hfind, hhead, hblock, hsize, htake, hphysical, ?_⟩
+                    hfind, hhead, hblock, hsize, by simp [hsplit, remainderBin],
+                    htake, hphysical, ?_⟩
                   simpa [remainderBin, hsplit] using hsuccess
 
 set_option maxHeartbeats 1000000 in
@@ -5205,13 +5277,21 @@ theorem allocateArrays_ownsFree
           hkeyMax = some abstractResult ∧
       result.allocatedOffset = abstractResult.allocated.offset ∧
       result.allocatedBytes = abstractResult.allocated.bytes ∧
+      RepresentsPhysicalArrays result.offsets result.sizes result.isFree
+        result.prevFree result.count abstractResult.state.physical ∧
+      Bins.Valid abstractResult.state.bins ∧
+      RepresentsBins (Metadata.mk result.heads result.next result.previous)
+        abstractResult.state.bins ∧
+      BinsOffsetsDisjoint abstractResult.state.bins ∧
+      RepresentsSecondBitmap result.second abstractResult.state.bins ∧
+      FirstBitmapRep result.first result.second ∧
       (Luffs.Allocator.TLSF.Ownership.OwnsFree (PROP := PROP) pool blocks ⊣⊢
         Luffs.Memory.OwnsBytes (abstractResult.allocated.region pool) ∗
           Luffs.Allocator.TLSF.Ownership.OwnsFree pool
             abstractResult.state.physical) := by
   obtain ⟨startBin, foundBin, selectedOffset, block, selectedSize,
       remainderBin, removedArrays, physicalArrays, hclass, hfindClass,
-      hhead, hscan, _hsize, htake, hphysical, hfinish⟩ :=
+      hhead, hscan, hsize, hrembin, htake, hphysical, hfinish⟩ :=
     allocateArrays_result hsuccess
   obtain ⟨hrequest, hkeyMax, hstartBin, _⟩ :=
     classifyRequestBin_result hclass
@@ -5220,7 +5300,7 @@ theorem allocateArrays_ownsFree
       start.fl.val start.sl.val = some removedArrays := by
     simpa [start, hstartBin, encodeSizeClass_div, encodeSizeClass_mod] using htake
   obtain ⟨removedClass, removed, rest, habstractTake, hremovedOffset,
-      _hremovedBins, _hremovedSecond, _hremovedFirst⟩ :=
+      hremovedBins, hremovedSecond, hremovedFirst⟩ :=
     takeCandidateClassArrays_refines_takeCandidate start hsecond hfirst
       hvalid.2.1 hbins hdisjoint htake'
   have htakeResult := takeCandidateClassArrays_result htake
@@ -5240,7 +5320,7 @@ theorem allocateArrays_ownsFree
   have hscanEq := findOffsetIndex_refines_findPhysicalIndex hvalid.1 hactual
     hactualRemoved
   rw [hscanEq] at hscanRemoved
-  obtain ⟨selected, hselected, _hselectedRemoved⟩ :=
+  obtain ⟨selected, hselected, hselectedRemovedPhysical⟩ :=
     findPhysicalIndex_sound hscanRemoved
   obtain ⟨allocated, nextPhysical, hchosen, hnextPhysical,
       hphysicalOffset, hphysicalBytes⟩ :=
@@ -5277,7 +5357,126 @@ theorem allocateArrays_ownsFree
     rw [hresultPhysical.2.2.2.2.2.1, hphysicalOffset]
   have hresultBytes : result.allocatedBytes = allocated.bytes := by
     rw [hresultPhysical.2.2.2.2.2.2, hphysicalBytes]
-  refine ⟨hrequest, hkeyMax, abstractResult, habstract, ?_, ?_, ?_⟩
+  have hselectedSize : selectedSize = selected.bytes := by
+    have hexpected := representsPhysicalArrays_get_size
+      (canonical_representsPhysicalArrays blocks) hselected
+    rw [hsize] at hexpected
+    exact Option.some.inj hexpected
+  obtain ⟨_, hfits, _, _⟩ :=
+    allocateChosenAt_success_cases hselected hchosen
+  have hsplitIff : minimumBlockBytes ≤ selectedSize - request ↔
+      canSplit selected request := by
+    rw [hselectedSize]
+    constructor
+    · intro hroom
+      exact ⟨hrequest, (Nat.le_sub_iff_add_le' hfits).1 hroom⟩
+    · intro hcan
+      exact (Nat.le_sub_iff_add_le' hfits).2 hcan.2
+  have hresultPhysicalRep : RepresentsPhysicalArrays result.offsets
+      result.sizes result.isFree result.prevFree result.count nextPhysical := by
+    rw [hresultPhysical.1, hresultPhysical.2.1,
+      hresultPhysical.2.2.1, hresultPhysical.2.2.2.1,
+      hresultPhysical.2.2.2.2.1]
+    exact hnextPhysical
+  have hnextBinsValid : Bins.Valid nextBins := by
+    exact Bins.takeCandidate_valid hvalid.2.1 habstractTake
+  have hnextDisjoint : BinsOffsetsDisjoint nextBins := by
+    exact takeCandidate_preserves_offsets_disjoint hdisjoint habstractTake
+  have hfinishInfo := finishAllocateArrays_result hfinish
+  have hpost :
+      RepresentsPhysicalArrays result.offsets result.sizes result.isFree
+          result.prevFree result.count abstractResult.state.physical ∧
+      Bins.Valid abstractResult.state.bins ∧
+      RepresentsBins (Metadata.mk result.heads result.next result.previous)
+          abstractResult.state.bins ∧
+      BinsOffsetsDisjoint abstractResult.state.bins ∧
+      RepresentsSecondBitmap result.second abstractResult.state.bins ∧
+      FirstBitmapRep result.first result.second := by
+    by_cases hsplit : minimumBlockBytes ≤ selectedSize - request
+    · have hcan : canSplit selected request := hsplitIff.mp hsplit
+      let remainder := (splitBlock selected request).2
+      have hremDef : allocationRemainder blocks block request = some remainder := by
+        simp [allocationRemainder, hselected, hcan, remainder]
+      have hcoreRem : core.freeRemainder = some remainder := by
+        simp [core, hremDef]
+      have hsplitSelected : minimumBlockBytes ≤ selected.bytes - request := by
+        simpa [hselectedSize] using hsplit
+      have hclassBin : classifySizeBin remainder.bytes = some remainderBin := by
+        simpa [hselectedSize, hsplitSelected, remainder, splitBlock] using hrembin
+      obtain ⟨remainderClass, hclassAbstract, hbin⟩ :=
+        classifySizeBin_refines_block (block := remainder) hclassBin
+      have habstractNext : abstractNext = {
+          physical := nextPhysical
+          bins := nextBins.insert remainderClass remainder } := by
+        have hfinishExpected : Alloc.finishCore core = some {
+            physical := nextPhysical
+            bins := nextBins.insert remainderClass remainder } := by
+          simp [Alloc.finishCore, core, hremDef, hclassAbstract]
+        rw [habstractFinish] at hfinishExpected
+        exact Option.some.inj hfinishExpected
+      rcases hfinishInfo with hsplitInfo | hwholeInfo
+      · obtain ⟨_, inserted, hinsert, hresultSecond, hresultFirst,
+            hresultHeads, hresultNext, hresultPrevious⟩ := hsplitInfo
+        have hfresh : ∀ query, remainder.offset ∉
+            (nextBins.chains query).map Block.offset := by
+          intro query
+          exact Alloc.allocateCore_remainder_fresh hvalid hcore hcoreRem
+        have hbelongs : Bins.Belongs remainderClass remainder :=
+          Bins.classifyBlock?_result hclassAbstract
+        have hremainderOffset : selectedOffset + request = remainder.offset := by
+          rw [hselectedRemoved, ← hselectedRemovedPhysical.1]
+          simp [remainder, splitBlock]
+        have hinsertRefines := insertClassArrays_refines_insert hnextBinsValid
+          hremovedSecond hremovedFirst hremovedBins hnextDisjoint hfresh
+          hbelongs hremainderOffset hbin hinsert
+        refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+        · simpa only [abstractResult, habstractNext] using hresultPhysicalRep
+        · simpa only [abstractResult, habstractNext] using hinsertRefines.1
+        · simpa only [abstractResult, habstractNext, hresultHeads,
+              hresultNext, hresultPrevious] using hinsertRefines.2.1
+        · change BinsOffsetsDisjoint abstractResult.state.bins
+          rw [show abstractResult.state.bins =
+            nextBins.insert remainderClass remainder by
+              simp [abstractResult, habstractNext]]
+          exact insert_preserves_offsets_disjoint
+            (cls := remainderClass) (inserted := remainder)
+            hnextDisjoint hfresh
+        · simpa only [abstractResult, habstractNext, hresultSecond] using
+            hinsertRefines.2.2.1
+        · rw [hresultFirst, hresultSecond]
+          exact hinsertRefines.2.2.2
+      · exact (hwholeInfo.1 hsplit).elim
+    · have hcannot : ¬canSplit selected request :=
+        fun hcan => hsplit (hsplitIff.mpr hcan)
+      have habstractNext : abstractNext = {
+          physical := nextPhysical
+          bins := nextBins } := by
+        have hfinishExpected : Alloc.finishCore core = some {
+            physical := nextPhysical
+            bins := nextBins } := by
+          simp [Alloc.finishCore, core, allocationRemainder, hselected, hcannot]
+        rw [habstractFinish] at hfinishExpected
+        exact Option.some.inj hfinishExpected
+      rcases hfinishInfo with hsplitInfo | hwholeInfo
+      · exact (hsplit hsplitInfo.1).elim
+      · obtain ⟨_, hresultSecond, hresultFirst, hresultHeads,
+            hresultNext, hresultPrevious⟩ := hwholeInfo
+        refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+        · simpa only [abstractResult, habstractNext] using hresultPhysicalRep
+        · simpa only [abstractResult, habstractNext] using hnextBinsValid
+        · simpa only [abstractResult, habstractNext, hresultHeads,
+              hresultNext, hresultPrevious] using hremovedBins
+        · change BinsOffsetsDisjoint abstractResult.state.bins
+          rw [show abstractResult.state.bins = nextBins by
+            simp [abstractResult, habstractNext]]
+          exact hnextDisjoint
+        · simpa only [abstractResult, habstractNext, hresultSecond] using
+            hremovedSecond
+        · rw [hresultFirst, hresultSecond]
+          exact hremovedFirst
+  refine ⟨hrequest, hkeyMax, abstractResult, habstract, ?_, ?_, hpost.1,
+    hpost.2.1, hpost.2.2.1, hpost.2.2.2.1, hpost.2.2.2.2.1,
+    hpost.2.2.2.2.2, ?_⟩
   · simpa [abstractResult] using hresultOffset
   · simpa [abstractResult] using hresultBytes
   · exact Luffs.Allocator.TLSF.Ownership.allocate_ownsFree pool hvalid habstract

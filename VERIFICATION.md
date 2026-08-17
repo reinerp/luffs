@@ -181,7 +181,7 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   successor's `prev_free` boundary tag. Its generated Lean semantics is
   source-shape checked against the exact parallel-array model. That model is
   proved to be precisely the free-bit and boundary-tag projection of the
-  abstract `markFreeAt` transition, framing every other physical header. Bin
+  abstract `markFreeAt` transition, framing every other physical header.
   The concrete Luffs uncoalesced transaction now composes that marking with
   classification and full bin insertion. Its successful generated semantics
   is proved to refine the corresponding abstract physical and bin transitions
@@ -197,9 +197,13 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   decrements the active count. The compiler source-shape gate connects it to
   an exact Lean array transformer; success proves the removed neighbor was
   active, both free flags were set, adjacency was exact, and the count drops by
-  one. Proving that the compacted active prefix represents abstract
-  `coalesceAt`, then composing bin removal/reinsertion, remains. Pointer-to-offset
-  validation belongs at the mmap-backed pool boundary.
+  one. The exact active-prefix compaction is now proved to represent abstract
+  `coalesceAt` at every physical-list position, not merely at the head: the
+  untouched prefix is framed, the adjacent pair becomes its merged header,
+  the suffix shifts left, and the old final active slot becomes spare capacity.
+  Composing concrete bin removal/reinsertion with this physical transition
+  remains. Pointer-to-offset validation belongs at the mmap-backed pool
+  boundary.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 
 The first concrete `stdlib/tlsf.luffs` runtime layer now implements bounded

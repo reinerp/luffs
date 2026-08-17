@@ -3019,6 +3019,98 @@ theorem boxStoreU8_eq_generic (storage : List Byte) (begin : Nat)
       simpa only [List.cons_append, List.nil_append, List.append_assoc] using
         hwrite.symm⟩
 
+theorem boxLoadU8_eq_generic (storage : List Byte) (begin : Nat) :
+    (boxLoadU8 storage begin).map Scalar.bv8OfByte =
+      boxLoad Scalar.u8 storage begin := by
+  by_cases hbound : begin < storage.length
+  · have hgeneric : ¬begin + Scalar.u8.size > storage.length := by
+      simp only [Scalar.u8]
+      omega
+    have hget : storage[begin]? = some storage[begin] :=
+      List.getElem?_eq_getElem hbound
+    have hslice : (storage.drop begin).take 1 = [storage[begin]] := by
+      rw [List.drop_eq_getElem_cons hbound]
+      rfl
+    rw [boxLoadU8, hget, boxLoad, if_neg hgeneric]
+    change some (Scalar.bv8OfByte storage[begin]) =
+      Scalar.decode8 ((storage.drop begin).take 1)
+    rw [hslice]
+    rfl
+  · have hgeneric : begin + Scalar.u8.size > storage.length := by
+      simp only [Scalar.u8]
+      omega
+    have hget : storage[begin]? = none :=
+      List.getElem?_eq_none (Nat.le_of_not_gt hbound)
+    simp [boxLoadU8, hget, boxLoad, hgeneric]
+
+/-- A successful concrete byte Box load returns the logical byte encoded in the
+owned allocation and preserves ownership while exposing its one-read trace. -/
+theorem boxLoadU8_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {block : Block} {storage : List Byte}
+    {value expected : Byte} (hload : boxLoadU8 storage block.offset = some value)
+    (hencoded : (storage.drop block.offset).take Scalar.u8.size =
+      Scalar.u8.encode (Scalar.bv8OfByte expected))
+    {contents : ContentsMap} {mem : Memory} (hrep : ContentsRep contents mem) :
+    value = expected ∧
+      (contentsInterp (G := G) contents ∗
+          Luffs.Containers.Box.Owns Scalar.u8 pool block
+            (Scalar.bv8OfByte expected) ⊢
+        (contentsInterp contents ∗
+          Luffs.Containers.Box.Owns Scalar.u8 pool block
+            (Scalar.bv8OfByte expected)) ∗
+          ⌜ReadSteps (block.region pool).base
+              (Scalar.u8.encode (Scalar.bv8OfByte expected)) mem ∧
+            Scalar.u8.decode (Scalar.u8.encode (Scalar.bv8OfByte expected)) =
+              some (Scalar.bv8OfByte expected)⌝) := by
+  have hgeneric : boxLoad Scalar.u8 storage block.offset =
+      some (Scalar.bv8OfByte value) := by
+    rw [← boxLoadU8_eq_generic storage block.offset, hload]
+    rfl
+  have hexpected : boxLoad Scalar.u8 storage block.offset =
+      some (Scalar.bv8OfByte expected) :=
+    boxLoad_of_encoded Scalar.u8 storage block.offset
+      (Scalar.bv8OfByte expected) (boxLoad_result hgeneric).1 hencoded
+  have hbv : Scalar.bv8OfByte value = Scalar.bv8OfByte expected := by
+    rw [hgeneric] at hexpected
+    exact Option.some.inj hexpected
+  have hvalue : value = expected := by
+    exact Fin.ext (congrArg BitVec.toNat hbv)
+  refine ⟨hvalue, ?_⟩
+  exact Luffs.Containers.Box.deref_read Scalar.u8 hrep
+
+/-- A successful concrete byte Box store inherits the generic codec's
+frame-preserving ownership update and closed one-write WP. -/
+theorem boxStoreU8_owns_wp {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {block : Block} {storage nextStorage : List Byte}
+    (oldValue newValue : Byte)
+    (hstore : boxStoreU8 storage block.offset newValue = some nextStorage)
+    (contents : ContentsMap) (mem : Memory) (hrep : ContentsRep contents mem) :
+    nextStorage = writeBytes storage block.offset
+        (Scalar.u8.encode (Scalar.bv8OfByte newValue)) ∧
+      (contentsInterp (G := G) contents ∗
+          Luffs.Containers.Box.Owns Scalar.u8 pool block
+            (Scalar.bv8OfByte oldValue) ==∗
+        (contentsInterp
+            (insertBytes contents (block.region pool).base
+              (Scalar.u8.encode (Scalar.bv8OfByte newValue))) ∗
+          Luffs.Containers.Box.Owns Scalar.u8 pool block
+            (Scalar.bv8OfByte newValue)) ∗
+          ⌜∃ next,
+            WriteSteps (block.region pool).base
+              (Scalar.u8.encode (Scalar.bv8OfByte newValue)) mem next ∧
+            (⊢@{Iris.IProp GF} Program.wp
+              (Program.writeBytes (block.region pool).base
+                (Scalar.u8.encode (Scalar.bv8OfByte newValue)))
+              mem (fun final => final = next))⌝) := by
+  have hgeneric : boxStore Scalar.u8 storage block.offset
+      (Scalar.bv8OfByte newValue) = some nextStorage := by
+    rw [← boxStoreU8_eq_generic storage block.offset newValue]
+    exact hstore
+  exact ⟨(boxStore_result hgeneric).2, Luffs.Containers.Box.store_wp Scalar.u8
+    (Scalar.bv8OfByte oldValue) (Scalar.bv8OfByte newValue) contents mem hrep⟩
+
 def vecPushU8 (storage : List Byte) (len capacity : Nat) (value : Byte) :
     Option (List Byte × Nat) :=
   if len ≥ capacity then none

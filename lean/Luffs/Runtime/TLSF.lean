@@ -1,11 +1,13 @@
 import Luffs.Allocator.TLSF.FreeList
 import Luffs.Allocator.TLSF.Bitmap
+import Luffs.Allocator.TLSF.Bins
 
 set_option autoImplicit false
 
 namespace Luffs.Runtime.TLSF
 
 open Luffs.Allocator.TLSF
+open Luffs.Allocator.TLSF.Bins
 
 /-- Pure state used by the fixed parallel-array TLSF lowering. -/
 structure Metadata where
@@ -436,6 +438,309 @@ theorem findNonemptyBin_minimal {words : List (BitVec 64)} {start found earlier 
     (hstart : start ≤ earlier) (hearlier : earlier < found) :
     (bitmapBits words)[earlier]? = some false := by
   exact firstSetFrom_minimal hfind hstart hearlier
+
+def secondWordBits (word : BitVec 32) : List Bool :=
+  List.ofFn fun bit : Fin 32 => word.getLsbD bit.val
+
+def classBits : List (BitVec 32) → List Bool
+  | [] => []
+  | word :: rest => secondWordBits word ++ classBits rest
+
+/-- Logical lookup over the actual TLSF 64 × 32 class space. -/
+def findNonemptyClass (second : List (BitVec 32))
+    (startFl startSl : Nat) : Option Nat :=
+  firstSetFrom (classBits second) (startFl * 32 + startSl)
+
+theorem secondWordBits_length (word : BitVec 32) :
+    (secondWordBits word).length = 32 := by
+  simp [secondWordBits]
+
+theorem secondWordBits_get (word : BitVec 32) (index : Nat)
+    (hindex : index < 32) :
+    (secondWordBits word)[index]? = some (word.getLsbD index) := by
+  simp only [secondWordBits, List.getElem?_ofFn, hindex, dite_true]
+
+def maskFrom32 (bit : Nat) : BitVec 32 := BitVec.allOnes 32 <<< bit
+
+theorem maskFrom32_getLsbD (bit index : Nat) :
+    (maskFrom32 bit).getLsbD index = decide (bit ≤ index ∧ index < 32) := by
+  simp only [maskFrom32, BitVec.getLsbD_shiftLeft, BitVec.getLsbD_allOnes]
+  by_cases hindex : index < 32 <;> by_cases hbit : bit ≤ index
+  · have : index - bit < 32 := by omega
+    simp [hindex, hbit, this]
+  · simp [hindex, hbit]
+  · simp [hindex]
+  · simp [hindex]
+
+theorem maskedWord32_getLsbD (word : BitVec 32) (bit index : Nat) :
+    (word &&& maskFrom32 bit).getLsbD index =
+      if bit ≤ index ∧ index < 32 then word.getLsbD index else false := by
+  rw [BitVec.getLsbD_and, maskFrom32_getLsbD]
+  split <;> simp_all
+
+theorem firstTrueIndex_secondWordBits_ctz {word : BitVec 32}
+    (hnonzero : word ≠ 0) :
+    firstTrueIndex (secondWordBits word) = some word.ctz.toNat := by
+  have hctzBound : word.ctz.toNat < 32 := by
+    exact (BitVec.ctz_lt_iff_ne_zero (x := word)).2 hnonzero
+  have hctzBit : (secondWordBits word)[word.ctz.toNat]? = some true := by
+    rw [secondWordBits_get word word.ctz.toNat hctzBound]
+    exact congrArg some (BitVec.getLsbD_true_ctz_of_ne_zero hnonzero)
+  obtain ⟨found, hfound⟩ := firstTrueIndex_complete hctzBit
+  have hfoundBit := firstTrueIndex_sound hfound
+  have hfoundBound := firstTrueIndex_lt_length hfound
+  have hnotBefore : ¬ found < word.ctz.toNat := by
+    intro hbefore
+    have hfalse := BitVec.getLsbD_false_of_lt_ctz (x := word) hbefore
+    have hfound32 : found < 32 := by
+      simpa [secondWordBits_length] using hfoundBound
+    rw [secondWordBits_get word found hfound32, hfalse] at hfoundBit
+    contradiction
+  have hnotAfter : ¬ word.ctz.toNat < found := by
+    intro hafter
+    have hfalse := firstTrueIndex_minimal hfound hafter
+    rw [hctzBit] at hfalse
+    contradiction
+  have : found = word.ctz.toNat := by omega
+  simpa [this] using hfound
+
+theorem maskedWord32_ctz_facts {word : BitVec 32} {bit : Nat}
+    (hnonzero : word &&& maskFrom32 bit ≠ 0) :
+    bit ≤ (word &&& maskFrom32 bit).ctz.toNat ∧
+      (word &&& maskFrom32 bit).ctz.toNat < 32 ∧
+      word.getLsbD (word &&& maskFrom32 bit).ctz.toNat = true := by
+  let masked := word &&& maskFrom32 bit
+  have hbound : masked.ctz.toNat < 32 :=
+    (BitVec.ctz_lt_iff_ne_zero (x := masked)).2 hnonzero
+  have htrue := BitVec.getLsbD_true_ctz_of_ne_zero hnonzero
+  have hformula := maskedWord32_getLsbD word bit masked.ctz.toNat
+  rw [← show word &&& maskFrom32 bit = masked from rfl] at hformula
+  by_cases hcondition : bit ≤ masked.ctz.toNat ∧ masked.ctz.toNat < 32
+  · have hboth :
+        (bit ≤ masked.ctz.toNat ∧ masked.ctz.toNat < 32) ∧
+          word.getLsbD masked.ctz.toNat = true := by
+      simpa [masked] using hformula.symm.trans htrue
+    have horiginal := hboth.2
+    exact ⟨hcondition.1, hbound, horiginal⟩
+  · have himpossible := hformula.symm.trans htrue
+    simp [masked, hcondition] at himpossible
+
+theorem classBits_get {second : List (BitVec 32)} {fl sl : Nat}
+    {word : BitVec 32} (hword : second[fl]? = some word) (hsl : sl < 32) :
+    (classBits second)[fl * 32 + sl]? = some (word.getLsbD sl) := by
+  induction second generalizing fl with
+  | nil => simp at hword
+  | cons head rest ih =>
+    cases fl with
+    | zero =>
+      simp only [List.getElem?_cons_zero, Option.some.injEq] at hword
+      subst head
+      rw [classBits, List.getElem?_append_left (by
+        simpa [secondWordBits_length] using hsl)]
+      simpa using secondWordBits_get word sl hsl
+    | succ fl =>
+      simp only [List.getElem?_cons_succ] at hword
+      rw [classBits, List.getElem?_append_right (by
+        rw [secondWordBits_length]
+        omega), secondWordBits_length]
+      have hindex : (fl + 1) * 32 + sl - 32 = fl * 32 + sl := by omega
+      rw [hindex]
+      exact ih hword
+
+def FirstBitmapRep (first : BitVec 64) (second : List (BitVec 32)) : Prop :=
+  second.length = 64 ∧
+    ∀ fl, fl < 64 →
+      first.getLsbD fl = decide (second[fl]?.getD 0 ≠ 0)
+
+/-- Exact pure control flow of `tlsf_find_nonempty_class`. -/
+def findNonemptyClassLowered (second : List (BitVec 32)) (first : BitVec 64)
+    (startFl startSl : Nat) : Option Nat :=
+  if startFl ≥ second.length then none else
+  if startSl ≥ 32 then none else
+  let secondBitmap := second[startFl]?.getD 0
+  let secondMasked := secondBitmap &&& maskFrom32 startSl
+  if secondMasked ≠ 0 then
+    some (startFl * 32 + secondMasked.ctz.toNat)
+  else
+    let nextFl := startFl + 1
+    if nextFl ≥ 64 then none else
+    let firstMasked := first &&& maskFrom nextFl
+    if firstMasked = 0 then none else
+    let foundFl := firstMasked.ctz.toNat
+    if foundFl ≥ second.length then none else
+    let foundSecond := second[foundFl]?.getD 0
+    if foundSecond = 0 then none else
+    some (foundFl * 32 + foundSecond.ctz.toNat)
+
+theorem maskedWord64_ctz_facts {word : BitVec 64} {bit : Nat}
+    (hnonzero : word &&& maskFrom bit ≠ 0) :
+    bit ≤ (word &&& maskFrom bit).ctz.toNat ∧
+      (word &&& maskFrom bit).ctz.toNat < 64 ∧
+      word.getLsbD (word &&& maskFrom bit).ctz.toNat = true := by
+  let masked := word &&& maskFrom bit
+  have hbound : masked.ctz.toNat < 64 :=
+    (BitVec.ctz_lt_iff_ne_zero (x := masked)).2 hnonzero
+  have htrue := BitVec.getLsbD_true_ctz_of_ne_zero hnonzero
+  have hformula := maskedWord_getLsbD word bit masked.ctz.toNat
+  rw [← show word &&& maskFrom bit = masked from rfl] at hformula
+  by_cases hcondition : bit ≤ masked.ctz.toNat ∧ masked.ctz.toNat < 64
+  · have hboth :
+        (bit ≤ masked.ctz.toNat ∧ masked.ctz.toNat < 64) ∧
+          word.getLsbD masked.ctz.toNat = true := by
+      simpa [masked] using hformula.symm.trans htrue
+    exact ⟨hcondition.1, hbound, hboth.2⟩
+  · have himpossible := hformula.symm.trans htrue
+    simp [masked, hcondition] at himpossible
+
+theorem findNonemptyClassLowered_sound {second : List (BitVec 32)}
+    {first : BitVec 64} {startFl startSl found : Nat}
+    (hfind : findNonemptyClassLowered second first startFl startSl = some found) :
+    startFl * 32 + startSl ≤ found ∧ found < second.length * 32 ∧
+      (classBits second)[found]? = some true := by
+  unfold findNonemptyClassLowered at hfind
+  split at hfind <;> try contradiction
+  next hstartFl =>
+    split at hfind <;> try contradiction
+    next hstartSl =>
+      dsimp only at hfind
+      split at hfind
+      next hsame =>
+        simp only [Option.some.injEq] at hfind
+        subst found
+        have hword : second[startFl]? =
+            some (second[startFl]?.getD 0) := by
+          cases hget : second[startFl]? with
+          | none =>
+            have := List.getElem?_eq_none_iff.mp hget
+            omega
+          | some word => simp [hget]
+        obtain ⟨hoffset, hoffsetBound, hbit⟩ :=
+          maskedWord32_ctz_facts hsame
+        exact ⟨by omega, by omega, by
+          rw [classBits_get hword hoffsetBound, hbit]⟩
+      next hsameEmpty =>
+        split at hfind <;> try contradiction
+        next hnextFl =>
+          split at hfind <;> try contradiction
+          next hfirstMasked =>
+            split at hfind <;> try contradiction
+            next hfoundFl =>
+              split at hfind <;> try contradiction
+              next hfoundSecond =>
+                simp only [Option.some.injEq] at hfind
+                subst found
+                have hfirstNonzero : first &&& maskFrom (startFl + 1) ≠ 0 :=
+                  hfirstMasked
+                obtain ⟨hflStart, hflBound, _⟩ :=
+                  maskedWord64_ctz_facts hfirstNonzero
+                have hword : second[(first &&& maskFrom (startFl + 1)).ctz.toNat]? =
+                    some (second[(first &&& maskFrom (startFl + 1)).ctz.toNat]?.getD 0) := by
+                  cases hget : second[(first &&& maskFrom (startFl + 1)).ctz.toNat]? with
+                  | none =>
+                    have := List.getElem?_eq_none_iff.mp hget
+                    omega
+                  | some word => simp [hget]
+                have hslBound :
+                    (second[(first &&& maskFrom (startFl + 1)).ctz.toNat]?.getD 0).ctz.toNat < 32 :=
+                  (BitVec.ctz_lt_iff_ne_zero
+                    (x := second[(first &&& maskFrom (startFl + 1)).ctz.toNat]?.getD 0)).2
+                      hfoundSecond
+                have hslBit := BitVec.getLsbD_true_ctz_of_ne_zero hfoundSecond
+                exact ⟨by omega, by omega, by
+                  rw [classBits_get hword hslBound, hslBit]⟩
+
+theorem classBits_length (second : List (BitVec 32)) :
+    (classBits second).length = second.length * 32 := by
+  induction second with
+  | nil => rfl
+  | cons word rest => simp [classBits, secondWordBits_length, *]; omega
+
+theorem findNonemptyClass_sound {second : List (BitVec 32)}
+    {startFl startSl found : Nat}
+    (hfind : findNonemptyClass second startFl startSl = some found) :
+    startFl * 32 + startSl ≤ found ∧ found < second.length * 32 ∧
+      (classBits second)[found]? = some true := by
+  have hsound := firstSetFrom_sound hfind
+  simpa [findNonemptyClass, classBits_length] using hsound
+
+theorem findNonemptyClass_indices {second : List (BitVec 32)}
+    {startFl startSl found : Nat} (hsecond : second.length ≤ 64)
+    (hfind : findNonemptyClass second startFl startSl = some found) :
+    found / 32 < 64 ∧ found % 32 < 32 ∧
+      found = (found / 32) * 32 + found % 32 := by
+  have hbound := (findNonemptyClass_sound hfind).2.1
+  have hmod : found % 32 < 32 := Nat.mod_lt found (by decide)
+  constructor
+  · apply Nat.div_lt_of_lt_mul
+    omega
+  exact ⟨hmod, by omega⟩
+
+def classOfBin? (bin : Nat) : Option SizeClass :=
+  if hfl : bin / 32 < firstLevelCount then
+    if hsl : bin % 32 < secondLevelCount then
+      some { fl := ⟨bin / 32, hfl⟩, sl := ⟨bin % 32, hsl⟩ }
+    else none
+  else none
+
+theorem classOfBin?_of_bound {bin : Nat}
+    (hbound : bin < firstLevelCount * secondLevelCount) :
+    ∃ cls, classOfBin? bin = some cls ∧
+      cls.fl.val = bin / secondLevelCount ∧
+      cls.sl.val = bin % secondLevelCount ∧
+      bin = cls.fl.val * secondLevelCount + cls.sl.val := by
+  have hfl : bin / 32 < firstLevelCount := by
+    rw [Nat.div_lt_iff_lt_mul (by decide : 0 < 32)]
+    simpa [secondLevelCount] using hbound
+  have hsl : bin % 32 < secondLevelCount := by
+    simpa [secondLevelCount] using Nat.mod_lt bin (by decide : 0 < 32)
+  let cls : SizeClass := SizeClass.mk ⟨bin / 32, hfl⟩ ⟨bin % 32, hsl⟩
+  exact ⟨cls, by simp [classOfBin?, hfl, hsl, cls], rfl, rfl, by
+    simpa [secondLevelCount, cls, Nat.mul_comm] using
+      (Nat.div_add_mod bin 32).symm⟩
+
+theorem classOfBin?_of_findNonemptyClass {second : List (BitVec 32)}
+    {startFl startSl found : Nat} (hsecond : second.length ≤ firstLevelCount)
+    (hfind : findNonemptyClass second startFl startSl = some found) :
+    ∃ cls, classOfBin? found = some cls ∧
+      cls.fl.val = found / secondLevelCount ∧
+      cls.sl.val = found % secondLevelCount ∧
+      found = cls.fl.val * secondLevelCount + cls.sl.val := by
+  have hindices := findNonemptyClass_indices (by
+    simpa [firstLevelCount] using hsecond) hfind
+  have hfl : found / 32 < firstLevelCount := by
+    simpa [firstLevelCount] using hindices.1
+  have hsl : found % 32 < secondLevelCount := by
+    simpa [secondLevelCount] using hindices.2.1
+  let cls : SizeClass := SizeClass.mk ⟨found / 32, hfl⟩
+    ⟨found % 32, hsl⟩
+  exact ⟨cls, by simp [classOfBin?, hfl, hsl, cls], rfl, rfl, by
+    simpa [secondLevelCount, cls] using hindices.2.2⟩
+
+/-- Abstraction relation from the concrete packed second-level bitmap to the
+cached second-level bits of the abstract allocator. -/
+def RepresentsSecondBitmap (second : List (BitVec 32))
+    (state : Bins.State) : Prop :=
+  second.length = firstLevelCount ∧
+    ∀ cls : SizeClass,
+      (classBits second)[cls.fl.val * secondLevelCount + cls.sl.val]? =
+        some (state.slSet cls.fl cls.sl)
+
+theorem findNonemptyClassLowered_selects_nonempty
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {state : Bins.State} (hrep : RepresentsSecondBitmap second state)
+    (hvalid : Bins.Valid state) {startFl startSl found : Nat}
+    (hfind : findNonemptyClassLowered second first startFl startSl = some found) :
+    ∃ cls, classOfBin? found = some cls ∧
+      found = cls.fl.val * secondLevelCount + cls.sl.val ∧
+      state.chains cls ≠ [] := by
+  have hlogical := findNonemptyClassLowered_sound hfind
+  obtain ⟨cls, hclass, _, _, hencode⟩ := classOfBin?_of_bound (by
+    rw [hrep.1] at hlogical
+    simpa [firstLevelCount, secondLevelCount] using hlogical.2.1)
+  have hrepresented := hrep.2 cls
+  rw [← hencode, hlogical.2.2] at hrepresented
+  have hset : state.slSet cls.fl cls.sl = true := Option.some.inj hrepresented.symm
+  exact ⟨cls, hclass, hencode, (hvalid.2.2.1 cls.fl cls.sl).mp hset⟩
 
 def clearWordBit (bitmap : BitVec 64) (bit : Nat) : BitVec 64 :=
   bitmap &&& ~~~(BitVec.ofNat 64 1 <<< bit)

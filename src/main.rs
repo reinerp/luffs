@@ -1920,6 +1920,9 @@ mod tests {
         );
         assert!(m.rust.contains("get_unchecked_mut"));
         assert!(m.rust.contains("checked_mul"));
+        assert!(m.rust.contains("fn tlsf_find_nonempty_class"));
+        assert!(m.rust.contains("fn tlsf_take_candidate_class"));
+        assert!(m.rust.contains("[usize; 2048]"));
         assert_eq!(m.tlsf_insert_models.len(), 1);
         assert_eq!(m.tlsf_remove_models.len(), 1);
         assert_eq!(m.tlsf_find_fit_models.len(), 1);

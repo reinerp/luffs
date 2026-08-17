@@ -3,7 +3,7 @@
 // `next.len()` is the detached/end-of-chain sentinel.
 
 // refines Luffs.Runtime.TLSF.insertArrays
-fn tlsf_insert(heads: &mut [usize; 256], next: &mut [usize; 4096], previous: &mut [usize; 4096], bin: usize, block: usize) -> Option<()> {
+fn tlsf_insert(heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], bin: usize, block: usize) -> Option<()> {
     if bin >= heads.len() { return None; }
     if block >= next.len() { return None; }
     if block >= previous.len() { return None; }
@@ -19,7 +19,7 @@ fn tlsf_insert(heads: &mut [usize; 256], next: &mut [usize; 4096], previous: &mu
 }
 
 // refines Luffs.Runtime.TLSF.removeArrays
-fn tlsf_remove(heads: &mut [usize; 256], next: &mut [usize; 4096], previous: &mut [usize; 4096], bin: usize, block: usize) -> Option<()> {
+fn tlsf_remove(heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], bin: usize, block: usize) -> Option<()> {
     if bin >= heads.len() { return None; }
     if block >= next.len() { return None; }
     if block >= previous.len() { return None; }
@@ -96,7 +96,7 @@ fn tlsf_find_nonempty_bin(nonempty: &[u64; 4], start_bin: usize) -> Option<usize
 // member, clear the corresponding cached bitmap bit. Every fallible bounds
 // check precedes tlsf_remove, so failure leaves all metadata unchanged.
 // refines Luffs.Runtime.TLSF.takeCandidateArrays
-fn tlsf_take_candidate(nonempty: &mut [u64; 4], heads: &mut [usize; 256], next: &mut [usize; 4096], previous: &mut [usize; 4096], start_bin: usize) -> Option<usize> {
+fn tlsf_take_candidate(nonempty: &mut [u64; 4], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], start_bin: usize) -> Option<usize> {
     let bin: usize = tlsf_find_nonempty_bin(nonempty, start_bin)?;
     if bin >= heads.len() { return None; }
     let word: usize = bin >> 6;
@@ -113,6 +113,71 @@ fn tlsf_take_candidate(nonempty: &mut [u64; 4], heads: &mut [usize; 256], next: 
         let bitmap: u64 = nonempty[word];
         let bit_mask: u64 = 1 << bit;
         nonempty[word] = bitmap & !bit_mask;
+    }
+    Some(block)
+}
+
+// True TLSF lookup over the allocator's 64 × 32 class space. Search the
+// starting first-level class from start_sl, then use the first-level bitmap to
+// jump directly to the next first-level class with a nonempty second level.
+fn tlsf_find_nonempty_class(second_nonempty: &[u32; 64], first_nonempty: &[u64; 1], start_fl: usize, start_sl: usize) -> Option<usize> {
+    if start_fl >= second_nonempty.len() { return None; }
+    if start_sl >= 32 { return None; }
+    if first_nonempty.len() == 0 { return None; }
+
+    let second_bitmap: u32 = second_nonempty[start_fl];
+    let second_masked: u32 = second_bitmap & (u32::MAX << start_sl);
+    if second_masked != 0 {
+        let found_sl: usize = second_masked.trailing_zeros() as usize;
+        if found_sl >= 32 { return None; }
+        let base: usize = start_fl.checked_mul(32)?;
+        let bin: usize = base.checked_add(found_sl)?;
+        return Some(bin);
+    }
+
+    let next_fl: usize = start_fl.checked_add(1)?;
+    if next_fl >= 64 { return None; }
+    let first_bitmap: u64 = first_nonempty[0];
+    let first_masked: u64 = first_bitmap & (u64::MAX << next_fl);
+    if first_masked == 0 { return None; }
+    let found_fl: usize = first_masked.trailing_zeros() as usize;
+    if found_fl >= second_nonempty.len() { return None; }
+    let found_second: u32 = second_nonempty[found_fl];
+    if found_second == 0 { return None; }
+    let found_sl: usize = found_second.trailing_zeros() as usize;
+    if found_sl >= 32 { return None; }
+    let base: usize = found_fl.checked_mul(32)?;
+    let bin: usize = base.checked_add(found_sl)?;
+    Some(bin)
+}
+
+// Detach the selected class head and update both bitmap levels. The first-level
+// bit is cleared exactly when clearing the selected second-level bit empties
+// that entire second-level word.
+fn tlsf_take_candidate_class(second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], start_fl: usize, start_sl: usize) -> Option<usize> {
+    let bin: usize = tlsf_find_nonempty_class(second_nonempty, first_nonempty, start_fl, start_sl)?;
+    if bin >= heads.len() { return None; }
+    let found_fl: usize = bin >> 5;
+    let found_sl: usize = bin & 31;
+    if found_fl >= second_nonempty.len() { return None; }
+    if first_nonempty.len() == 0 { return None; }
+
+    let block: usize = heads[bin];
+    if block >= next.len() { return None; }
+    if block >= previous.len() { return None; }
+    let successor: usize = next[block];
+
+    tlsf_remove(heads, next, previous, bin, block)?;
+    if successor >= next.len() {
+        let old_second: u32 = second_nonempty[found_fl];
+        let second_mask: u32 = 1 << found_sl;
+        let new_second: u32 = old_second & !second_mask;
+        second_nonempty[found_fl] = new_second;
+        if new_second == 0 {
+            let old_first: u64 = first_nonempty[0];
+            let first_mask: u64 = 1 << found_fl;
+            first_nonempty[0] = old_first & !first_mask;
+        }
     }
     Some(block)
 }

@@ -206,6 +206,18 @@ the abstract allocator proof can consume it.
 The clear operation is no longer opaque: Lean proves array length preservation,
 preservation of every other bitmap word, preservation of every other bit in
 the selected word, and that the selected bit becomes false.
+The earlier flat 256-bin path was found insufficient for the abstract
+allocator's `64 × 32` class space. The concrete metadata has therefore been
+aligned to true two-level TLSF: 2048 heads, 64 packed `u32` second-level
+bitmaps, and one `u64` first-level bitmap. Luffs now implements same-level
+masked search, constant-time first-level jumping, second-level `ctz`, candidate
+removal, and both cache updates for this layout. Lean defines the matching
+flattened 2048-bit semantics, proves successful lowered lookup is in range and
+points to a set class bit, proves every result decodes to an in-range
+`SizeClass`, and relates the packed bitmap to `Bins.State.slSet`. Under
+`Bins.Valid`, every successful concrete lookup therefore selects an abstract
+class whose intrusive chain is nonempty. Full minimality/completeness under the
+first-level cache relation and the mutating candidate-state refinement remain.
 The current linear size/free-array fallback also has executable list semantics.
 Success is proved to return an in-bounds entry whose flag is nonzero and whose
 size satisfies the request; conversely, any such entry proves lookup cannot

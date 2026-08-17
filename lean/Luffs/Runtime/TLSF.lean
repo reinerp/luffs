@@ -4379,6 +4379,534 @@ structure CoalesceClassResult where
   previous : List Nat
 deriving DecidableEq, Repr
 
+/-- Insert one active value into a fixed-capacity array, shifting the active
+suffix right and leaving the array length unchanged. -/
+def expandActive {α : Type} [Inhabited α] (values : List α)
+    (count inserted : Nat) (value : α) : List α :=
+  values.take inserted ++ value ::
+    (values.drop inserted).take (count - inserted) ++ values.drop (count + 1)
+
+theorem expandActive_length {α : Type} [Inhabited α]
+    (values : List α) (count inserted : Nat) (value : α)
+    (hinserted : inserted ≤ count) (hcapacity : count < values.length) :
+    (expandActive values count inserted value).length = values.length := by
+  simp only [expandActive, List.length_append, List.length_cons,
+    List.length_take, List.length_drop]
+  omega
+
+theorem expandActive_of_represented_prefix {α : Type} [Inhabited α]
+    {values : List α} (pre : List α) (current value : α) (rest : List α)
+    {count : Nat} (hcount : count = (pre ++ current :: rest).length)
+    (hcapacity : count < values.length)
+    (hprefix : values.take count = pre ++ current :: rest) :
+    (expandActive values count (pre.length + 1) value).take (count + 1) =
+      pre ++ current :: value :: rest := by
+  have hdecompose : values =
+      (pre ++ current :: rest) ++ values.drop count := by
+    calc
+      values = values.take count ++ values.drop count :=
+        (List.take_append_drop count values).symm
+      _ = (pre ++ current :: rest) ++ values.drop count := by rw [hprefix]
+  have hspare : values.drop count ≠ [] := by
+    intro hnil
+    have := List.drop_eq_nil_iff.mp hnil
+    omega
+  obtain ⟨spare, spareRest, hspareEq⟩ := List.exists_cons_of_ne_nil hspare
+  subst count
+  rw [hdecompose, hspareEq]
+  have htake :
+      ((pre ++ current :: rest) ++ spare :: spareRest).take (pre.length + 1) =
+        pre ++ [current] := by
+    rw [show (pre ++ current :: rest) ++ spare :: spareRest =
+      pre ++ current :: (rest ++ spare :: spareRest) by simp]
+    rw [List.take_append]
+    have hpre : pre.take (pre.length + 1) = pre :=
+      List.take_of_length_le (by omega)
+    rw [hpre]
+    simp
+  have hdrop :
+      ((pre ++ current :: rest) ++ spare :: spareRest).drop (pre.length + 1) =
+        rest ++ spare :: spareRest := by
+    rw [show (pre ++ current :: rest) ++ spare :: spareRest =
+      pre ++ current :: (rest ++ spare :: spareRest) by simp]
+    simp [List.drop_append]
+  have hend :
+      ((pre ++ current :: rest) ++ spare :: spareRest).drop
+          ((pre ++ current :: rest).length + 1) = spareRest := by
+    rw [show (pre ++ current :: rest) ++ spare :: spareRest =
+      ((pre ++ current :: rest) ++ [spare]) ++ spareRest by simp]
+    rw [show (pre ++ current :: rest).length + 1 =
+      ((pre ++ current :: rest) ++ [spare]).length by simp; omega]
+    exact List.drop_append_length
+  rw [expandActive, htake, hdrop, hend]
+  have hremaining : (pre ++ current :: rest).length - (pre.length + 1) =
+      rest.length := by simp; omega
+  rw [hremaining]
+  have hrestTake : (rest ++ spare :: spareRest).take rest.length = rest := by
+    simp [List.take_append]
+  rw [hrestTake]
+  rw [show (pre ++ [current]) ++ value :: rest ++ spareRest =
+    (pre ++ current :: value :: rest) ++ spareRest by simp]
+  have hnewLength : (pre ++ current :: rest).length + 1 =
+      (pre ++ current :: value :: rest).length := by simp; omega
+  rw [hnewLength, List.take_append,
+    List.take_of_length_le (Nat.le_refl _)]
+  simp
+
+theorem set_represented_prefix_single {α : Type}
+    {values : List α} (pre : List α) (current updated : α) (rest : List α)
+    {count : Nat} (hcount : count = (pre ++ current :: rest).length)
+    (hprefix : values.take count = pre ++ current :: rest) :
+    (values.set pre.length updated).take count =
+      pre ++ updated :: rest := by
+  have hdecompose : values =
+      (pre ++ current :: rest) ++ values.drop count := by
+    calc
+      values = values.take count ++ values.drop count :=
+        (List.take_append_drop count values).symm
+      _ = (pre ++ current :: rest) ++ values.drop count := by rw [hprefix]
+  subst count
+  rw [hdecompose]
+  rw [List.set_append]
+  simp [List.take_append, List.take_of_length_le]
+
+theorem exists_append_of_getElem?
+    {α : Type} {values : List α} {i : Nat} {current : α}
+    (hget : values[i]? = some current) :
+    ∃ pre rest, values = pre ++ current :: rest ∧ pre.length = i := by
+  induction values generalizing i with
+  | nil => simp at hget
+  | cons head tail ih =>
+      cases i with
+      | zero =>
+          simp only [List.getElem?_cons_zero, Option.some.injEq] at hget
+          subst head
+          exact ⟨[], tail, by simp⟩
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at hget
+          obtain ⟨pre, rest, htail, hlen⟩ := ih hget
+          exact ⟨head :: pre, rest, by simp [htail], by simp [hlen]⟩
+
+theorem boundaryTagsFrom_get_successor {blocks : List Block} {i : Nat}
+    {previousFree : Bool}
+    {left right : Block} (htags : boundaryTagsFrom previousFree blocks)
+    (hleft : blocks[i]? = some left) (hright : blocks[i + 1]? = some right) :
+    right.prevFree = left.free := by
+  induction blocks generalizing i previousFree with
+  | nil => simp at hleft
+  | cons head tail ih =>
+      simp only [boundaryTagsFrom] at htags
+      cases i with
+      | zero =>
+          simp only [List.getElem?_cons_zero, Option.some.injEq] at hleft
+          subst head
+          cases tail with
+          | nil => simp at hright
+          | cons next rest =>
+              simp only [List.getElem?_cons_succ, List.getElem?_cons_zero,
+                Option.some.injEq] at hright
+              subst next
+              exact htags.2.1
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at hleft
+          have hright' : tail[j + 1]? = some right := by
+            simpa [Nat.succ_eq_add_one, Nat.add_assoc] using hright
+          exact ih htags.2 hleft hright'
+
+theorem boundaryTags_get_successor {blocks : List Block} {i : Nat}
+    {left right : Block} (htags : boundaryTags blocks)
+    (hleft : blocks[i]? = some left) (hright : blocks[i + 1]? = some right) :
+    right.prevFree = left.free :=
+  boundaryTagsFrom_get_successor htags hleft hright
+
+theorem splitAt_append (pre : List Block) (selected : Block)
+    (rest : List Block) (request : Nat) :
+    splitAt (pre ++ selected :: rest) pre.length request =
+      pre ++ (splitBlock selected request).1 ::
+        (splitBlock selected request).2 :: rest := by
+  induction pre with
+  | nil => rfl
+  | cons head tail ih => simp [splitAt, ih]
+
+theorem markAllocatedAt_append (pre : List Block) (selected : Block)
+    (rest : List Block) :
+    markAllocatedAt (pre ++ selected :: rest) pre.length =
+      pre ++ markAllocated selected ::
+        match rest with
+        | [] => []
+        | next :: tail => { next with prevFree := false } :: tail := by
+  induction pre with
+  | nil => cases rest <;> rfl
+  | cons head tail ih => simp [markAllocatedAt, ih]
+
+structure AllocatePhysicalResult where
+  offsets : List Nat
+  sizes : List Nat
+  isFree : List (Fin 256)
+  prevFree : List (Fin 256)
+  count : Nat
+  allocatedOffset : Nat
+  allocatedBytes : Nat
+  remainderOffset : Option Nat
+  remainderBytes : Option Nat
+deriving DecidableEq, Repr
+
+def allocateSplitPrevFree (prevFree : List (Fin 256))
+    (count block : Nat) : List (Fin 256) :=
+  let successor := block + 1
+  let prevFree := expandActive prevFree count successor 0
+  if successor + 1 < count + 1 then prevFree.set (successor + 1) 1
+  else prevFree
+
+def allocateWholePrevFree (prevFree : List (Fin 256))
+    (count block : Nat) : List (Fin 256) :=
+  if block + 1 < count then prevFree.set (block + 1) 0 else prevFree
+
+theorem allocateSplitPrevFree_length (prevFree : List (Fin 256))
+    (count block : Nat) (hblock : block < count)
+    (hcapacity : count < prevFree.length) :
+    (allocateSplitPrevFree prevFree count block).length = prevFree.length := by
+  unfold allocateSplitPrevFree
+  dsimp only
+  have hlength := expandActive_length prevFree count (block + 1) 0
+    (by omega) hcapacity
+  split <;> simp [hlength]
+
+theorem allocateWholePrevFree_length (prevFree : List (Fin 256))
+    (count block : Nat) :
+    (allocateWholePrevFree prevFree count block).length = prevFree.length := by
+  unfold allocateWholePrevFree
+  split <;> simp
+
+theorem allocateSplitPrevFree_prefix
+    {prevFree : List (Fin 256)} (pre : List (Fin 256))
+    (selected : Fin 256) (rest : List (Fin 256)) {count : Nat}
+    (hcount : count = (pre ++ selected :: rest).length)
+    (hcapacity : count < prevFree.length)
+    (hprefix : prevFree.take count = pre ++ selected :: rest)
+    (hrest : ∀ head tail, rest = head :: tail → head = 1) :
+    (allocateSplitPrevFree prevFree count pre.length).take (count + 1) =
+      pre ++ selected :: 0 :: rest := by
+  have hexpand := expandActive_of_represented_prefix pre selected (0 : Fin 256)
+    rest hcount hcapacity hprefix
+  cases rest with
+  | nil =>
+      simp [allocateSplitPrevFree, hcount] at hexpand ⊢
+      exact hexpand
+  | cons head tail =>
+      have hhead : head = 1 := hrest head tail rfl
+      subst head
+      have hset := set_represented_prefix_single
+        (pre ++ [selected, (0 : Fin 256)]) (1 : Fin 256) 1 tail
+        (count := count + 1) (by simp [hcount]; omega)
+        (by simpa using hexpand)
+      simpa [allocateSplitPrevFree, hcount] using hset
+
+theorem allocateWholePrevFree_prefix
+    {prevFree : List (Fin 256)} (pre : List (Fin 256))
+    (selected : Fin 256) (rest : List (Fin 256)) {count : Nat}
+    (hcount : count = (pre ++ selected :: rest).length)
+    (hprefix : prevFree.take count = pre ++ selected :: rest) :
+    (allocateWholePrevFree prevFree count pre.length).take count =
+      pre ++ selected :: match rest with
+        | [] => []
+        | _ :: tail => 0 :: tail := by
+  cases rest with
+  | nil => simpa [allocateWholePrevFree, hcount] using hprefix
+  | cons head tail =>
+      have hset := set_represented_prefix_single (pre ++ [selected]) head
+        (0 : Fin 256) tail (by simpa using hcount) (by simpa using hprefix)
+      simpa [allocateWholePrevFree, hcount] using hset
+
+/-- Exact physical-header mutation for an already selected free block. The
+caller has detached the block from its bin and preflighted remainder links. -/
+def allocatePhysicalArrays (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count block request : Nat) :
+    Option AllocatePhysicalResult := do
+  if count = 0 ∨ count > offsets.length ∨ count > sizes.length ∨
+      count > isFree.length ∨ count > prevFree.length ∨ block ≥ count then none
+  let selectedOffset ← offsets[block]?
+  let selectedSize ← sizes[block]?
+  if isFree[block]? = some 0 ∨ selectedSize < request ∨ request = 0 then none
+  let remainderSize := selectedSize - request
+  if remainderSize ≥ minimumBlockBytes then
+    if count ≥ offsets.length ∨ count ≥ sizes.length ∨
+        count ≥ isFree.length ∨ count ≥ prevFree.length then none
+    let successor := block + 1
+    let remainderOffset := selectedOffset + request
+    let offsets := expandActive offsets count successor remainderOffset
+    let sizes := expandActive (sizes.set block request) count successor remainderSize
+    let isFree := expandActive (isFree.set block 0) count successor 1
+    let prevFree := allocateSplitPrevFree prevFree count block
+    some ⟨offsets, sizes, isFree, prevFree, count + 1,
+      selectedOffset, request, some remainderOffset, some remainderSize⟩
+  else
+    let isFree := isFree.set block 0
+    let prevFree := allocateWholePrevFree prevFree count block
+    some ⟨offsets, sizes, isFree, prevFree, count,
+      selectedOffset, selectedSize, none, none⟩
+
+theorem allocatePhysicalArrays_result
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count block request : Nat} {result : AllocatePhysicalResult}
+    (hsuccess : allocatePhysicalArrays offsets sizes isFree prevFree count
+      block request = some result) :
+    count ≤ offsets.length ∧ count ≤ sizes.length ∧ count ≤ isFree.length ∧
+      count ≤ prevFree.length ∧ block < count ∧ 0 < request ∧
+      ∃ selectedOffset selectedSize,
+        offsets[block]? = some selectedOffset ∧
+        sizes[block]? = some selectedSize ∧ isFree[block]? ≠ some 0 ∧
+        request ≤ selectedSize ∧ result.allocatedOffset = selectedOffset ∧
+        ((minimumBlockBytes ≤ selectedSize - request ∧
+            count < offsets.length ∧ count < sizes.length ∧
+            count < isFree.length ∧ count < prevFree.length ∧
+            result.count = count + 1 ∧ result.allocatedBytes = request ∧
+            result.remainderOffset = some (selectedOffset + request) ∧
+            result.remainderBytes = some (selectedSize - request) ∧
+            result.offsets = expandActive offsets count (block + 1)
+              (selectedOffset + request) ∧
+            result.sizes = expandActive (sizes.set block request) count
+              (block + 1) (selectedSize - request) ∧
+            result.isFree = expandActive (isFree.set block 0) count
+              (block + 1) 1 ∧
+            result.prevFree = allocateSplitPrevFree prevFree count block) ∨
+          (selectedSize - request < minimumBlockBytes ∧ result.count = count ∧
+            result.allocatedBytes = selectedSize ∧
+            result.remainderOffset = none ∧ result.remainderBytes = none ∧
+            result.offsets = offsets ∧ result.sizes = sizes ∧
+            result.isFree = isFree.set block 0 ∧
+            result.prevFree = allocateWholePrevFree prevFree count block)) := by
+  let bad := count = 0 ∨ count > offsets.length ∨ count > sizes.length ∨
+    count > isFree.length ∨ count > prevFree.length ∨ block ≥ count
+  by_cases hbad : bad
+  · simp [allocatePhysicalArrays, bad, hbad] at hsuccess
+  have hb : count ≤ offsets.length ∧ count ≤ sizes.length ∧
+      count ≤ isFree.length ∧ count ≤ prevFree.length ∧ block < count := by
+    simp only [bad] at hbad
+    omega
+  cases hoffset : offsets[block]? with
+  | none => simp [allocatePhysicalArrays, bad, hbad, hoffset] at hsuccess
+  | some selectedOffset =>
+    cases hsize : sizes[block]? with
+    | none =>
+        simp [allocatePhysicalArrays, bad, hbad, hoffset, hsize] at hsuccess
+    | some selectedSize =>
+      have hsuitable : isFree[block]? ≠ some 0 ∧ request ≤ selectedSize ∧
+          0 < request := by
+        have haccept : ¬(isFree[block]? = some 0 ∨
+            selectedSize < request ∨ request = 0) := by
+          intro hreject
+          simp [allocatePhysicalArrays, bad, hbad, hoffset, hsize,
+            hreject] at hsuccess
+        refine ⟨?_, Nat.le_of_not_gt ?_, Nat.pos_of_ne_zero ?_⟩
+        · exact fun hzero => haccept (Or.inl hzero)
+        · exact fun hsmall => haccept (Or.inr (Or.inl hsmall))
+        · exact fun hzero => haccept (Or.inr (Or.inr hzero))
+      by_cases hsplit : minimumBlockBytes ≤ selectedSize - request
+      · have hcapacity : count < offsets.length ∧ count < sizes.length ∧
+            count < isFree.length ∧ count < prevFree.length := by
+          have haccept : ¬(count ≥ offsets.length ∨ count ≥ sizes.length ∨
+              count ≥ isFree.length ∨ count ≥ prevFree.length) := by
+            intro hreject
+            simp [allocatePhysicalArrays, bad, hbad, hoffset, hsize,
+              hsuitable, hsplit, hreject] at hsuccess
+          omega
+        simp [allocatePhysicalArrays, bad, hbad, hoffset, hsize, hsuitable,
+          hsplit, hcapacity, Option.pure_def, Option.bind_eq_bind] at hsuccess
+        rcases hsuccess with ⟨_, hresult⟩
+        subst result
+        exact ⟨hb.1, hb.2.1, hb.2.2.1, hb.2.2.2.1, hb.2.2.2.2,
+          hsuitable.2.2, selectedOffset, selectedSize, rfl, rfl,
+          hsuitable.1, hsuitable.2.1, rfl,
+          Or.inl ⟨hsplit, hcapacity.1, hcapacity.2.1, hcapacity.2.2.1,
+            hcapacity.2.2.2, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩
+      · have hwhole : selectedSize - request < minimumBlockBytes := by omega
+        simp [allocatePhysicalArrays, bad, hbad, hoffset, hsize, hsuitable,
+          hsplit, Option.pure_def, Option.bind_eq_bind] at hsuccess
+        rcases hsuccess with ⟨_, hresult⟩
+        subst result
+        exact ⟨hb.1, hb.2.1, hb.2.2.1, hb.2.2.2.1, hb.2.2.2.2,
+          hsuitable.2.2, selectedOffset, selectedSize, rfl, rfl,
+          hsuitable.1, hsuitable.2.1, rfl,
+          Or.inr ⟨hwhole, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩
+
+set_option maxHeartbeats 600000 in
+theorem allocatePhysicalArrays_refines
+    {blocks : List Block} {block request : Nat} {selected : Block}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count : Nat} {result : AllocatePhysicalResult}
+    (hrep : RepresentsPhysicalArrays offsets sizes isFree prevFree count blocks)
+    (hget : blocks[block]? = some selected)
+    (htags : boundaryTags blocks) (haligned : alignment ∣ request)
+    (hsuccess : allocatePhysicalArrays offsets sizes isFree prevFree count
+      block request = some result) :
+    ∃ allocated next,
+      allocateChosenAt blocks block request = some (allocated, next) ∧
+      RepresentsPhysicalArrays result.offsets result.sizes result.isFree
+        result.prevFree result.count next ∧
+      result.allocatedOffset = allocated.offset ∧
+      result.allocatedBytes = allocated.bytes := by
+  obtain ⟨_, _, _, _, _, hrequest, selectedOffset, selectedSize,
+      hoffset, hsize, hfreeFlag, hfits, hresultOffset,
+      hcase⟩ := allocatePhysicalArrays_result hsuccess
+  have hoffsetExpected := representsPhysicalArrays_get_offset hrep hget
+  rw [hoffset] at hoffsetExpected
+  simp only [Option.some.injEq] at hoffsetExpected
+  have hoffsetEq : selectedOffset = selected.offset := hoffsetExpected
+  have hsizeExpected := representsPhysicalArrays_get_size hrep hget
+  rw [hsize] at hsizeExpected
+  simp only [Option.some.injEq] at hsizeExpected
+  have hsizeEq : selectedSize = selected.bytes := hsizeExpected
+  rw [hoffsetEq] at hresultOffset hcase
+  rw [hsizeEq] at hfits hcase
+  have hfreeExpected := representsPhysicalArrays_get_free hrep hget
+  have hselectedFree : selected.free = true := by
+    cases hselected : selected.free with
+    | false =>
+        simp [hselected] at hfreeExpected
+        exact False.elim (hfreeFlag hfreeExpected)
+    | true => rfl
+  obtain ⟨pre, rest, hblocks, hpreLength⟩ := exists_append_of_getElem? hget
+  have hcount : count = (pre ++ selected :: rest).length := by
+    rw [hrep.1, hblocks]
+  have hoffsetsPrefix : offsets.take count =
+      blockOffsets pre ++ selected.offset :: blockOffsets rest := by
+    simpa [blockOffsets, hblocks] using hrep.2.2.2.2.2.1
+  have hsizesPrefix : sizes.take count =
+      blockSizes pre ++ selected.bytes :: blockSizes rest := by
+    simpa [blockSizes, hblocks] using hrep.2.2.2.2.2.2.1
+  have hfreePrefix : isFree.take count =
+      freeFlags pre ++ 1 :: freeFlags rest := by
+    simpa [freeFlags, hblocks, hselectedFree] using hrep.2.2.2.2.2.2.2.1
+  have hprevPrefix : prevFree.take count =
+      prevFreeFlags pre ++ (if selected.prevFree then 1 else 0) ::
+        prevFreeFlags rest := by
+    simpa [prevFreeFlags, hblocks] using hrep.2.2.2.2.2.2.2.2
+  rcases hcase with hsplit | hwhole
+  · rcases hsplit with ⟨hsplit, hcapOffsets, hcapSizes, hcapFree,
+      hcapPrev, hresultCount, hresultBytes, hresultRemainderOffset,
+      hresultRemainderBytes, hresultOffsets, hresultSizes,
+      hresultFree, hresultPrev⟩
+    have hcan : canSplit selected request := by
+      refine ⟨hrequest, ?_⟩
+      simp only [minimumBlockBytes, alignment] at hsplit ⊢
+      exact (Nat.le_sub_iff_add_le' hfits).mp hsplit
+    have habstract : allocateChosenAt blocks block request =
+        some ((splitBlock selected request).1, splitAt blocks block request) := by
+      simp [allocateChosenAt, hget, hselectedFree, hfits, haligned, hcan]
+    have hoffsetsNext := expandActive_of_represented_prefix
+      (blockOffsets pre) selected.offset (selected.offset + request)
+      (blockOffsets rest) (by simpa [blockOffsets] using hcount)
+      hcapOffsets hoffsetsPrefix
+    have hsizesSet := set_represented_prefix_single
+      (blockSizes pre) selected.bytes request (blockSizes rest)
+      (by simpa [blockSizes] using hcount) hsizesPrefix
+    have hsizesNext := expandActive_of_represented_prefix
+      (blockSizes pre) request (selected.bytes - request) (blockSizes rest)
+      (by simpa [blockSizes] using hcount) (by simpa using hcapSizes) hsizesSet
+    have hfreeSet := set_represented_prefix_single
+      (freeFlags pre) (1 : Fin 256) 0 (freeFlags rest)
+      (by simpa [freeFlags] using hcount) hfreePrefix
+    have hfreeNext := expandActive_of_represented_prefix
+      (freeFlags pre) (0 : Fin 256) 1 (freeFlags rest)
+      (by simpa [freeFlags] using hcount) (by simpa using hcapFree) hfreeSet
+    have hrestPrev : ∀ head tail,
+        prevFreeFlags rest = head :: tail → head = 1 := by
+      intro head tail hshape
+      cases rest with
+      | nil => simp [prevFreeFlags] at hshape
+      | cons next more =>
+          have hnextGet : blocks[block + 1]? = some next := by
+            rw [hblocks, ← hpreLength]
+            simp
+          have htag := boundaryTags_get_successor htags hget hnextGet
+          simp [prevFreeFlags, hselectedFree] at htag hshape
+          simpa [← hshape] using htag
+    have hprevNext := allocateSplitPrevFree_prefix
+      (prevFreeFlags pre) (if selected.prevFree then 1 else 0)
+      (prevFreeFlags rest) (by simpa [prevFreeFlags] using hcount)
+      hcapPrev hprevPrefix hrestPrev
+    have hphysical : RepresentsPhysicalArrays result.offsets result.sizes
+        result.isFree result.prevFree result.count
+        (splitAt blocks block request) := by
+      rw [hresultCount, hresultOffsets, hresultSizes, hresultFree,
+        hresultPrev, hblocks, ← hpreLength, splitAt_append]
+      refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · simp only [List.length_append, List.length_cons]
+        simp only [List.length_append, List.length_cons] at hcount
+        omega
+      · rw [expandActive_length offsets count (pre.length + 1)
+          (selected.offset + request) (by omega) hcapOffsets]
+        omega
+      · rw [expandActive_length (sizes.set pre.length request) count
+          (pre.length + 1)
+          (selected.bytes - request) (by omega) (by simpa using hcapSizes)]
+        simp
+        omega
+      · rw [expandActive_length (isFree.set pre.length 0) count
+          (pre.length + 1) 1
+          (by omega) (by simpa using hcapFree)]
+        simp
+        omega
+      · rw [allocateSplitPrevFree_length prevFree count pre.length
+          (by omega) hcapPrev]
+        omega
+      · simpa [blockOffsets, splitBlock, hpreLength] using hoffsetsNext
+      · simpa [blockSizes, splitBlock, hpreLength] using hsizesNext
+      · simpa [freeFlags, splitBlock, hpreLength] using hfreeNext
+      · simpa [prevFreeFlags, splitBlock, hpreLength] using hprevNext
+    exact ⟨(splitBlock selected request).1, splitAt blocks block request,
+      habstract, hphysical, by simpa [splitBlock] using hresultOffset,
+      by simpa [splitBlock] using hresultBytes⟩
+  · rcases hwhole with ⟨hwhole, hresultCount, hresultBytes,
+      hresultRemainderOffset, hresultRemainderBytes, hresultOffsets,
+      hresultSizes, hresultFree, hresultPrev⟩
+    have hcannot : ¬canSplit selected request := by
+      intro hcan
+      have hroom := hcan.2
+      simp only [minimumBlockBytes] at hroom hwhole
+      have : 16 ≤ selected.bytes - request :=
+        (Nat.le_sub_iff_add_le' hfits).2 hroom
+      omega
+    have habstract : allocateChosenAt blocks block request =
+        some (markAllocated selected, markAllocatedAt blocks block) := by
+      simp [allocateChosenAt, hget, hselectedFree, hfits, haligned, hcannot]
+    have hfreeNext := set_represented_prefix_single
+      (freeFlags pre) (1 : Fin 256) 0 (freeFlags rest)
+      (by simpa [freeFlags] using hcount) hfreePrefix
+    have hprevNext := allocateWholePrevFree_prefix
+      (prevFreeFlags pre) (if selected.prevFree then 1 else 0)
+      (prevFreeFlags rest) (by simpa [prevFreeFlags] using hcount) hprevPrefix
+    have hphysical : RepresentsPhysicalArrays result.offsets result.sizes
+        result.isFree result.prevFree result.count
+        (markAllocatedAt blocks block) := by
+      cases rest with
+      | nil =>
+          rw [hresultCount, hresultOffsets, hresultSizes, hresultFree,
+            hresultPrev, hblocks, ← hpreLength, markAllocatedAt_append]
+          refine ⟨by simpa using hcount, hrep.2.1, hrep.2.2.1,
+            by simpa using hrep.2.2.2.1, ?_, ?_, ?_, ?_, ?_⟩
+          · rw [allocateWholePrevFree_length]
+            exact hrep.2.2.2.2.1
+          · simpa [blockOffsets, markAllocated] using hoffsetsPrefix
+          · simpa [blockSizes, markAllocated] using hsizesPrefix
+          · simpa [freeFlags, markAllocated] using hfreeNext
+          · simpa [prevFreeFlags, markAllocated] using hprevNext
+      | cons next more =>
+          rw [hresultCount, hresultOffsets, hresultSizes, hresultFree,
+            hresultPrev, hblocks, ← hpreLength, markAllocatedAt_append]
+          refine ⟨by simpa using hcount, hrep.2.1, hrep.2.2.1,
+            by simpa using hrep.2.2.2.1, ?_, ?_, ?_, ?_, ?_⟩
+          · rw [allocateWholePrevFree_length]
+            exact hrep.2.2.2.2.1
+          · simpa [blockOffsets, markAllocated] using hoffsetsPrefix
+          · simpa [blockSizes, markAllocated] using hsizesPrefix
+          · simpa [freeFlags, markAllocated] using hfreeNext
+          · simpa [prevFreeFlags, markAllocated] using hprevNext
+    exact ⟨markAllocated selected, markAllocatedAt blocks block,
+      habstract, hphysical, by simpa [markAllocated] using hresultOffset,
+      by simpa [markAllocated] using hresultBytes⟩
+
 /-- Exact fixed-array effect of `tlsf_coalesce_physical`. The active right
 header is deleted by left-compacting the suffix; the final array slot is spare
 capacity and therefore need not be cleared. -/

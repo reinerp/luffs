@@ -333,6 +333,116 @@ fn tlsf_take_candidate_class(second_nonempty: &mut [u32; 64], first_nonempty: &m
     Some(block)
 }
 
+// Perform only the selected physical-header mutation. Bin removal and
+// remainder insertion are separate verified stages.
+// refines Luffs.Runtime.TLSF.allocatePhysicalArrays
+fn tlsf_allocate_physical(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], block_count: &mut [usize; 1], block: usize, request: usize) -> Option<usize> {
+    if request == 0 { return None; }
+    if request & 7 != 0 { return None; }
+    if block_count.len() == 0 { return None; }
+    let count: usize = block_count[0];
+    if count == 0 { return None; }
+    if count > offsets.len() { return None; }
+    if count > sizes.len() { return None; }
+    if count > is_free.len() { return None; }
+    if count > prev_free.len() { return None; }
+
+    if block >= count { return None; }
+    if is_free[block] == 0 { return None; }
+    let selected_offset: usize = offsets[block];
+    let selected_size: usize = sizes[block];
+    if selected_size < request { return None; }
+    let remainder_size: usize = selected_size - request;
+    let split: bool = remainder_size >= 16;
+    let mut remainder_offset: usize = 0;
+    if split {
+        if count >= offsets.len() { return None; }
+        if count >= sizes.len() { return None; }
+        if count >= is_free.len() { return None; }
+        if count >= prev_free.len() { return None; }
+        remainder_offset = selected_offset.checked_add(request)?;
+        let successor: usize = block.checked_add(1)?;
+        let mut cursor: usize = count;
+        while cursor > successor {
+            if cursor > count { return None; }
+            let prior: usize = cursor - 1;
+            offsets[cursor] = offsets[prior];
+            sizes[cursor] = sizes[prior];
+            is_free[cursor] = is_free[prior];
+            prev_free[cursor] = prev_free[prior];
+            cursor = prior;
+        }
+        sizes[block] = request;
+        is_free[block] = 0;
+        offsets[block + 1] = remainder_offset;
+        sizes[block + 1] = remainder_size;
+        is_free[block + 1] = 1;
+        prev_free[block + 1] = 0;
+        let after_remainder: usize = successor.checked_add(1)?;
+        if after_remainder < count + 1 {
+            prev_free[after_remainder] = 1;
+        }
+        block_count[0] = count + 1;
+    } else {
+        is_free[block] = 0;
+        let successor: usize = block.checked_add(1)?;
+        if successor < count {
+            prev_free[successor] = 0;
+        }
+    }
+    Some(selected_offset)
+}
+
+// Allocate one aligned region. All checks precede the first write, so failure
+// is transactional. The returned value is the byte offset within the mmap
+// pool; `block_count[0]` carries the active physical-header count.
+fn tlsf_allocate(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], request: usize) -> Option<usize> {
+    if request == 0 { return None; }
+    if request & 7 != 0 { return None; }
+    let start_bin: usize = tlsf_classify_request(request)?;
+    let start_fl: usize = start_bin >> 5;
+    let start_sl: usize = start_bin & 31;
+    let found_bin: usize = tlsf_find_nonempty_class(second_nonempty, first_nonempty, start_fl, start_sl)?;
+    if found_bin >= heads.len() { return None; }
+    let selected_offset: usize = heads[found_bin];
+    if selected_offset >= next.len() { return None; }
+    if selected_offset >= previous.len() { return None; }
+    if block_count.len() == 0 { return None; }
+    let count: usize = block_count[0];
+    if count == 0 { return None; }
+    if count > offsets.len() { return None; }
+    if count > sizes.len() { return None; }
+    if count > is_free.len() { return None; }
+    if count > prev_free.len() { return None; }
+    let mut block: usize = 0;
+    while block < count {
+        if offsets[block] == selected_offset { break; }
+        if block == usize::MAX { return None; }
+        block = block + 1;
+    }
+    if block >= count { return None; }
+    if is_free[block] == 0 { return None; }
+    let selected_size: usize = sizes[block];
+    if selected_size < request { return None; }
+    let remainder_size: usize = selected_size - request;
+    let split: bool = remainder_size >= 16;
+    let mut remainder_offset: usize = 0;
+    let mut remainder_bin: usize = 0;
+    if split {
+        remainder_offset = selected_offset.checked_add(request)?;
+        if remainder_offset >= next.len() { return None; }
+        if remainder_offset >= previous.len() { return None; }
+        remainder_bin = tlsf_classify_size(remainder_size)?;
+        if remainder_bin >= heads.len() { return None; }
+    }
+    tlsf_remove_class(second_nonempty, first_nonempty, heads, next, previous, found_bin, selected_offset)?;
+    let allocated_offset: usize = tlsf_allocate_physical(offsets, sizes, is_free, prev_free, block_count, block, request)?;
+    if split {
+        tlsf_insert_class(second_nonempty, first_nonempty, heads, next, previous, remainder_bin, remainder_offset)?;
+    }
+    Some(allocated_offset)
+}
+
 // Restore the allocation-state bit and the following block's boundary tag.
 // All possible failure occurs before either write.
 // refines Luffs.Runtime.TLSF.markFreeArrays

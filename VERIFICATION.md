@@ -144,6 +144,15 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   exactly the selected region to the client while retaining all other free
   capabilities; this ownership law is composed through bin removal, physical
   mutation, remainder reinsertion, and the public allocation operation.
+  The Luffs lowering now includes a fixed-capacity physical allocation
+  primitive. Its reverse shift consumes one spare metadata slot, and Lean
+  proves that successful execution is exactly abstract `allocateChosenAt` in
+  both the split and near/exact-fit branches, including successor boundary
+  tags. This proof caught and rejected an 8-byte split threshold; the concrete
+  code now enforces TLSF's proved 16-byte minimum remainder. The compiler's
+  source-shape gate ties the checked Luffs primitive to that exact array model.
+  Composing the public Luffs bin lookup/removal and remainder reinsertion with
+  this physical theorem remains.
 - [ ] Prove `dealloc`: consuming exactly a live allocation restores it to the
   allocator without leaks, overlap, or double-free.
   The executable deallocation transition now requires the exact returned

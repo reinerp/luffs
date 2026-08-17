@@ -383,6 +383,11 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   non-adjacency branches are proved successful identity or ruled out; every
   eligible pair enters the total commit. Thus conditional coalescing on any
   completely represented valid allocator is proved incapable of failure.
+  Stateful marking success now constructs the exact abstract uncoalesced
+  successor and proves that allocator state valid, while carrying every
+  concrete representation relation. The valid-state totality theorem therefore
+  discharges the public transaction's right-coalescing premise directly: that
+  first post-marking call cannot fail.
 - [x] Prove the bounded-step property of bin lookup and local list updates.
   The exact lowered flat-bitmap cost model counts inspected 64-bit words and
   is bounded by the input word count, hence at most four probes for the fixed

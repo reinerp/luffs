@@ -507,6 +507,11 @@ concurrency are later extensions and are not prerequisites for `Box` and
   range; successful loads expose the exact decoded byte slice, and an exact
   codec encoding decodes to the original value. The existing `u8` store model
   is proved equal to the generic `Scalar.u8` store specialization.
+  The compositional source translator now assigns Lean `BitVec` models to all
+  signed and unsigned scalar widths and lowers arbitrary 8/16/32/64/128-bit
+  `from_le_bytes` expressions plus byte-extraction stores. `usize`/`isize` are
+  currently fixed to the existing 64-bit target model; generating complete
+  allocator-backed operations for each codec remains.
 - [ ] `Vec<T>`: invariant `len <= capacity`, initialized prefix ownership,
   spare-capacity ownership, checked layout arithmetic, growth without loss or
   double-drop, `push`, `pop`, indexing, shared/mutable slices, and drop.

@@ -579,6 +579,29 @@ fn scalar_byte_expr(expr: &str) -> Option<String> {
     None
 }
 
+fn lean_scalar_type(ty: &str) -> Option<String> {
+    match ty.trim() {
+        "u8" => Some("Fin 256".to_owned()),
+        "i8" => Some("BitVec 8".to_owned()),
+        "u16" | "i16" => Some("BitVec 16".to_owned()),
+        "u32" | "i32" => Some("BitVec 32".to_owned()),
+        "u64" | "i64" | "usize" | "isize" => Some("BitVec 64".to_owned()),
+        "u128" | "i128" => Some("BitVec 128".to_owned()),
+        _ => None,
+    }
+}
+
+fn scalar_width(ty: &str) -> Option<usize> {
+    match ty.trim() {
+        "u8" | "i8" => Some(8),
+        "u16" | "i16" => Some(16),
+        "u32" | "i32" => Some(32),
+        "u64" | "i64" | "usize" | "isize" => Some(64),
+        "u128" | "i128" => Some(128),
+        _ => None,
+    }
+}
+
 fn parse_array_models(source: &str) -> Vec<ArrayModel> {
     #[derive(Default)]
     struct Pending {
@@ -640,9 +663,10 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
                         params.push((name, "List (Fin 256)".to_owned()));
                     }
                     "usize" => params.push((name, "Nat".to_owned())),
-                    "u8" => params.push((name, "Fin 256".to_owned())),
-                    "u16" => params.push((name, "BitVec 16".to_owned())),
-                    _ => eligible = false,
+                    ty => match lean_scalar_type(ty) {
+                        Some(ty) => params.push((name, ty)),
+                        None => eligible = false,
+                    },
                 }
             }
             let Some(array) = array else {
@@ -722,22 +746,31 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
 }
 
 fn read_result_expr(expr: &str, array: &str) -> String {
-    if let Some(bytes) = expr
-        .trim()
-        .strip_prefix("u16::from_le_bytes([")
-        .and_then(|rest| rest.strip_suffix("])"))
-        && let Some((low, high)) = bytes.split_once(',')
+    let trimmed = expr.trim();
+    if let Some((ty, bytes)) = trimmed.split_once("::from_le_bytes([")
+        && let Some(bytes) = bytes.strip_suffix("])")
+        && let Some(width) = scalar_width(ty)
     {
-        let low = model_expr(low.trim(), array);
-        let high = model_expr(high.trim(), array);
-        if low.starts_with(&format!("{array}["))
-            && low.ends_with(']')
-            && high.starts_with(&format!("{array}["))
-            && high.ends_with(']')
+        let byte_exprs = bytes
+            .split(',')
+            .map(|byte| model_expr(byte.trim(), array))
+            .collect::<Vec<_>>();
+        if byte_exprs.len() == width / 8
+            && byte_exprs
+                .iter()
+                .all(|byte| byte.starts_with(&format!("{array}[")) && byte.ends_with(']'))
         {
-            return format!(
-                "do\n    let low ← {low}?\n    let high ← {high}?\n    Luffs.Memory.Scalar.decode16 [low, high]"
-            );
+            let bindings = byte_exprs
+                .iter()
+                .enumerate()
+                .map(|(index, byte)| format!("    let b{index} ← {byte}?"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let names = (0..byte_exprs.len())
+                .map(|index| format!("b{index}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return format!("do\n{bindings}\n    Luffs.Memory.Scalar.decode{width} [{names}]");
         }
     }
     let expression = model_expr(expr, array);
@@ -790,16 +823,21 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
             };
             let return_text = &trimmed[close + 1..];
             let result_type = if return_text.contains("-> Option<u8>") {
-                "Fin 256"
-            } else if return_text.contains("-> Option<u16>") {
-                "BitVec 16"
+                "Fin 256".to_owned()
             } else if return_text.contains("-> Option<&[u8]>")
                 || return_text.contains("-> Option<&mut [u8]>")
             {
-                "List (Fin 256)"
+                "List (Fin 256)".to_owned()
             } else {
-                next_refinement = None;
-                continue;
+                let scalar = return_text
+                    .trim()
+                    .strip_prefix("-> Option<")
+                    .and_then(|rest| rest.strip_suffix("> {"));
+                let Some(result_type) = scalar.and_then(lean_scalar_type) else {
+                    next_refinement = None;
+                    continue;
+                };
+                result_type
             };
             let mut array = None;
             let mut params = Vec::new();
@@ -831,7 +869,7 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
                 array,
                 params,
                 refines: next_refinement.take(),
-                result_type: result_type.to_owned(),
+                result_type,
                 depth: 1,
                 eligible,
                 ..Pending::default()
@@ -3933,9 +3971,22 @@ mod tests {
         .unwrap();
         let generated = lean(&m);
         assert!(generated.contains(": Option (BitVec 16)"));
-        assert!(generated.contains("let low ← storage[begin]?"));
-        assert!(generated.contains("let high ← storage[begin + 1]?"));
-        assert!(generated.contains("Luffs.Memory.Scalar.decode16 [low, high]"));
+        assert!(generated.contains("let b0 ← storage[begin]?"));
+        assert!(generated.contains("let b1 ← storage[begin + 1]?"));
+        assert!(generated.contains("Luffs.Memory.Scalar.decode16 [b0, b1]"));
+    }
+
+    #[test]
+    fn lowers_all_width_little_endian_scalars() {
+        let m = parse(
+            "fn load_u32(storage: &[u8], begin: usize) -> Option<u32> {\nSome(u32::from_le_bytes([storage[begin], storage[begin + 1], storage[begin + 2], storage[begin + 3]]))\n}\nfn store_i64(storage: &mut [u8], begin: usize, value: i64) -> Option<()> {\nstorage[begin] = (value & 255) as u8;\nstorage[begin + 7] = (value >> 56) as u8;\nSome(())\n}",
+        )
+        .unwrap();
+        let generated = lean(&m);
+        assert!(generated.contains(": Option (BitVec 32)"));
+        assert!(generated.contains("Luffs.Memory.Scalar.decode32 [b0, b1, b2, b3]"));
+        assert!(generated.contains("(value : BitVec 64)"));
+        assert!(generated.contains("Luffs.Memory.Scalar.byteAt value 56"));
     }
 
     #[test]

@@ -2454,6 +2454,15 @@ fn parse_tlsf_vec_grow_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
                 "let rounded: usize = allocation_bytes.checked_add(7)?;",
             ],
         ),
+        (
+            "tlsf_vec_grow_u32",
+            "initialized_bytes",
+            vec![
+                "let initialized_bytes: usize = len.checked_mul(4)?;",
+                "let allocation_bytes: usize = new_capacity.checked_mul(4)?;",
+                "let rounded: usize = allocation_bytes.checked_add(7)?;",
+            ],
+        ),
     ];
     let mut models = Vec::new();
     for (name, copied_len, arithmetic) in variants {
@@ -3859,10 +3868,10 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
             "theorem {}_refines : {}_model = {} := by rfl\n\n",
             model.name, model.name, model.refines
         ));
-        let copied_len = if model.name == "tlsf_vec_grow_u16" {
-            "len * 2"
-        } else {
-            "len"
+        let copied_len = match model.name.as_str() {
+            "tlsf_vec_grow_u16" => "len * 2",
+            "tlsf_vec_grow_u32" => "len * 4",
+            _ => "len",
         };
         out.push_str(&format!(
             "def {}_copy_program (oldBase newBase len : Nat) : Luffs.Memory.Program :=\n  Luffs.Memory.Program.copyLoop oldBase newBase ({copied_len})\n\n",
@@ -4293,6 +4302,14 @@ mod tests {
         ));
         assert!(generated.contains("theorem tlsf_vec_grow_u16_copy_program_wp"));
         assert!(generated.contains("theorem tlsf_vec_grow_u16_copy_program_wp_exact"));
+        assert!(generated.contains(
+            "theorem tlsf_vec_grow_u32_refines : tlsf_vec_grow_u32_model = Luffs.Runtime.Containers.vecGrowU32Arrays"
+        ));
+        assert!(generated.contains(
+            "Luffs.Memory.Program.forRange 0 (len * 4)\n        (Luffs.Memory.Program.copyLoopBody oldBase newBase)"
+        ));
+        assert!(generated.contains("theorem tlsf_vec_grow_u32_copy_program_wp"));
+        assert!(generated.contains("theorem tlsf_vec_grow_u32_copy_program_wp_exact"));
         assert!(generated.contains("exact hsteps.copyLoop_wp_exact"));
         assert!(generated.contains("hsrc : ∀ i, i < len * 2 → mem.mapped (oldBase + i)"));
         assert!(generated.contains(
@@ -4561,6 +4578,20 @@ mod tests {
             !m.tlsf_vec_grow_models
                 .iter()
                 .any(|model| model.name == "tlsf_vec_grow_u16")
+        );
+    }
+
+    #[test]
+    fn tlsf_vec_grow_u32_refinement_rejects_wrong_byte_multiply() {
+        let source = include_str!("../stdlib/tlsf.luffs").replace(
+            "let initialized_bytes: usize = len.checked_mul(4)?;",
+            "let initialized_bytes: usize = len.checked_mul(2)?;",
+        );
+        let m = parse(&source).unwrap();
+        assert!(
+            !m.tlsf_vec_grow_models
+                .iter()
+                .any(|model| model.name == "tlsf_vec_grow_u32")
         );
     }
 

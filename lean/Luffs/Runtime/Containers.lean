@@ -2293,6 +2293,9 @@ theorem vecGrowArrays_owns {α : Type} {codec : Codec α}
 /-- The first non-byte source specialization of codec-generic Vec growth. -/
 def vecGrowU16Arrays := vecGrowArrays Scalar.u16
 
+/-- Four-byte source specialization of codec-generic Vec growth. -/
+def vecGrowU32Arrays := vecGrowArrays Scalar.u32
+
 /-- Exact state transformer for `tlsf_vec_grow_u8`: validate the old live
 prefix, allocate a replacement, copy from the old prefix snapshot, and only
 then return the old block to TLSF. -/

@@ -4109,6 +4109,13 @@ theorem vecPushU64_owns {GF : Iris.BundledGFunctors}
     vecPushU64_refines_generic hcapacityMax hpush
   exact vecPush_owns Scalar.u64 hlen hgeneric
 
+/-- The signed two's-complement codecs are definitionally the corresponding
+unsigned codecs, so these are direct Iris ownership corollaries with no cast or
+trusted representation bridge. -/
+def vecPushI16_owns := @vecPushU16_owns
+def vecPushI32_owns := @vecPushU32_owns
+def vecPushI64_owns := @vecPushU64_owns
+
 set_option maxHeartbeats 1200000 in
 /-- End-to-end first push for an allocator-backed `Vec<u16>`. This composes the
 concrete TLSF allocation, the empty typed Vec capability, the concrete
@@ -4688,6 +4695,12 @@ theorem vecGetI128_owns {GF : Iris.BundledGFunctors}
       hstorageMax]
     exact hsuccess
   exact vecGet_owns Scalar.i128 hlen hgeneric hvalues hencoded hrep
+
+/-- Direct signed-codec corollaries of the exact two-, four-, and eight-read
+Iris rules. -/
+def vecGetI16_owns := @vecGetU16_owns
+def vecGetI32_owns := @vecGetU32_owns
+def vecGetI64_owns := @vecGetU64_owns
 
 def vecSliceU8 (storage : List Byte) (len begin end_ : Nat) :
     Option (List Byte) :=

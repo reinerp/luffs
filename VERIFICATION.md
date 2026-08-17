@@ -944,7 +944,14 @@ alias semantics. This removes the one-store restriction that blocked
   source type while refining the proved two's-complement `Scalar.i128` codec;
   the Iris push theorem appends exactly that logical bit pattern and the get
   theorem returns only the owned pattern while preserving exclusive ownership
-  and exposing all sixteen ordered memory accesses.
+  and exposing all sixteen ordered memory accesses. The remaining multi-byte
+  signed widths now have concrete `vec_push_i16/i32/i64` and
+  `vec_get_i16/i32/i64` bodies as well. Each source model is checked equal to
+  the corresponding exact bit-pattern runtime transition and emits the exact
+  two-, four-, or eight-access program. Because `Scalar.i16/i32/i64` are
+  definitionally their proved two's-complement codecs, direct Iris corollaries
+  inherit the exclusive append/read laws without a cast or representation
+  axiom.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.
   All four checked-in examples are currently accepted by Lean and compile to

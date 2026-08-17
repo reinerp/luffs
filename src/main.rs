@@ -4619,6 +4619,18 @@ mod tests {
         ));
         assert!(generated.contains("theorem vec_push_i128_program_wp"));
         assert!(generated.contains(
+            "theorem vec_push_i16_refines : vec_push_i16_model = Luffs.Runtime.Containers.vecPushU16"
+        ));
+        assert!(generated.contains("theorem vec_push_i16_program_wp"));
+        assert!(generated.contains(
+            "theorem vec_push_i32_refines : vec_push_i32_model = Luffs.Runtime.Containers.vecPushU32"
+        ));
+        assert!(generated.contains("theorem vec_push_i32_program_wp"));
+        assert!(generated.contains(
+            "theorem vec_push_i64_refines : vec_push_i64_model = Luffs.Runtime.Containers.vecPushU64"
+        ));
+        assert!(generated.contains("theorem vec_push_i64_program_wp"));
+        assert!(generated.contains(
             "theorem vec_get_u32_refines : vec_get_u32_model = Luffs.Runtime.Containers.vecGetU32"
         ));
         assert!(generated.contains("theorem vec_get_u32_program_wp"));
@@ -4634,6 +4646,18 @@ mod tests {
             "theorem vec_get_i128_refines : vec_get_i128_model = Luffs.Runtime.Containers.vecGetI128"
         ));
         assert!(generated.contains("theorem vec_get_i128_program_wp"));
+        assert!(generated.contains(
+            "theorem vec_get_i16_refines : vec_get_i16_model = Luffs.Runtime.Containers.vecGetU16"
+        ));
+        assert!(generated.contains("theorem vec_get_i16_program_wp"));
+        assert!(generated.contains(
+            "theorem vec_get_i32_refines : vec_get_i32_model = Luffs.Runtime.Containers.vecGetU32"
+        ));
+        assert!(generated.contains("theorem vec_get_i32_program_wp"));
+        assert!(generated.contains(
+            "theorem vec_get_i64_refines : vec_get_i64_model = Luffs.Runtime.Containers.vecGetU64"
+        ));
+        assert!(generated.contains("theorem vec_get_i64_program_wp"));
         assert!(generated.contains(
             "theorem box_load_u8_refines : box_load_u8_model = Luffs.Runtime.Containers.boxLoadU8"
         ));

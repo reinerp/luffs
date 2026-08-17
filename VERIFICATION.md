@@ -192,7 +192,12 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   proved to require both a sentinel predecessor and successor: a proof-driven
   audit caught and fixed the incorrect tail-only test, which would have hidden
   a still-live prefix from bitmap search. Its compiler-generated
-  model is definitionally tied to the checked Lean transformer. The fixed
+  model is definitionally tied to the checked Lean transformer. Lean now also
+  connects arbitrary abstract `removeOffset` to this exact singleton test:
+  the rebuilt abstract chain has precisely the old offsets with the selected
+  offset erased, and the concrete transition preserves both bitmap levels for
+  the resulting abstract bin state. The remaining bin obligation is the
+  intrusive-link splice and its cross-bin frame. The fixed
   physical-header arrays now have an explicit active-prefix
   representation and the concrete free entry point rejects selectors outside
   `block_count`; inactive capacity can no longer masquerade as a live header.

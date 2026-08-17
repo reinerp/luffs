@@ -2306,6 +2306,87 @@ theorem linked_decomposition_is_singleton_iff
   rw [linked_decomposition_predecessor_is_sentinel_iff pre rest hlinked,
     linked_decomposition_successor_is_sentinel_iff pre rest hlinked]
 
+theorem erase_decomposition_of_nodup {pre rest : List Nat} {block : Nat}
+    (hnodup : (pre ++ block :: rest).Nodup) :
+    (pre ++ block :: rest).erase block = pre ++ rest := by
+  induction pre with
+  | nil => simp
+  | cons head tail ih =>
+      change (head :: (tail ++ block :: rest)).Nodup at hnodup
+      have hparts := List.nodup_cons.mp hnodup
+      have hheadBlock : head ≠ block := by
+        exact fun heq => hparts.1 (by simp [heq])
+      have htail : (tail ++ block :: rest).Nodup := hparts.2
+      simp [hheadBlock, ih htail]
+
+theorem removeOffset_replacement_empty_iff_decomposition
+    {blocks replacement : List Block} {removed : Block}
+    {pre rest : List Nat} {block : Nat}
+    (hvalid : FreeList.Valid blocks)
+    (hchain : blocks.map Block.offset = pre ++ block :: rest)
+    (hremove : FreeList.removeOffset blocks block =
+      some (removed, replacement)) :
+    replacement = [] ↔ pre = [] ∧ rest = [] := by
+  have hoffsets := FreeList.removeOffset_offsets hremove
+  have hnodup : (pre ++ block :: rest).Nodup := by
+    rw [← hchain]
+    exact hvalid.2
+  rw [hchain, erase_decomposition_of_nodup hnodup] at hoffsets
+  constructor
+  · intro hempty
+    rw [hempty] at hoffsets
+    simp only [List.map_nil] at hoffsets
+    exact List.append_eq_nil_iff.mp hoffsets.symm
+  · rintro ⟨rfl, rfl⟩
+    simp only [List.append_nil] at hoffsets
+    exact List.map_eq_nil_iff.mp hoffsets
+
+set_option maxHeartbeats 400000 in
+/-- Removing an arbitrary represented node preserves both bitmap levels,
+provided the abstract replacement chain is empty exactly when that node was
+the bin's sole member.  Intrusive-link refinement supplies this equivalence
+when it identifies the replacement with the old chain with `block` erased. -/
+theorem removeClassArrays_preserves_bitmaps_of_decomposition
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {bin block : Nat}
+    {result : RemoveClassResult} {state : Bins.State} {cls : SizeClass}
+    {pre rest : List Nat} {replacement : List Block}
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second) (hvalid : Bins.Valid state)
+    (hbin : bin = encodeSizeClass cls)
+    (hlinked : linked { heads, next, previous } next.length
+      (pre ++ block :: rest))
+    (hold : state.chains cls ≠ [])
+    (hempty : replacement = [] ↔ pre = [] ∧ rest = [])
+    (hremove : removeClassArrays second first heads next previous bin block =
+      some result) :
+    RepresentsSecondBitmap result.second
+        (state.replaceChain cls replacement) ∧
+      FirstBitmapRep result.first result.second := by
+  have heffect := (removeClassArrays_result hremove).2.2.2.2.2
+  have hsingleton := linked_decomposition_is_singleton_iff pre rest hlinked
+  have hfl : bin / 32 < second.length :=
+    (removeClassArrays_result hremove).2.1
+  have hfirstClear := clearClassBit_preserves_firstBitmapRep bin hfirst hfl
+  by_cases hsole : pre = [] ∧ rest = []
+  · have hsentinel := hsingleton.2 hsole
+    rw [if_pos hsentinel] at heffect
+    have hreplacement : replacement = [] := hempty.2 hsole
+    constructor
+    · rw [heffect.1, hreplacement, hbin]
+      exact clearClassBit_represents_replace_empty hsecond hvalid cls
+    · rw [heffect.2, heffect.1]
+      exact hfirstClear
+  · have hnotsentinel : ¬(previous[block]?.getD next.length ≥ next.length ∧
+        next[block]?.getD next.length ≥ next.length) := by
+      exact fun hsentinel => hsole (hsingleton.1 hsentinel)
+    rw [if_neg hnotsentinel] at heffect
+    have hreplacement : replacement ≠ [] := by
+      exact fun h => hsole (hempty.1 h)
+    rw [heffect.1, heffect.2]
+    exact ⟨representsSecondBitmap_replace_nonempty hsecond hvalid cls
+      hreplacement hold, hfirst⟩
+
 /-- A logical bin chain is represented by the head table and intrusive links. -/
 def RepresentsBin (state : Metadata) (bin : Nat) (chain : List Nat) : Prop :=
   bin < state.heads.length ∧
@@ -2319,6 +2400,39 @@ def RepresentsBins (metadata : Metadata) (state : Bins.State) : Prop :=
     RepresentsBin metadata
       (cls.fl.val * secondLevelCount + cls.sl.val)
       ((state.chains cls).map Block.offset)
+
+/-- End-to-end bitmap refinement for arbitrary class removal.  The abstract
+free-list operation itself supplies the singleton/non-singleton fact consumed
+by the lowered predecessor/successor test. -/
+theorem removeClassArrays_preserves_bitmaps
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {bin block : Nat}
+    {result : RemoveClassResult} {state nextState : Bins.State}
+    {cls : SizeClass} {removed : Block}
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second) (hvalid : Bins.Valid state)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hbin : bin = encodeSizeClass cls)
+    (habstract : state.removeOffset cls block = some (removed, nextState))
+    (hremove : removeClassArrays second first heads next previous bin block =
+      some result) :
+    RepresentsSecondBitmap result.second nextState ∧
+      FirstBitmapRep result.first result.second := by
+  obtain ⟨replacement, hremoveOffset, rfl⟩ :=
+    Bins.removeOffset_success habstract
+  have horigin := FreeList.removeOffset_removed_origin (hvalid.1 cls) hremoveOffset
+  obtain ⟨old, holdMem, holdOffset, _⟩ := horigin
+  have hmember : block ∈ (state.chains cls).map Block.offset := by
+    rw [← holdOffset]
+    exact List.mem_map_of_mem holdMem
+  obtain ⟨pre, rest, hshape⟩ := List.mem_iff_append.mp hmember
+  have hrep := hbins cls
+  have hlinked := hrep.2.2.2.1
+  rw [hshape] at hlinked
+  exact removeClassArrays_preserves_bitmaps_of_decomposition hsecond hfirst
+    hvalid hbin hlinked (by exact fun hempty => by simp [hempty] at hmember)
+    (removeOffset_replacement_empty_iff_decomposition (hvalid.1 cls)
+      hshape hremoveOffset) hremove
 
 def BinsOffsetsDisjoint (state : Bins.State) : Prop :=
   ∀ {left right : SizeClass}, left ≠ right → ∀ offset,

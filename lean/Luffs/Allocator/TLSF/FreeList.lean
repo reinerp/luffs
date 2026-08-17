@@ -253,6 +253,23 @@ theorem eraseOffset_offsets {blocks : List Block} {offset : Nat}
           hmem.resolve_left (Ne.symm heq)
         simp [eraseOffset, heq, ih htail]
 
+/-- The executable arbitrary removal has exactly the list-level effect used by
+the runtime refinement: erase one occurrence of the selected offset. -/
+theorem removeOffset_offsets {blocks rest : List Block} {offset : Nat}
+    {removed : Block} (hremove : removeOffset blocks offset = some (removed, rest)) :
+    rest.map Block.offset = (blocks.map Block.offset).erase offset := by
+  unfold removeOffset at hremove
+  cases hfind : findOffset? blocks offset with
+  | none => simp [hfind] at hremove
+  | some found =>
+      simp [hfind] at hremove
+      rcases hremove with ⟨rfl, rfl⟩
+      have hfound := findOffset?_some_mem hfind
+      have hoffsetMem : offset ∈ blocks.map Block.offset := by
+        rw [← hfound.2]
+        exact List.mem_map_of_mem hfound.1
+      rw [relink, relinkFrom_offsets, eraseOffset_offsets hoffsetMem]
+
 theorem removeOffset_valid {blocks rest : List Block} {offset : Nat}
     {removed : Block} (hvalid : Valid blocks)
     (hremove : removeOffset blocks offset = some (removed, rest)) :

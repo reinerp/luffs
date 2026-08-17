@@ -2579,11 +2579,16 @@ theorem remove_second_represents {state : Metadata} {bin head block : Nat}
 
 /-- Exact parallel-array effect of the Luffs deallocation marking stage.
 All validation precedes both writes, matching the generated Rust operation. -/
-def markFreeArrays (isFree prevFree : List (Fin 256)) (block : Nat) :
+def markFreeArrays (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (block returnedOffset returnedBytes : Nat) :
     Option (List (Fin 256) × List (Fin 256)) :=
-  if block ≥ isFree.length then none
+  if block ≥ offsets.length then none
+  else if block ≥ sizes.length then none
+  else if block ≥ isFree.length then none
   else if block ≥ prevFree.length then none
   else if isFree[block]? != some 0 then none
+  else if offsets[block]? != some returnedOffset then none
+  else if sizes[block]? != some returnedBytes then none
   else
     let nextIsFree := isFree.set block 1
     let successor := block + 1
@@ -2592,24 +2597,32 @@ def markFreeArrays (isFree prevFree : List (Fin 256)) (block : Nat) :
     some (nextIsFree, nextPrevFree)
 
 theorem markFreeArrays_result {isFree prevFree nextIsFree nextPrevFree : List (Fin 256)}
-    {block : Nat}
-    (hmark : markFreeArrays isFree prevFree block =
+    {offsets sizes : List Nat} {block returnedOffset returnedBytes : Nat}
+    (hmark : markFreeArrays offsets sizes isFree prevFree block
+      returnedOffset returnedBytes =
       some (nextIsFree, nextPrevFree)) :
-    block < isFree.length ∧ block < prevFree.length ∧
+    block < offsets.length ∧ block < sizes.length ∧
+      block < isFree.length ∧ block < prevFree.length ∧
       isFree[block]? = some 0 ∧
+      offsets[block]? = some returnedOffset ∧
+      sizes[block]? = some returnedBytes ∧
     nextIsFree = isFree.set block 1 ∧
       nextPrevFree = if block + 1 < prevFree.length then
         prevFree.set (block + 1) 1 else prevFree := by
   unfold markFreeArrays at hmark
-  split at hmark <;> simp_all
+  split at hmark <;> simp_all [List.getElem?_eq_some_iff]
+  next =>
+    exact ⟨hmark.2.2.2.1.choose_spec,
+      hmark.2.2.2.2.2.1.choose_spec⟩
 
 theorem markFreeArrays_lengths {isFree prevFree nextIsFree nextPrevFree : List (Fin 256)}
-    {block : Nat}
-    (hmark : markFreeArrays isFree prevFree block =
+    {offsets sizes : List Nat} {block returnedOffset returnedBytes : Nat}
+    (hmark : markFreeArrays offsets sizes isFree prevFree block
+      returnedOffset returnedBytes =
       some (nextIsFree, nextPrevFree)) :
     nextIsFree.length = isFree.length ∧
       nextPrevFree.length = prevFree.length := by
-  obtain ⟨_, _, _, rfl, rfl⟩ := markFreeArrays_result hmark
+  obtain ⟨_, _, _, _, _, _, _, rfl, rfl⟩ := markFreeArrays_result hmark
   split <;> simp_all
 
 def freeFlags (blocks : List Block) : List (Fin 256) :=
@@ -2618,13 +2631,18 @@ def freeFlags (blocks : List Block) : List (Fin 256) :=
 def prevFreeFlags (blocks : List Block) : List (Fin 256) :=
   blocks.map fun block => if block.prevFree then 1 else 0
 
+def blockOffsets (blocks : List Block) : List Nat := blocks.map Block.offset
+
+def blockSizes (blocks : List Block) : List Nat := blocks.map Block.bytes
+
 /-- The concrete flag writes are exactly the projection of the abstract
 `markFreeAt` physical-header transition. This includes the successor boundary
 tag and frames every other physical header. -/
 theorem markFreeArrays_refines_markFreeAt {blocks : List Block} {i : Nat}
     {selected : Block} (hget : blocks[i]? = some selected)
     (hallocated : selected.free = false) :
-    markFreeArrays (freeFlags blocks) (prevFreeFlags blocks) i =
+    markFreeArrays (blockOffsets blocks) (blockSizes blocks)
+      (freeFlags blocks) (prevFreeFlags blocks) i selected.offset selected.bytes =
       some (freeFlags (markFreeAt blocks i),
         prevFreeFlags (markFreeAt blocks i)) := by
   induction blocks generalizing i selected with
@@ -2635,12 +2653,14 @@ theorem markFreeArrays_refines_markFreeAt {blocks : List Block} {i : Nat}
           simp only [List.getElem?_cons_zero, Option.some.injEq] at hget
           subst selected
           cases rest <;>
-            simp [markFreeArrays, freeFlags, prevFreeFlags, markFreeAt,
+            simp [markFreeArrays, blockOffsets, blockSizes, freeFlags,
+              prevFreeFlags, markFreeAt,
               hallocated]
       | succ j =>
           simp only [List.getElem?_cons_succ] at hget
           have htail := ih hget hallocated
-          obtain ⟨hj, _, _, hfree, hprev⟩ := markFreeArrays_result htail
+          obtain ⟨_, _, hj, _, _, _, _, hfree, hprev⟩ :=
+            markFreeArrays_result htail
           have hj' : j < rest.length := by simpa [freeFlags] using hj
           have hfree' : (freeFlags rest).set j 1 =
               freeFlags (markFreeAt rest j) := hfree.symm
@@ -2652,8 +2672,11 @@ theorem markFreeArrays_refines_markFreeAt {blocks : List Block} {i : Nat}
           have hjblock : rest[j].free = false := by
             rw [(List.getElem?_eq_some_iff.mp hget).2]
             exact hallocated
-          simp [markFreeArrays, freeFlags, prevFreeFlags, markFreeAt,
-            hget, hallocated, hj', hjblock, hfree',
+          have hjselected : rest[j] = selected :=
+            (List.getElem?_eq_some_iff.mp hget).2
+          simp [markFreeArrays, blockOffsets, blockSizes, freeFlags,
+            prevFreeFlags, markFreeAt,
+            hget, hallocated, hj', hjblock, hjselected, hfree',
             show j + 1 + 1 < rest.length + 1 ↔
               j + 1 < rest.length by omega]
           by_cases hs : j + 1 < rest.length <;>

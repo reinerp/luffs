@@ -1315,9 +1315,13 @@ fn parse_tlsf_mark_free_models(source: &str) -> Vec<TlsfMarkFreeModel> {
         .map(|line| line.trim())
         .collect::<Vec<_>>();
     let required = [
+        "if block >= offsets.len() { return None; }",
+        "if block >= sizes.len() { return None; }",
         "if block >= is_free.len() { return None; }",
         "if block >= prev_free.len() { return None; }",
         "if is_free[block] != 0 { return None; }",
+        "if offsets[block] != returned_offset { return None; }",
+        "if sizes[block] != returned_bytes { return None; }",
         "if block == usize::MAX { return None; }",
         "let successor: usize = block + 1;",
         "is_free[block] = 1;",
@@ -1962,8 +1966,8 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
     }
     for model in &module.tlsf_mark_free_models {
         out.push_str(&format!(
-            "def {}_model (is_free prev_free : List (Fin 256)) (block : Nat) : Option (List (Fin 256) × List (Fin 256)) :=\n  \
-{} is_free prev_free block\n\n",
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (block returned_offset returned_bytes : Nat) : Option (List (Fin 256) × List (Fin 256)) :=\n  \
+{} offsets sizes is_free prev_free block returned_offset returned_bytes\n\n",
             model.name, model.refines
         ));
         out.push_str(&format!(

@@ -14,6 +14,168 @@ structure BoxNewU8ArraysResult extends
   storage : List Byte
 deriving DecidableEq, Repr
 
+/-- Replace a byte range while retaining the prefix and suffix outside it. -/
+def writeBytes (storage : List Byte) (offset : Nat) (bytes : List Byte) : List Byte :=
+  storage.take offset ++ bytes ++ storage.drop (offset + bytes.length)
+
+/-- Codec-generic executable state transformer for allocator-backed Box
+construction. A Luffs monomorphization supplies one of the verified scalar
+codecs and lowers the finite encoding to byte stores. -/
+def boxNewArrays {α : Type} (codec : Codec α) (storage : List Byte)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256)) (count : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (value : α) :
+    Option BoxNewU8ArraysResult := do
+  let allocated ← Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree
+    prevFree count second first heads next previous
+      (Luffs.Containers.Box.requestBytes codec.size)
+  if allocated.allocatedOffset + codec.size > storage.length then none
+  pure {
+    offsets := allocated.offsets
+    sizes := allocated.sizes
+    isFree := allocated.isFree
+    prevFree := allocated.prevFree
+    count := allocated.count
+    second := allocated.second
+    first := allocated.first
+    heads := allocated.heads
+    next := allocated.next
+    previous := allocated.previous
+    allocatedOffset := allocated.allocatedOffset
+    allocatedBytes := allocated.allocatedBytes
+    storage := writeBytes storage allocated.allocatedOffset (codec.encode value) }
+
+theorem boxNewArrays_result {α : Type} {codec : Codec α}
+    {storage : List Byte} {offsets sizes : List Nat}
+    {isFree prevFree : List (Fin 256)} {count : Nat}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {value : α}
+    {result : BoxNewU8ArraysResult}
+    (hsuccess : boxNewArrays codec storage offsets sizes isFree prevFree count
+      second first heads next previous value = some result) :
+    ∃ allocated,
+      Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree prevFree count
+          second first heads next previous
+            (Luffs.Containers.Box.requestBytes codec.size) = some allocated ∧
+      allocated.allocatedOffset + codec.size ≤ storage.length ∧
+      result.toAllocateArraysResult = allocated ∧
+      result.storage = writeBytes storage allocated.allocatedOffset
+        (codec.encode value) := by
+  unfold boxNewArrays at hsuccess
+  cases halloc : Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree
+      prevFree count second first heads next previous
+        (Luffs.Containers.Box.requestBytes codec.size) with
+  | none => simp [halloc] at hsuccess
+  | some allocated =>
+      by_cases hbound : allocated.allocatedOffset + codec.size > storage.length
+      · simp [halloc, hbound] at hsuccess
+      · simp [halloc, hbound] at hsuccess
+        subst result
+        exact ⟨allocated, rfl, Nat.le_of_not_gt hbound, rfl, rfl⟩
+
+set_option maxHeartbeats 1200000 in
+theorem boxNewArrays_refines_box {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] {α : Type} {codec : Codec α}
+    {pool : Region} {blocks : List Block} {state : Bins.State}
+    {storage : List Byte} {second : List (BitVec 32)} {first : BitVec 64}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {heads next previous : List Nat} {value : α}
+    {result : BoxNewU8ArraysResult}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins { heads, next, previous } state)
+    (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
+    (hsuccess : boxNewArrays codec storage offsets sizes isFree prevFree count
+      second first heads next previous value = some result) :
+    ∃ (hkeyMax : requestKey (Luffs.Containers.Box.requestBytes codec.size) <
+          2 ^ firstLevelCount)
+        (boxResult : Luffs.Containers.Box.Result),
+      Luffs.Containers.Box.allocate codec
+          { physical := blocks, bins := state } hkeyMax = some boxResult ∧
+      result.allocatedOffset = boxResult.block.offset ∧
+      result.allocatedBytes = boxResult.block.bytes ∧
+      result.storage = writeBytes storage boxResult.block.offset
+        (codec.encode value) ∧
+      (Ownership.OwnsFree (PROP := Iris.IProp GF) pool blocks ⊣⊢
+        OwnsBytes (boxResult.block.region pool) ∗
+          Ownership.OwnsFree pool boxResult.state.physical) := by
+  obtain ⟨allocated, halloc, _, hresult, hstorage⟩ :=
+    boxNewArrays_result hsuccess
+  obtain ⟨hrequest, hkey, abstractResult, habstract, hoffset, hbytes,
+      _, _, _, _, _, _, howns⟩ :=
+    Luffs.Runtime.TLSF.allocateArrays_ownsFree
+      (PROP := Iris.IProp GF) hvalid hsecond hfirst hbins hdisjoint hphysical
+      halloc
+  let boxResult : Luffs.Containers.Box.Result := {
+    block := abstractResult.allocated
+    state := abstractResult.state }
+  have hbox : Luffs.Containers.Box.allocate codec
+      { physical := blocks, bins := state } hkey = some boxResult := by
+    simp [Luffs.Containers.Box.allocate, boxResult, habstract]
+  have hresultOffset : result.allocatedOffset = allocated.allocatedOffset :=
+    congrArg Luffs.Runtime.TLSF.AllocateArraysResult.allocatedOffset hresult
+  have hresultBytes : result.allocatedBytes = allocated.allocatedBytes :=
+    congrArg Luffs.Runtime.TLSF.AllocateArraysResult.allocatedBytes hresult
+  refine ⟨hkey, boxResult, hbox, ?_, ?_, ?_, ?_⟩
+  · simpa [boxResult, hresultOffset] using hoffset
+  · simpa [boxResult, hresultBytes] using hbytes
+  · simpa [boxResult, hoffset] using hstorage
+  · simpa [boxResult] using howns
+
+/-- Successful generic construction turns the allocator's raw byte capability
+into the codec-indexed exclusive Box capability. -/
+theorem boxNewArrays_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {α : Type} {codec : Codec α}
+    {pool : Region} {blocks : List Block} {state : Bins.State}
+    {storage : List Byte} {second : List (BitVec 32)} {first : BitVec 64}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {heads next previous : List Nat} {value : α}
+    {result : BoxNewU8ArraysResult}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins { heads, next, previous } state)
+    (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
+    (hsuccess : boxNewArrays codec storage offsets sizes isFree prevFree count
+      second first heads next previous value = some result) :
+    ∃ (hkeyMax : requestKey (Luffs.Containers.Box.requestBytes codec.size) <
+          2 ^ firstLevelCount)
+        (boxResult : Luffs.Containers.Box.Result),
+      Luffs.Containers.Box.allocate codec
+          { physical := blocks, bins := state } hkeyMax = some boxResult ∧
+      result.allocatedOffset = boxResult.block.offset ∧
+      ∀ contents : ContentsMap,
+        CanInsertBytes contents (boxResult.block.region pool).base
+          (codec.encode value) →
+        contentsInterp (G := G) contents ∗ Ownership.OwnsFree pool blocks ==∗
+          contentsInterp
+              (insertBytes contents (boxResult.block.region pool).base
+                (codec.encode value)) ∗
+            (Luffs.Containers.Box.Owns codec pool boxResult.block value ∗
+              Ownership.OwnsFree pool boxResult.state.physical) := by
+  obtain ⟨hkeyMax, boxResult, hbox, hoffset, _, _, howns⟩ :=
+    boxNewArrays_refines_box (GF := GF) hvalid hsecond hfirst hbins hdisjoint
+      hphysical hsuccess
+  refine ⟨hkeyMax, boxResult, hbox, hoffset, ?_⟩
+  intro contents hfresh
+  iintro ⟨Hcontents, Hallocator⟩
+  ihave ⟨Hregion, Hallocator⟩ := howns.mp $$ Hallocator
+  icombine Hcontents Hregion as Hinit
+  imod Luffs.Containers.Box.initialize_owns codec pool boxResult.block value
+    contents hfresh $$ Hinit with ⟨Hcontents, Hbox⟩
+  imodintro
+  isplitl [Hcontents]
+  · iassumption
+  · isplitl [Hbox]
+    · iassumption
+    · iassumption
+
 /-- Exact state transformer for allocator-backed `tlsf_box_new_u8`. The
 allocator transition precedes initialization of the returned pool byte. -/
 def boxNewU8Arrays (storage : List Byte) (offsets sizes : List Nat)

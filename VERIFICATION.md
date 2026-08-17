@@ -472,8 +472,13 @@ concurrency are later extensions and are not prerequisites for `Box` and
   the generated public allocator model, perform the source bounds branch, and
   construct the exact initialized-storage result rather than directly aliasing
   the hand-written constructor transformer.
-  Generic Luffs monomorphization and target-width parameterization remain
-  before this item is complete.
+  The executable bridge now also has a codec-generic constructor: it allocates
+  `Box.requestBytes codec.size`, bounds-checks the complete encoding, writes all
+  encoded bytes, and is proved to refine generic `Box.allocate`. Its Iris law
+  converts the raw allocation capability into `Box.Owns codec ... value` while
+  retaining exactly the allocator's remaining free ownership. Scalar-specific
+  Luffs monomorphization and target-width parameterization remain before this
+  item is complete.
 - [ ] `Vec<T>`: invariant `len <= capacity`, initialized prefix ownership,
   spare-capacity ownership, checked layout arithmetic, growth without loss or
   double-drop, `push`, `pop`, indexing, shared/mutable slices, and drop.

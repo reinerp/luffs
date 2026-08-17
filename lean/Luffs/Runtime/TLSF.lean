@@ -161,6 +161,85 @@ theorem firstTrueIndex_wordBits_ctz {word : BitVec 64} (hnonzero : word ≠ 0) :
   have : found = word.ctz.toNat := by omega
   simpa [this] using hfound
 
+def maskFrom (bit : Nat) : BitVec 64 := BitVec.allOnes 64 <<< bit
+
+theorem maskFrom_getLsbD (bit index : Nat) :
+    (maskFrom bit).getLsbD index = decide (bit ≤ index ∧ index < 64) := by
+  simp only [maskFrom, BitVec.getLsbD_shiftLeft, BitVec.getLsbD_allOnes]
+  by_cases hindex : index < 64 <;> by_cases hbit : bit ≤ index
+  · have : index - bit < 64 := by omega
+    simp [hindex, hbit, this]
+  · simp [hindex, hbit]
+  · simp [hindex]
+  · simp [hindex]
+
+theorem maskedWord_getLsbD (word : BitVec 64) (bit index : Nat) :
+    (word &&& maskFrom bit).getLsbD index =
+      if bit ≤ index ∧ index < 64 then word.getLsbD index else false := by
+  rw [BitVec.getLsbD_and, maskFrom_getLsbD]
+  split <;> simp_all
+
+theorem wordBits_masked_get (word : BitVec 64) (bit index : Nat)
+    (hindex : index < 64) :
+    (wordBits (word &&& maskFrom bit))[index]? =
+      some (if bit ≤ index then word.getLsbD index else false) := by
+  rw [wordBits_get _ index hindex, maskedWord_getLsbD]
+  simp [hindex]
+
+/-- The Rust lowering for searching within the first bitmap word—masking away
+the prefix and taking `trailing_zeros`—implements the logical suffix search. -/
+theorem firstSetFrom_wordBits_eq_masked_ctz (word : BitVec 64) (bit : Nat)
+    (hnonzero : word &&& maskFrom bit ≠ 0) :
+    firstSetFrom (wordBits word) bit =
+      some (word &&& maskFrom bit).ctz.toNat := by
+  let masked := word &&& maskFrom bit
+  have hctzBound : masked.ctz.toNat < 64 := by
+    exact (BitVec.ctz_lt_iff_ne_zero (x := masked)).2 hnonzero
+  have hmaskedTrue : masked.getLsbD masked.ctz.toNat = true :=
+    BitVec.getLsbD_true_ctz_of_ne_zero hnonzero
+  have hcondition : bit ≤ masked.ctz.toNat ∧ masked.ctz.toNat < 64 := by
+    by_cases hcondition : bit ≤ masked.ctz.toNat ∧ masked.ctz.toNat < 64
+    · exact hcondition
+    · have hmaskedFalse : masked.getLsbD masked.ctz.toNat = false := by
+        simpa [masked, hcondition] using
+          maskedWord_getLsbD word bit masked.ctz.toNat
+      simp [hmaskedFalse] at hmaskedTrue
+  have hstart : bit ≤ masked.ctz.toNat := hcondition.1
+  have horiginalTrue : word.getLsbD masked.ctz.toNat = true := by
+    have hmaskedFormula := maskedWord_getLsbD word bit masked.ctz.toNat
+    rw [← show word &&& maskFrom bit = masked from rfl] at hmaskedFormula
+    have hboth :
+        (bit ≤ masked.ctz.toNat ∧ masked.ctz.toNat < 64) ∧
+          word.getLsbD masked.ctz.toNat = true := by
+      simpa [masked] using hmaskedFormula.symm.trans hmaskedTrue
+    exact hboth.2
+  have hwordBit : (wordBits word)[masked.ctz.toNat]? = some true := by
+    rw [wordBits_get word masked.ctz.toNat hctzBound, horiginalTrue]
+  obtain ⟨found, hfound⟩ := firstSetFrom_complete hstart hwordBit
+  have hfoundFacts := firstSetFrom_sound hfound
+  have hnotBefore : ¬ found < masked.ctz.toNat := by
+    intro hbefore
+    have hmaskedFalse := BitVec.getLsbD_false_of_lt_ctz
+      (x := masked) hbefore
+    have hfoundBound : found < 64 := by
+      simpa [wordBits_length] using hfoundFacts.2.1
+    have hfoundOriginal : word.getLsbD found = true := by
+      have hget := hfoundFacts.2.2
+      rw [wordBits_get word found hfoundBound] at hget
+      exact Option.some.inj hget
+    have hmaskedTrueAtFound : masked.getLsbD found = true := by
+      dsimp [masked]
+      rw [maskedWord_getLsbD]
+      simp [hfoundFacts.1, hfoundBound, hfoundOriginal]
+    simp [hmaskedFalse] at hmaskedTrueAtFound
+  have hnotAfter : ¬ masked.ctz.toNat < found := by
+    intro hafter
+    have hfalse := firstSetFrom_minimal hfound hstart hafter
+    rw [hwordBit] at hfalse
+    contradiction
+  have : found = masked.ctz.toNat := by omega
+  simpa [masked, this] using hfound
+
 theorem bitmapBits_length (words : List (BitVec 64)) :
     (bitmapBits words).length = words.length * 64 := by
   induction words with

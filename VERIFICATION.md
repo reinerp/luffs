@@ -203,10 +203,13 @@ refinement. Eventual replacement by the two-level O(1) bitmap path remains.
 The four-word bitmap path now has a flat little-endian bit semantics as well.
 Its reference search is proved sound, complete, and minimal from `start_bin`;
 for at most four words every success is below 256. Refinement of the Luffs
-masked-first-word loop to this definition is the next step. Bitmap words now
-use `BitVec 64`, and `BitVec.ctz.toNat` is proved equal to the list-level first
-true index for every nonzero word, using checked selected-bit and lower-bit
-lemmas rather than trusting a trailing-zero axiom.
+masked-first-word loop to this definition is underway. Bitmap words use
+`BitVec 64`, and `BitVec.ctz.toNat` is proved equal to the list-level first true
+index for every nonzero word. The exact Rust first-word operation—AND with
+`u64::MAX << start_bit`, followed by `trailing_zeros()`—is now proved equal to
+the logical suffix search. These proofs use checked selected-bit, lower-bit,
+shift, and bitwise-AND lemmas rather than trusting a trailing-zero or mask
+axiom.
 
 The first target is sequential TLSF with fixed-size pools obtained from `mmap`.
 Growing pools, `realloc`, aligned allocation beyond the base alignment, and

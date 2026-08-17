@@ -1967,6 +1967,82 @@ theorem representsSecondBitmap_replace_nonempty
     simp [Bins.State.replaceChain, Bins.State.fromChains,
       Bins.Chains.replace, hquery]
 
+structure RemoveClassResult where
+  second : List (BitVec 32)
+  first : BitVec 64
+  heads : List Nat
+  next : List Nat
+  previous : List Nat
+deriving DecidableEq, Repr
+
+/-- Remove a known (not necessarily head) free-list node and keep both TLSF
+bitmap levels synchronized. This is the metadata operation needed before
+coalescing a physical neighbor. -/
+def removeClassArrays (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (bin block : Nat) :
+    Option RemoveClassResult :=
+  if bin ≥ heads.length then none else
+  let fl := bin / 32
+  if fl ≥ second.length then none else
+  if block ≥ next.length then none else
+  if block ≥ previous.length then none else
+  let successor := next[block]?.getD next.length
+  match removeArrays heads next previous bin block with
+  | none => none
+  | some (nextHeads, nextLinks, nextPrevious) =>
+      if successor ≥ next.length then
+        let nextSecond := clearClassBit second bin
+        let nextFirst :=
+          if nextSecond[fl]?.getD 0 = 0 then clearWordBit first fl
+          else first
+        some (RemoveClassResult.mk nextSecond nextFirst nextHeads nextLinks
+          nextPrevious)
+      else
+        some (RemoveClassResult.mk second first nextHeads nextLinks nextPrevious)
+
+theorem removeClassArrays_result
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {bin block : Nat}
+    {result : RemoveClassResult}
+    (hremove : removeClassArrays second first heads next previous bin block =
+      some result) :
+    bin < heads.length ∧ bin / 32 < second.length ∧
+      block < next.length ∧ block < previous.length ∧
+      removeArrays heads next previous bin block =
+        some (result.heads, result.next, result.previous) ∧
+      if next[block]?.getD next.length ≥ next.length then
+        result.second = clearClassBit second bin ∧
+          result.first =
+            if result.second[bin / 32]?.getD 0 = 0 then
+              clearWordBit first (bin / 32)
+            else first
+      else result.second = second ∧ result.first = first := by
+  unfold removeClassArrays at hremove
+  split at hremove <;> try contradiction
+  next hbin =>
+    dsimp only at hremove
+    split at hremove <;> try contradiction
+    next hfl =>
+      split at hremove <;> try contradiction
+      next hnext =>
+        split at hremove <;> try contradiction
+        next hprevious =>
+          split at hremove <;> try contradiction
+          next nextHeads nextLinks nextPrevious hmetadata =>
+            split at hremove
+            next hsuccessor =>
+              simp only [Option.some.injEq] at hremove
+              subst result
+              exact ⟨Nat.lt_of_not_ge hbin, Nat.lt_of_not_ge hfl,
+                Nat.lt_of_not_ge hnext, Nat.lt_of_not_ge hprevious,
+                hmetadata, by simp [hsuccessor]⟩
+            next hsuccessor =>
+              simp only [Option.some.injEq] at hremove
+              subst result
+              exact ⟨Nat.lt_of_not_ge hbin, Nat.lt_of_not_ge hfl,
+                Nat.lt_of_not_ge hnext, Nat.lt_of_not_ge hprevious,
+                hmetadata, by simp [hsuccessor]⟩
+
 structure ClassCandidateResult where
   block : Nat
   bin : Nat

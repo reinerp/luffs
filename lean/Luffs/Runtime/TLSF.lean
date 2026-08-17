@@ -8444,6 +8444,81 @@ theorem deallocateUncoalescedArraysOutcome_failure_preserves_frame
       (frame ∗ (emp : PROP) ⊣⊢ frame) := by
   exact ⟨deallocateUncoalescedArraysOutcome_failure_eq_input hfailure, sep_emp⟩
 
+/-- A successful state-retaining uncoalesced execution exposes the exact two
+component calls used by the older refinement transformer. This is the bridge
+needed to reuse its physical/bin invariant and Iris ownership proofs. -/
+theorem deallocateUncoalescedArraysOutcome_success_result
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat}
+    {count block returnedOffset returnedBytes : Nat}
+    {state : DeallocateMachineState}
+    (hsuccess : deallocateUncoalescedArraysOutcome offsets sizes isFree prevFree
+      second first heads next previous count block returnedOffset returnedBytes =
+        .success state) :
+    ∃ marked bin inserted,
+      markFreeArrays offsets sizes isFree prevFree block returnedOffset
+          returnedBytes = some marked ∧
+      classifySizeBin returnedBytes = some bin ∧
+      insertClassArrays second first heads next previous bin returnedOffset =
+          some inserted ∧
+      state = ⟨marked.1, marked.2, inserted.second, inserted.first,
+        inserted.heads, inserted.next, inserted.previous⟩ := by
+  unfold deallocateUncoalescedArraysOutcome at hsuccess
+  split at hsuccess <;> try contradiction
+  next =>
+    split at hsuccess <;> try contradiction
+    next bin hclass =>
+      split at hsuccess <;> try contradiction
+      next =>
+        unfold commitDeallocateUncoalescedOutcome at hsuccess
+        cases hmark : markFreeArrays offsets sizes isFree prevFree block
+            returnedOffset returnedBytes with
+        | none => simp [hmark] at hsuccess
+        | some marked =>
+          cases hinsert : insertClassArrays second first heads next previous bin
+              returnedOffset with
+          | none => simp [hmark, hinsert] at hsuccess
+          | some inserted =>
+            simp [hmark, hinsert] at hsuccess
+            subst state
+            exact ⟨marked, bin, inserted, hmark, hclass, hinsert, rfl⟩
+
+/-- Successful stateful execution is also a successful execution of the exact
+`Option` transformer consumed by the existing allocator refinement theorems. -/
+theorem deallocateUncoalescedArraysOutcome_success_refines_option
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat}
+    {count block returnedOffset returnedBytes : Nat}
+    {state : DeallocateMachineState}
+    (hsuccess : deallocateUncoalescedArraysOutcome offsets sizes isFree prevFree
+      second first heads next previous count block returnedOffset returnedBytes =
+        .success state) :
+    ∃ result,
+      deallocateUncoalescedArrays offsets sizes isFree prevFree second first heads
+          next previous count block returnedOffset returnedBytes = some result ∧
+      result.isFree = state.isFree ∧ result.prevFree = state.prevFree ∧
+      result.insertion.second = state.second ∧
+      result.insertion.first = state.first ∧
+      result.insertion.heads = state.heads ∧
+      result.insertion.next = state.next ∧
+      result.insertion.previous = state.previous := by
+  obtain ⟨marked, bin, inserted, hmark, hclass, hinsert, rfl⟩ :=
+    deallocateUncoalescedArraysOutcome_success_result hsuccess
+  have hbounds : count ≤ offsets.length ∧ count ≤ sizes.length ∧
+      count ≤ isFree.length ∧ count ≤ prevFree.length ∧ block < count := by
+    unfold deallocateUncoalescedArraysOutcome at hsuccess
+    split at hsuccess
+    · contradiction
+    · rename_i hbad
+      simp only at hbad
+      omega
+  let result : DeallocateUncoalescedResult :=
+    ⟨marked.1, marked.2, inserted⟩
+  refine ⟨result, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  simp [deallocateUncoalescedArrays, hbounds, hmark, hclass, hinsert, result]
+
 /-- Exact pure semantics of the public Luffs deallocator. -/
 def deallocateArrays (offsets sizes : List Nat)
     (isFree prevFree : List (Fin 256)) (second : List (BitVec 32))
@@ -8987,6 +9062,51 @@ theorem deallocateUncoalescedArrays_refines_represented
               insert_preserves_offsets_disjoint hdisjoint
                 (by simpa [Dealloc.freedBlock] using hfresh),
               hrefine.2.2.1, hrefine.2.2.2⟩
+
+theorem deallocateUncoalescedArraysOutcome_refines_represented
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count : Nat} {blocks : List Block} {i : Nat} {selected : Block}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {concrete : DeallocateMachineState}
+    {state : Bins.State}
+    (hphysical : RepresentsPhysicalArrays offsets sizes isFree prevFree count blocks)
+    (hget : blocks[i]? = some selected)
+    (hallocated : selected.free = false)
+    (hvalid : Bins.Valid state)
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hfresh : ∀ query, selected.offset ∉
+      (state.chains query).map Block.offset)
+    (hsuccess : deallocateUncoalescedArraysOutcome offsets sizes isFree prevFree
+      second first heads next previous count i selected.offset selected.bytes =
+        .success concrete) :
+    ∃ cls,
+      classifyBlock? (Dealloc.freedBlock selected) = some cls ∧
+      RepresentsPhysicalArrays offsets sizes concrete.isFree concrete.prevFree count
+        (markFreeAt blocks i) ∧
+      Bins.Valid (state.insert cls (Dealloc.freedBlock selected)) ∧
+      RepresentsBins
+        { heads := concrete.heads, next := concrete.next,
+          previous := concrete.previous }
+        (state.insert cls (Dealloc.freedBlock selected)) ∧
+      BinsOffsetsDisjoint (state.insert cls (Dealloc.freedBlock selected)) ∧
+      RepresentsSecondBitmap concrete.second
+        (state.insert cls (Dealloc.freedBlock selected)) ∧
+      FirstBitmapRep concrete.first concrete.second := by
+  obtain ⟨result, hoption, hfreeEq, hprevEq, hsecondEq, hfirstEq,
+      hheadsEq, hnextEq, hpreviousEq⟩ :=
+    deallocateUncoalescedArraysOutcome_success_refines_option hsuccess
+  obtain ⟨cls, hclass, hphysicalNext, hvalidNext, hbinsNext, hdisjointNext,
+      hsecondNext, hfirstNext⟩ :=
+    deallocateUncoalescedArrays_refines_represented hphysical hget hallocated
+      hvalid hsecond hfirst hbins hdisjoint hfresh hoption
+  refine ⟨cls, hclass, ?_, hvalidNext, ?_, hdisjointNext, ?_, ?_⟩
+  · simpa [hfreeEq, hprevEq] using hphysicalNext
+  · simpa [hheadsEq, hnextEq, hpreviousEq] using hbinsNext
+  · simpa [hsecondEq] using hsecondNext
+  · simpa [hfirstEq, hsecondEq] using hfirstNext
 
 set_option maxHeartbeats 1000000 in
 /-- End-to-end pure refinement of the public Luffs deallocator. This composes

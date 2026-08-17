@@ -362,6 +362,12 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   Iris-Lean frame law. Discharging those two premises directly from the full
   allocator representation invariant remains before the public failure theorem
   is unconditional for valid allocator calls.
+  Stateful uncoalesced success is now bridged to the exact existing `Option`
+  transformer: Lean extracts its mark/classify/insert witnesses and reuses the
+  established refinement theorem to recover physical representation, bin
+  validity, cross-bin disjointness, intrusive links, and both bitmap levels for
+  the actual stateful successor. This establishes the full invariant at the
+  right-coalescing call boundary.
 - [x] Prove the bounded-step property of bin lookup and local list updates.
   The exact lowered flat-bitmap cost model counts inspected 64-bit words and
   is bounded by the input word count, hence at most four probes for the fixed

@@ -882,6 +882,50 @@ theorem vecNewArrays_refines_vec
       Luffs.Containers.Vec.encodeValues, PointsToBytes] using
         howns.trans (Iris.BI.sep_congr_left Iris.BI.sep_emp.symm)
 
+/-- Allocator-backed `Vec<u16>` construction is the codec-generic verified
+allocation boundary specialized to two-byte little-endian elements. -/
+def vecNewU16Arrays (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (capacity : Nat) :
+    Option Luffs.Runtime.TLSF.AllocateArraysResult :=
+  vecNewArrays Scalar.u16 offsets sizes isFree prevFree count second first
+    heads next previous capacity
+
+set_option maxHeartbeats 1200000 in
+theorem vecNewU16Arrays_refines_vec
+    {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
+    [Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {blocks : List Block} {state : Bins.State}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {heads next previous : List Nat} {capacity : Nat}
+    {result : Luffs.Runtime.TLSF.AllocateArraysResult}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins { heads, next, previous } state)
+    (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
+    (hsuccess : vecNewU16Arrays offsets sizes isFree prevFree count second
+      first heads next previous capacity = some result) :
+    ∃ (hcapacity : 0 < capacity)
+        (hkeyMax : requestKey
+          (Luffs.Containers.Vec.allocationBytes Scalar.u16 capacity) <
+            2 ^ firstLevelCount)
+        (vecResult : Luffs.Containers.Vec.AllocResult),
+      Luffs.Containers.Vec.allocate Scalar.u16 capacity hcapacity
+          { physical := blocks, bins := state } hkeyMax = some vecResult ∧
+      result.allocatedOffset = vecResult.handle.block.offset ∧
+      result.allocatedBytes = vecResult.handle.block.bytes ∧
+      vecResult.handle.len = 0 ∧ vecResult.handle.capacity = capacity ∧
+      (Ownership.OwnsFree (PROP := Iris.IProp GF) pool blocks ⊣⊢
+        Luffs.Containers.Vec.Owns Scalar.u16 pool vecResult.handle [] ∗
+          Ownership.OwnsFree pool vecResult.state.physical) := by
+  exact vecNewArrays_refines_vec hvalid hsecond hfirst hbins hdisjoint
+    hphysical hsuccess
+
 structure VecPushResult where
   storage : List Byte
   nextLen : Nat

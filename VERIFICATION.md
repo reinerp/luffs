@@ -687,7 +687,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   and proves the result is the generic abstract `Vec.allocate` transition with
   an empty `Vec.Owns codec` Iris capability. The existing `u8` runtime model is
   proved equal to this generic specialization, and its end-to-end theorem now
-  delegates to the generic proof.
+  delegates to the generic proof. `Vec<u16>` construction is now the first
+  non-byte allocator-backed specialization: its Luffs body uses checked
+  `capacity * 2` and checked rounding addition, its generated model refines
+  `vecNewArrays Scalar.u16`, and the generic Iris theorem returns an empty
+  exclusive typed Vec capability. A source-shape regression rejects omission
+  of the capacity multiplication.
   Generic executable push now checks capacity, multiplication, base addition,
   and end-of-element arithmetic in the 64-bit domain before performing the
   codec-wide store. Its storage write is proved to occur exactly after the

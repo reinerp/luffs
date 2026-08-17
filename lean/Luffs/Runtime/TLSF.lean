@@ -2457,6 +2457,25 @@ structure RemoveClassResult where
   previous : List Nat
 deriving DecidableEq, Repr
 
+private theorem removeArrays_preserves_lengths
+    {state nextState : Metadata} {bin block : Nat}
+    (hremove : remove state bin block = some nextState) :
+    nextState.heads.length = state.heads.length ∧
+      nextState.next.length = state.next.length ∧
+      nextState.previous.length = state.previous.length := by
+  unfold remove at hremove
+  split at hremove <;> try contradiction
+  next =>
+    split at hremove <;> try contradiction
+    next =>
+      split at hremove <;> try contradiction
+      next =>
+        dsimp at hremove
+        split at hremove <;> split at hremove <;> split at hremove <;>
+          simp only [Option.some.injEq] at hremove
+        all_goals subst nextState
+        all_goals simp
+
 /-- Remove a known (not necessarily head) free-list node and keep both TLSF
 bitmap levels synchronized. This is the metadata operation needed before
 coalescing a physical neighbor. -/
@@ -2541,7 +2560,9 @@ theorem removeClassArrays_ne_none_of_preflight
     Nat.not_le.mpr hfl, Nat.not_le.mpr hnext, Nat.not_le.mpr hprevious]
   cases hremoveEq : removeArrays heads next previous bin block with
   | none => exact (hremove hremoveEq).elim
-  | some removed => simp
+  | some removed =>
+      simp only
+      split <;> simp
 
 theorem removeClassArrays_preserves_lengths
     {second : List (BitVec 32)} {first : BitVec 64}
@@ -2554,11 +2575,15 @@ theorem removeClassArrays_preserves_lengths
       result.previous.length = previous.length := by
   have hresult := removeClassArrays_result hremove
   have hmetadata := removeArrays_result hresult.2.2.2.2.1
-  have hlens := remove_preserves_lengths hmetadata
+  have hlens := removeArrays_preserves_lengths hmetadata
   constructor
-  · split at hresult
-    · rw [hresult.2.1, clearClassBit_length]
-    · rw [hresult.2.1]
+  · by_cases hcleared :
+        previous[block]?.getD next.length ≥ next.length ∧
+          next[block]?.getD next.length ≥ next.length
+    · simp only [hcleared, if_true] at hresult
+      rw [hresult.2.2.2.2.2.1, clearClassBit_length]
+    · simp only [hcleared, if_false] at hresult
+      rw [hresult.2.2.2.2.2.1]
   · exact hlens
 
 /-- Bounds preflighted by public allocation make remainder insertion total.
@@ -2971,7 +2996,7 @@ theorem represented_free_block_link_bounds
     hvalid.2.2.2 block hmem hfree
   have hoffsetMem : block.offset ∈ (state.chains cls).map Block.offset := by
     rw [hsame.1]
-    exact List.mem_map_of_mem Block.offset hcached
+    exact List.mem_map.mpr ⟨cached, hcached, rfl⟩
   exact linked_member_bounds (hbins cls).2.2.2.1 hoffsetMem
 
 /-- A free physical block in a completely represented allocator satisfies all
@@ -4827,7 +4852,8 @@ theorem markFreeArraysOutcome_failure_eq_input
       returnedOffset returnedBytes = .failure failed) :
     failed = ⟨isFree, prevFree⟩ := by
   unfold markFreeArraysOutcome at hfailure
-  split at hfailure <;> simp_all
+  repeat' split at hfailure
+  all_goals simp_all
 
 theorem markFreeArraysOutcome_failure_preserves_frame
     {PROP : Type} [Iris.BI PROP]
@@ -7101,8 +7127,8 @@ theorem commitCoalesceClassOutcome_ne_failure_of_preflight
     commitCoalesceClassOutcome input offsets sizes isFree prevFree second first
       heads next previous count left leftOffset rightOffset leftBin rightBin
         mergedBin ≠ .failure failed := by
-  have hleft := removeClassArrays_ne_none_of_preflight hleftBin hleftFl
-    hleftNext hleftPrevious
+  have hleft := removeClassArrays_ne_none_of_preflight (first := first)
+    hleftBin hleftFl hleftNext hleftPrevious
   apply commitCoalesceClassOutcome_ne_failure hleft
   · intro withoutLeft hleftEq
     have hlens := removeClassArrays_preserves_lengths hleftEq
@@ -7125,6 +7151,7 @@ theorem commitCoalesceClassOutcome_ne_failure_of_preflight
     · rw [hrightLens.2.2.2, hleftLens.2.2.2]
       exact hleftPrevious
 
+set_option maxRecDepth 32768 in
 /-- A successful stateful commit is exactly the older array transformer once
 the precomputed source values are identified with its lookups. -/
 theorem commitCoalesceClassOutcome_success_refines_arrays
@@ -7174,13 +7201,13 @@ theorem commitCoalesceClassOutcome_success_refines_arrays
               hphysicalRightOffset, hphysicalRightSize⟩ := hphysicalInfo
           have hphysicalLeftOffsetEq : physicalLeftOffset = leftOffset := by
             rw [hleftOffset] at hphysicalLeftOffset
-            exact Option.some.inj hphysicalLeftOffset
+            exact (Option.some.inj hphysicalLeftOffset).symm
           have hphysicalLeftSizeEq : physicalLeftSize = leftSize := by
             rw [hleftSize] at hphysicalLeftSize
-            exact Option.some.inj hphysicalLeftSize
+            exact (Option.some.inj hphysicalLeftSize).symm
           have hphysicalRightSizeEq : physicalRightSize = rightSize := by
             rw [hrightSize] at hphysicalRightSize
-            exact Option.some.inj hphysicalRightSize
+            exact (Option.some.inj hphysicalRightSize).symm
           subst physicalLeftOffset
           subst physicalLeftSize
           subst physicalRightSize
@@ -7196,16 +7223,17 @@ theorem commitCoalesceClassOutcome_success_refines_arrays
                 next =>
                   split at hphysical <;> try contradiction
                   next =>
-                    simp only [hleftOffset, hleftSize, hrightOffset, hrightSize,
-                      Option.getD_some] at hphysical
-                    split at hphysical <;> try contradiction
-                    next =>
-                      simp only [Option.some.injEq] at hphysical
-                      subst physical
-                      have hleftBound : left < sizes.length :=
-                        (List.getElem?_eq_some_iff.mp hleftSize).1
-                      simp [compactActive, List.getElem?_append,
-                        List.getElem?_set, hleftBound]
+                    simp only [Option.some.injEq] at hphysical
+                    subst physical
+                    have hleftBound : left < sizes.length :=
+                      (List.getElem?_eq_some_iff.mp hleftSize).1
+                    simp_all only [Option.some.injEq]
+                    simp [compactActive, List.getElem?_append,
+                      List.getElem?_set, hleftBound]
+                    intro hnotBefore
+                    have hbefore : left < min (left + 1) sizes.length :=
+                      Nat.lt_min.mpr ⟨Nat.lt_succ_self left, hleftBound⟩
+                    omega
           simp [coalesceClassArrays, hleftOffset, hrightOffset, hleftSize,
             hrightSize, hleftClass, hrightClass, hremoveLeft, hremoveRight,
             hphysical, hmergedSize, hmergedClass, hinsert]
@@ -7856,9 +7884,9 @@ theorem coalesceIfPossibleArraysOutcome_failure_eq_input
           by_cases hadjacent : leftOffset + leftSize ≠ rightOffset
           · simp [coalesceIfPossibleArraysOutcome, input, capacityBad,
               hcapacity, hmax, right, hright, hleftFree, hrightFree,
-              hleftOffset, hleftSize, hrightOffset, hrightSize, hadjacent] at
-              hfailure
-          cases hleftBin : classifySizeBin leftSize with
+              hleftOffset, hleftSize, hrightOffset, hrightSize, hadjacent]
+              at hfailure
+          · cases hleftBin : classifySizeBin leftSize with
           | none =>
               simpa [coalesceIfPossibleArraysOutcome, input, capacityBad,
                 hcapacity, hmax, right, hright, hleftFree, hrightFree,
@@ -7910,7 +7938,7 @@ theorem coalesceIfPossibleArraysOutcome_failure_eq_input
                   · exact Classical.byContradiction (fun h => hadjacent h)
                 have himpossible :=
                   commitCoalesceClassOutcome_ne_failure_of_preflight
-                    (input := input) (failed := failed)
+                    (input := input) (failed := failed) (first := first)
                     (Nat.lt_of_not_ge (fun h => hmetadata (Or.inl h)))
                     (Nat.lt_of_not_ge (fun h => hmetadata (Or.inr (Or.inl h))))
                     (Nat.lt_of_not_ge (fun h => hmetadata
@@ -7933,6 +7961,7 @@ theorem coalesceIfPossibleArraysOutcome_failure_eq_input
                     (Nat.lt_of_not_ge (fun h => hmetadata
                       (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
                         (Or.inr (Or.inr (Or.inr h))))))))))) hphysical
+                exfalso
                 apply himpossible
                 simpa [coalesceIfPossibleArraysOutcome, input, capacityBad,
                   hcapacity, hmax, right, hright, hleftFree, hrightFree,
@@ -8006,35 +8035,61 @@ theorem coalesceIfPossibleArraysOutcome_success_refines_option
                 | some rightOffset =>
                   cases hrightSize : sizes[left + 1]? with
                   | none =>
-                      simp [hleftOffset, hleftSize, hrightOffset, hrightSize] at
-                        hsuccess
+                      simp [hleftOffset, hleftSize, hrightOffset, hrightSize]
+                        at hsuccess
                   | some rightSize =>
-                    split at hsuccess
-                    next hadjacent =>
-                      simp only [CoalesceClassOutcome.success.injEq] at hsuccess
+                    by_cases hadjacent : leftOffset + leftSize ≠ rightOffset
+                    · simp [hleftOffset, hleftSize, hrightOffset, hrightSize,
+                        hadjacent] at hsuccess
                       subst result
                       simp [coalesceIfPossibleArrays, input, hcapacity, hmax,
                         hright, hleftFree, hrightFree, hleftOffset, hleftSize,
                         hrightOffset, hadjacent]
-                    next hadjacent =>
+                    ·
                       cases hleftClass : classifySizeBin leftSize with
-                      | none => simp [hleftClass] at hsuccess
+                      | none =>
+                        simp [hleftOffset, hleftSize, hrightOffset, hrightSize,
+                          hadjacent, hleftClass] at hsuccess
                       | some leftBin =>
                         cases hrightClass : classifySizeBin rightSize with
-                        | none => simp [hleftClass, hrightClass] at hsuccess
+                        | none =>
+                          simp [hleftOffset, hleftSize, hrightOffset, hrightSize,
+                            hadjacent, hleftClass, hrightClass] at hsuccess
                         | some rightBin =>
                           cases hmergedClass : classifySizeBin
                               (leftSize + rightSize) with
                           | none =>
-                              simp [hleftClass, hrightClass, hmergedClass] at
-                                hsuccess
+                            simp [hleftOffset, hleftSize, hrightOffset, hrightSize,
+                              hadjacent, hleftClass, hrightClass, hmergedClass]
+                              at hsuccess
                           | some mergedBin =>
-                            split at hsuccess <;> try contradiction
-                            next hmetadata =>
+                            by_cases hmetadata :
+                                leftBin ≥ heads.length ∨
+                                rightBin ≥ heads.length ∨
+                                mergedBin ≥ heads.length ∨
+                                leftBin / secondLevelCount ≥ second.length ∨
+                                rightBin / secondLevelCount ≥ second.length ∨
+                                mergedBin / secondLevelCount ≥ second.length ∨
+                                leftOffset ≥ next.length ∨
+                                leftOffset ≥ previous.length ∨
+                                rightOffset ≥ next.length ∨
+                                rightOffset ≥ previous.length
+                            · simp [hleftOffset, hleftSize, hrightOffset,
+                                hrightSize, hadjacent, hleftClass, hrightClass,
+                                hmergedClass, hmetadata] at hsuccess
+                            ·
+                              have hcommit : commitCoalesceClassOutcome
+                                  input offsets sizes isFree prevFree second first
+                                  heads next previous count left leftOffset
+                                  rightOffset leftBin rightBin mergedBin =
+                                  .success result := by
+                                simpa [hleftOffset, hleftSize, hrightOffset,
+                                  hrightSize, hadjacent, hleftClass, hrightClass,
+                                  hmergedClass, hmetadata] using hsuccess
                               have hclassSuccess :=
                                 commitCoalesceClassOutcome_success_refines_arrays
                                   hleftOffset hrightOffset hleftSize hrightSize
-                                  hleftClass hrightClass hmergedClass hsuccess
+                                  hleftClass hrightClass hmergedClass hcommit
                               simp [coalesceIfPossibleArrays, input, hcapacity,
                                 hmax, hright, hleftFree, hrightFree, hleftOffset,
                                 hleftSize, hrightOffset, hadjacent, hclassSuccess]
@@ -8060,6 +8115,10 @@ theorem coalesceIfPossibleArraysOutcome_ne_failure_of_valid
     next previous count
   have hcapacity : ¬(count > offsets.length ∨ count > sizes.length ∨
       count > isFree.length ∨ count > prevFree.length) := by
+    have hoffsets := hphysical.2.1
+    have hsizes := hphysical.2.2.1
+    have hfree := hphysical.2.2.2.1
+    have hprev := hphysical.2.2.2.2.1
     omega
   by_cases hmax : left = usizeMax
   · simp [coalesceIfPossibleArraysOutcome, input, hcapacity, hmax]
@@ -8106,7 +8165,8 @@ theorem coalesceIfPossibleArraysOutcome_ne_failure_of_valid
       hrightBound, hleftFreeFlag, hrightFreeFlag, hleftOffset, hleftSize,
       hrightOffset, hrightSize, hadjacent]
   have hcan : canCoalesce leftBlock rightBlock :=
-    ⟨hleftFree, hrightFree, Classical.byContradiction (fun h => hadjacent h)⟩
+    ⟨hleftFree, hrightFree,
+      Classical.byContradiction (fun h => hadjacent (Ne.symm h))⟩
   have hleftMem : leftBlock ∈ blocks :=
     List.mem_iff_getElem?.2 ⟨left, hleftGet⟩
   have hrightMem : rightBlock ∈ blocks :=
@@ -8134,17 +8194,29 @@ theorem coalesceIfPossibleArraysOutcome_ne_failure_of_valid
     · exact hleftSize
     · simpa [right] using hrightOffset
     · simpa [right] using hrightSize
-    · simpa only using Classical.byContradiction (fun h => hadjacent h)
+    · exact Classical.byContradiction hadjacent
   have hcommit := commitCoalesceClassOutcome_ne_failure_of_preflight
-    (input := input) (failed := failed) hleftBin hrightBin hmergedBin hleftFl
+    (input := input) (failed := failed) (first := first)
+      hleftBin hrightBin hmergedBin hleftFl
       hrightFl hmergedFl hleftNext hleftPrevious hrightNext hrightPrevious
       hphysicalTotal
+  have hmetadata : ¬(encodeSizeClass leftClass ≥ heads.length ∨
+      encodeSizeClass rightClass ≥ heads.length ∨
+      encodeSizeClass mergedClass ≥ heads.length ∨
+      encodeSizeClass leftClass / secondLevelCount ≥ second.length ∨
+      encodeSizeClass rightClass / secondLevelCount ≥ second.length ∨
+      encodeSizeClass mergedClass / secondLevelCount ≥ second.length ∨
+      leftBlock.offset ≥ next.length ∨
+      leftBlock.offset ≥ previous.length ∨
+      rightBlock.offset ≥ next.length ∨
+      rightBlock.offset ≥ previous.length) := by omega
+  intro hout
   apply hcommit
   simpa [coalesceIfPossibleArraysOutcome, input, hcapacity, hmax, right,
     hrightBound, hleftFreeFlag, hrightFreeFlag, hleftOffset, hleftSize,
     hrightOffset, hrightSize, hadjacent, hleftClass, hrightClass,
-    hmergedClass, hleftBin, hrightBin, hmergedBin, hleftFl, hrightFl,
-    hmergedFl, hleftNext, hleftPrevious, hrightNext, hrightPrevious]
+    hmergedClass, hmetadata, hleftBin, hrightBin, hmergedBin, hleftFl, hrightFl,
+    hmergedFl, hleftNext, hleftPrevious, hrightNext, hrightPrevious] using hout
 
 /-- The full class transaction carries the already-proved physical refinement:
 bin unlink/relink operations cannot change the physical active prefix. -/
@@ -8805,46 +8877,40 @@ theorem deallocateUncoalescedArraysOutcome_failure_eq_input
       second first heads next previous count block returnedOffset returnedBytes =
         .failure failed) :
     failed = deallocateInputState isFree prevFree second first heads next previous := by
-  let input := deallocateInputState isFree prevFree second first heads next previous
-  let bad := count > offsets.length ∨ count > sizes.length ∨
-    count > isFree.length ∨ count > prevFree.length ∨ block ≥ count ∨
-    block ≥ offsets.length ∨ block ≥ sizes.length ∨
-    block ≥ isFree.length ∨ block ≥ prevFree.length ∨
-    isFree[block]? != some 0 ∨ offsets[block]? != some returnedOffset ∨
-    sizes[block]? != some returnedBytes
-  by_cases hbad : bad
-  · simpa [deallocateUncoalescedArraysOutcome, input, bad, hbad] using
-      hfailure.symm
-  cases hclass : classifySizeBin returnedBytes with
-  | none =>
-      simpa [deallocateUncoalescedArraysOutcome, input, bad, hbad, hclass] using
-        hfailure.symm
-  | some bin =>
-    let insertionBad := bin ≥ heads.length ∨
-      bin / secondLevelCount ≥ second.length ∨
-      returnedOffset ≥ next.length ∨ returnedOffset ≥ previous.length
-    by_cases hinsertionBad : insertionBad
-    · simpa [deallocateUncoalescedArraysOutcome, input, bad, hbad, hclass,
-        insertionBad, hinsertionBad] using hfailure.symm
-    have hmark : markFreeArrays offsets sizes isFree prevFree block
-        returnedOffset returnedBytes ≠ none := by
-      apply markFreeArrays_ne_none_of_preflight
-      all_goals simp only [bad] at hbad
-      · omega
-      · omega
-      · omega
-      · omega
-      · apply Classical.byContradiction; intro h; exact hbad (by aesop)
-      · apply Classical.byContradiction; intro h; exact hbad (by aesop)
-      · apply Classical.byContradiction; intro h; exact hbad (by aesop)
-    have hinsert : insertClassArrays second first heads next previous bin
-        returnedOffset ≠ none := by
-      apply insertClassArrays_ne_none_of_preflight
-      all_goals simp only [insertionBad] at hinsertionBad
-      all_goals omega
-    exact (commitDeallocateUncoalescedOutcome_ne_failure hmark hinsert (by
-      simpa [deallocateUncoalescedArraysOutcome, input, bad, hbad, hclass,
-        insertionBad, hinsertionBad] using hfailure)).elim
+  unfold deallocateUncoalescedArraysOutcome at hfailure
+  dsimp only at hfailure
+  split at hfailure
+  next => simpa using hfailure.symm
+  next hbad =>
+    cases hclass : classifySizeBin returnedBytes with
+    | none => simpa [hclass] using hfailure.symm
+    | some bin =>
+      by_cases hinsertionBad : bin ≥ heads.length ∨
+          bin / secondLevelCount ≥ second.length ∨
+          returnedOffset ≥ next.length ∨
+          returnedOffset ≥ previous.length
+      · simpa [hclass, hinsertionBad] using hfailure.symm
+      ·
+        have hmark : markFreeArrays offsets sizes isFree prevFree block
+            returnedOffset returnedBytes ≠ none := by
+          apply markFreeArrays_ne_none_of_preflight
+          all_goals simp only [not_or] at hbad
+          all_goals try omega
+          all_goals simp_all
+          · exact (List.getElem?_eq_some_iff.mp
+              hbad.2.2.2.2.2.2.2.2.2.1).2
+          · exact (List.getElem?_eq_some_iff.mp
+              hbad.2.2.2.2.2.2.2.2.2.2.1).2
+          · exact (List.getElem?_eq_some_iff.mp
+              hbad.2.2.2.2.2.2.2.2.2.2.2).2
+        have hinsert : insertClassArrays second first heads next previous bin
+            returnedOffset ≠ none := by
+          apply insertClassArrays_ne_none_of_preflight
+          all_goals simp only [not_or] at hinsertionBad
+          all_goals simp only [secondLevelCount] at hinsertionBad ⊢
+          all_goals omega
+        exact (commitDeallocateUncoalescedOutcome_ne_failure hmark hinsert
+          (by simpa [hclass, hinsertionBad] using hfailure)).elim
 
 theorem deallocateUncoalescedArraysOutcome_failure_preserves_frame
     {PROP : Type} [Iris.BI PROP]
@@ -8881,24 +8947,34 @@ theorem deallocateUncoalescedArraysOutcome_success_result
       state = ⟨marked.1, marked.2, inserted.second, inserted.first,
         inserted.heads, inserted.next, inserted.previous⟩ := by
   unfold deallocateUncoalescedArraysOutcome at hsuccess
+  dsimp only at hsuccess
   split at hsuccess <;> try contradiction
-  next =>
-    split at hsuccess <;> try contradiction
-    next bin hclass =>
-      split at hsuccess <;> try contradiction
-      next =>
-        unfold commitDeallocateUncoalescedOutcome at hsuccess
+  next hbad =>
+    cases hclass : classifySizeBin returnedBytes with
+    | none => simp [hclass] at hsuccess
+    | some bin =>
+      by_cases hinsertionBad : bin ≥ heads.length ∨
+          bin / secondLevelCount ≥ second.length ∨
+          returnedOffset ≥ next.length ∨
+          returnedOffset ≥ previous.length
+      · simp [hclass, hinsertionBad] at hsuccess
+      · have hcommit : commitDeallocateUncoalescedOutcome
+            (deallocateInputState isFree prevFree second first heads next previous)
+            offsets sizes isFree prevFree second first heads next previous block
+            returnedOffset returnedBytes bin = .success state := by
+          simpa [hclass, hinsertionBad] using hsuccess
+        unfold commitDeallocateUncoalescedOutcome at hcommit
         cases hmark : markFreeArrays offsets sizes isFree prevFree block
             returnedOffset returnedBytes with
-        | none => simp [hmark] at hsuccess
+        | none => simp [hmark] at hcommit
         | some marked =>
           cases hinsert : insertClassArrays second first heads next previous bin
               returnedOffset with
-          | none => simp [hmark, hinsert] at hsuccess
+          | none => simp [hmark, hinsert] at hcommit
           | some inserted =>
-            simp [hmark, hinsert] at hsuccess
+            simp [hmark, hinsert] at hcommit
             subst state
-            exact ⟨marked, bin, inserted, hmark, hclass, hinsert, rfl⟩
+            exact ⟨marked, bin, inserted, rfl, rfl, hinsert, rfl⟩
 
 /-- Successful stateful execution is also a successful execution of the exact
 `Option` transformer consumed by the existing allocator refinement theorems. -/
@@ -8924,12 +9000,17 @@ theorem deallocateUncoalescedArraysOutcome_success_refines_option
     deallocateUncoalescedArraysOutcome_success_result hsuccess
   have hbounds : count ≤ offsets.length ∧ count ≤ sizes.length ∧
       count ≤ isFree.length ∧ count ≤ prevFree.length ∧ block < count := by
-    unfold deallocateUncoalescedArraysOutcome at hsuccess
-    split at hsuccess
-    · contradiction
-    · rename_i hbad
-      simp only at hbad
-      omega
+    have hcapacity : ¬(count > offsets.length ∨ count > sizes.length ∨
+        count > isFree.length ∨ count > prevFree.length) := by
+      intro hcapacity
+      rcases hcapacity with h | h | h | h <;>
+        simp [deallocateUncoalescedArraysOutcome, h] at hsuccess
+    have hblock : block < count := by
+      apply Nat.lt_of_not_ge
+      intro hblock
+      simp [deallocateUncoalescedArraysOutcome, hblock] at hsuccess
+    simp only [not_or] at hcapacity
+    omega
   let result : DeallocateUncoalescedResult :=
     ⟨marked.1, marked.2, inserted⟩
   refine ⟨result, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
@@ -9545,15 +9626,15 @@ theorem deallocateUncoalescedArraysOutcome_constructs_valid
         .success concrete) :
     ∃ cls markedAbstract,
       markedAbstract = {
-        physical := markFreeAt blocks i
+        physical := markFreeAt blocks i,
         bins := state.insert cls (Dealloc.freedBlock selected) } ∧
       Dealloc.deallocateUncoalesced pool { physical := blocks, bins := state } i
           (selected.region pool) = some markedAbstract ∧
       Alloc.Valid pool markedAbstract ∧
       RepresentsPhysicalArrays offsets sizes concrete.isFree concrete.prevFree count
         markedAbstract.physical ∧
-      RepresentsBins { heads := concrete.heads, next := concrete.next,
-          previous := concrete.previous } markedAbstract.bins ∧
+      RepresentsBins ⟨concrete.heads, concrete.next, concrete.previous⟩
+        markedAbstract.bins ∧
       BinsOffsetsDisjoint markedAbstract.bins ∧
       RepresentsSecondBitmap concrete.second markedAbstract.bins ∧
       FirstBitmapRep concrete.first concrete.second := by

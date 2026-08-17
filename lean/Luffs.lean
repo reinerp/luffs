@@ -12,6 +12,7 @@ import Luffs.Allocator.TLSF.Bins
 import Luffs.Allocator.TLSF.Alloc
 import Luffs.Allocator.TLSF.Ownership
 import Luffs.Allocator.TLSF.Dealloc
+import Luffs.Allocator.TLSF.API
 import Luffs.Containers.Box
 import Luffs.Containers.Vec
 import Luffs.Runtime.Containers

@@ -1882,8 +1882,8 @@ theorem boxLoadU32_after_boxStoreU32 (storage result : List Byte) (begin : Nat)
       have h1 : begin + 1 < storage.length := by omega
       have h2 : begin + 2 < storage.length := by omega
       have h3 : begin + 3 < storage.length := by omega
-      simp [boxLoadU32, hword, hbound, h0, h1, h2, h3,
-        Scalar.decode32, Scalar.byteAt]
+      simpa [boxLoadU32, hword, hbound, h0, h1, h2, h3,
+        Scalar.encode32] using Scalar.decode32_encode32 value
 
 def boxLoadU64 (storage : List Byte) (begin : Nat) : Option (BitVec 64) := do
   if begin > Luffs.Runtime.TLSF.usizeMax - 7 then none
@@ -1931,8 +1931,18 @@ theorem boxLoadU64_after_boxStoreU64 (storage result : List Byte) (begin : Nat)
       have h5 : begin + 5 < storage.length := by omega
       have h6 : begin + 6 < storage.length := by omega
       have h7 : begin + 7 < storage.length := by omega
-      simp [boxLoadU64, hword, hbound, h0, h1, h2, h3, h4, h5, h6, h7,
-        Scalar.decode64, Scalar.byteAt]
+      simpa [boxLoadU64, hword, hbound, h0, h1, h2, h3, h4, h5, h6, h7,
+        Scalar.encode64] using Scalar.decode64_encode64 value
+
+/-- Pointer-sized scalar codecs for the current 64-bit Luffs target. Indices
+remain natural numbers in the checker; stored values are truncated exactly as
+Rust's `as u64` conversion. -/
+def boxLoadUsize (storage : List Byte) (begin : Nat) : Option Nat :=
+  (boxLoadU64 storage begin).map BitVec.toNat
+
+def boxStoreUsize (storage : List Byte) (begin value : Nat) :
+    Option (List Byte) :=
+  boxStoreU64 storage begin (BitVec.ofNat 64 value)
 
 theorem boxLoadU16_eq_generic (storage : List Byte) (begin : Nat)
     (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax) :

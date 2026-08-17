@@ -240,11 +240,177 @@ theorem firstSetFrom_wordBits_eq_masked_ctz (word : BitVec 64) (bit : Nat)
   have : found = masked.ctz.toNat := by omega
   simpa [masked, this] using hfound
 
+theorem firstSetFrom_wordBits_eq_none_of_masked_eq_zero
+    (word : BitVec 64) (bit : Nat) (hzero : word &&& maskFrom bit = 0) :
+    firstSetFrom (wordBits word) bit = none := by
+  cases hfind : firstSetFrom (wordBits word) bit with
+  | none => rfl
+  | some found =>
+    have hfoundFacts := firstSetFrom_sound hfind
+    have hfoundBound : found < 64 := by
+      simpa [wordBits_length] using hfoundFacts.2.1
+    have horiginal : word.getLsbD found = true := by
+      have hget := hfoundFacts.2.2
+      rw [wordBits_get word found hfoundBound] at hget
+      exact Option.some.inj hget
+    have hmasked : (word &&& maskFrom bit).getLsbD found = true := by
+      rw [maskedWord_getLsbD]
+      simp [hfoundFacts.1, hfoundBound, horiginal]
+    rw [hzero] at hmasked
+    simp at hmasked
+
+theorem firstTrueIndex_wordBits_zero :
+    firstTrueIndex (wordBits (0 : BitVec 64)) = none := by
+  native_decide
+
+/-- Exact semantics of the subsequent-word Rust loop: zero words are skipped;
+the first nonzero word is resolved with `trailing_zeros`. -/
+def findNonzeroWords : List (BitVec 64) → Nat → Option Nat
+  | [], _ => none
+  | word :: rest, base =>
+      if word = (0 : BitVec 64) then findNonzeroWords rest (base + 64)
+      else some (base + word.ctz.toNat)
+
+theorem findNonzeroWords_refines (words : List (BitVec 64)) (base : Nat) :
+    findNonzeroWords words base =
+      (firstTrueIndex (bitmapBits words)).map (base + ·) := by
+  induction words generalizing base with
+  | nil => simp [findNonzeroWords, bitmapBits, firstTrueIndex]
+  | cons word rest ih =>
+    rw [bitmapBits, firstTrueIndex_append]
+    by_cases hzero : word = (0 : BitVec 64)
+    · subst word
+      rw [firstTrueIndex_wordBits_zero]
+      simp only [findNonzeroWords, if_pos rfl, ih, Option.map_map]
+      cases hrest : firstTrueIndex (bitmapBits rest) with
+      | none => simp [hrest]
+      | some offset =>
+        simp only [hrest, Option.map_some]
+        congr 1
+        simp [wordBits_length, Function.comp_def]
+        omega
+    · rw [firstTrueIndex_wordBits_ctz hzero]
+      rw [findNonzeroWords, if_neg hzero]
+      rfl
+
 theorem bitmapBits_length (words : List (BitVec 64)) :
     (bitmapBits words).length = words.length * 64 := by
   induction words with
   | nil => rfl
   | cons word rest => simp [bitmapBits, wordBits_length, *]; omega
+
+theorem bitmapBits_drop (words : List (BitVec 64)) (count : Nat) :
+    bitmapBits (words.drop count) =
+      (bitmapBits words).drop (count * 64) := by
+  induction words generalizing count with
+  | nil => simp [bitmapBits]
+  | cons word rest ih =>
+    cases count with
+    | zero => simp
+    | succ count =>
+      simp only [List.drop_succ_cons, bitmapBits]
+      rw [ih]
+      rw [Nat.succ_mul]
+      symm
+      calc
+        (wordBits word ++ bitmapBits rest).drop (count * 64 + 64) =
+            (wordBits word).drop (count * 64 + 64) ++
+              (bitmapBits rest).drop ((count * 64 + 64) - 64) := by
+                exact List.drop_append
+        _ = (bitmapBits rest).drop (count * 64) := by
+          have hsub : count * 64 + 64 - 64 = count * 64 := by omega
+          simp [wordBits_length, hsub]
+
+/-- Chunk-level semantics of the bounded word loop. It searches the first word
+from the intra-word offset, then searches the remaining complete words. -/
+def findNonemptyBinChunked (words : List (BitVec 64)) (start : Nat) : Option Nat :=
+  let wordIndex := start / 64
+  let bit := start % 64
+  match words.drop wordIndex with
+  | [] => none
+  | word :: rest =>
+      match firstSetFrom (wordBits word) bit with
+      | some offset => some (wordIndex * 64 + offset)
+      | none =>
+          (firstTrueIndex (bitmapBits rest)).map
+            ((wordIndex + 1) * 64 + ·)
+
+/-- Exact arithmetic and control-flow semantics of the Luffs/Rust bitmap
+lookup, including its masked first word and `ctz`-based subsequent-word loop. -/
+def findNonemptyBinLowered (words : List (BitVec 64)) (start : Nat) : Option Nat :=
+  let wordIndex := start / 64
+  let bit := start % 64
+  match words.drop wordIndex with
+  | [] => none
+  | word :: rest =>
+      let masked := word &&& maskFrom bit
+      if masked ≠ 0 then some (wordIndex * 64 + masked.ctz.toNat)
+      else findNonzeroWords rest ((wordIndex + 1) * 64)
+
+theorem findNonemptyBinLowered_eq_chunked
+    (words : List (BitVec 64)) (start : Nat) :
+    findNonemptyBinLowered words start = findNonemptyBinChunked words start := by
+  unfold findNonemptyBinLowered findNonemptyBinChunked
+  simp only
+  cases hdrop : words.drop (start / 64) with
+  | nil => rfl
+  | cons word rest =>
+    change
+      (if word &&& maskFrom (start % 64) ≠ 0 then
+          some (start / 64 * 64 + (word &&& maskFrom (start % 64)).ctz.toNat)
+        else findNonzeroWords rest ((start / 64 + 1) * 64)) =
+      match firstSetFrom (wordBits word) (start % 64) with
+      | some offset => some (start / 64 * 64 + offset)
+      | none =>
+          (firstTrueIndex (bitmapBits rest)).map
+            ((start / 64 + 1) * 64 + ·)
+    by_cases hmasked : word &&& maskFrom (start % 64) = 0
+    · rw [if_neg (not_not_intro hmasked),
+        firstSetFrom_wordBits_eq_none_of_masked_eq_zero word _ hmasked,
+        findNonzeroWords_refines]
+    · rw [if_pos hmasked,
+        firstSetFrom_wordBits_eq_masked_ctz word _ hmasked]
+
+theorem findNonemptyBinChunked_refines (words : List (BitVec 64)) (start : Nat) :
+    findNonemptyBinChunked words start = findNonemptyBin words start := by
+  have hbit : start % 64 ≤ (wordBits (0 : BitVec 64)).length := by
+    simp [wordBits_length]
+    exact Nat.le_of_lt (Nat.mod_lt start (by omega))
+  have hsplit : start = (start / 64) * 64 + start % 64 := by
+    omega
+  have hremainder : start % 64 < 64 := Nat.mod_lt start (by omega)
+  have hquotient :
+      ((start / 64) * 64 + start % 64) / 64 = start / 64 := by
+    rw [Nat.mul_comm (start / 64) 64, Nat.mul_add_div (by omega)]
+    simp [Nat.div_eq_of_lt hremainder]
+  have hmodulo :
+      ((start / 64) * 64 + start % 64) % 64 = start % 64 := by
+    rw [Nat.mul_comm (start / 64) 64, Nat.mul_add_mod]
+    exact Nat.mod_eq_of_lt hremainder
+  unfold findNonemptyBin
+  rw [hsplit, firstSetFrom_add]
+  rw [← bitmapBits_drop words (start / 64)]
+  unfold findNonemptyBinChunked
+  simp only [hquotient, hmodulo]
+  cases hdrop : words.drop (start / 64) with
+  | nil => simp [bitmapBits, firstSetFrom, firstTrueIndex]
+  | cons word rest =>
+    rw [bitmapBits]
+    rw [firstSetFrom_append _ _ _ (by simpa [wordBits_length] using hbit)]
+    cases hfirst : firstSetFrom (wordBits word) (start % 64) with
+    | some offset => simp [hdrop, hfirst]
+    | none =>
+      simp only [hdrop, hfirst, Option.map_none, Option.map_map,
+        List.length_append, wordBits_length]
+      congr 1
+      funext offset
+      simp [Function.comp_def, hquotient]
+      omega
+
+theorem findNonemptyBinLowered_refines
+    (words : List (BitVec 64)) (start : Nat) :
+    findNonemptyBinLowered words start = findNonemptyBin words start := by
+  rw [findNonemptyBinLowered_eq_chunked, findNonemptyBinChunked_refines]
 
 theorem findNonemptyBin_sound {words : List (BitVec 64)} {start found : Nat}
     (hfind : findNonemptyBin words start = some found) :

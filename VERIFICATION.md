@@ -210,11 +210,13 @@ index for every nonzero word. The exact Rust first-word operation—AND with
 the logical suffix search. These proofs use checked selected-bit, lower-bit,
 shift, and bitwise-AND lemmas rather than trusting a trailing-zero or mask
 axiom.
-The compiler now also recognizes the checked source shape of
-`tlsf_find_nonempty_bin` and emits its Lean model/refinement declaration; a
-changed mask direction is rejected. This is source-shape gating for the current
-prototype. A compositional translation of the word loop, rather than this
-specialized recognizer, remains part of replacing the prototype compiler path.
+The compiler recognizes the checked source shape of `tlsf_find_nonempty_bin`
+and emits executable lowered Lean semantics plus a refinement theorem; a
+changed mask direction is rejected. The lowered model performs the same word
+division and remainder, first-word mask, zero-word skipping, and per-word
+`ctz` operations as the Rust. It is proved equal to flat first-set search via
+word-drop, append-search, and offset-shifting lemmas. The recognizer itself is
+still specialized rather than a compositional translation of arbitrary loops.
 
 The first target is sequential TLSF with fixed-size pools obtained from `mmap`.
 Growing pools, `realloc`, aligned allocation beyond the base alignment, and

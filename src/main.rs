@@ -1666,11 +1666,13 @@ induction sizes generalizing flags with\n  \
     for model in &module.tlsf_find_nonempty_bin_models {
         out.push_str(&format!(
             "def {}_model (words : List (BitVec 64)) (start : Nat) : Option Nat :=\n  \
-{} words start\n\n",
-            model.name, model.refines
+Luffs.Runtime.TLSF.findNonemptyBinLowered words start\n\n",
+            model.name
         ));
         out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
+            "theorem {}_refines : {}_model = {} := by\n  \
+funext words start\n  \
+exact Luffs.Runtime.TLSF.findNonemptyBinLowered_refines words start\n\n",
             model.name, model.name, model.refines
         ));
     }
@@ -1865,8 +1867,8 @@ mod tests {
 
     #[test]
     fn tlsf_bitmap_refinement_rejects_a_changed_mask() {
-        let source = include_str!("../stdlib/tlsf.luffs")
-            .replace("u64::MAX << bit", "u64::MAX >> bit");
+        let source =
+            include_str!("../stdlib/tlsf.luffs").replace("u64::MAX << bit", "u64::MAX >> bit");
         let m = parse(&source).unwrap();
         assert!(m.tlsf_find_nonempty_bin_models.is_empty());
     }

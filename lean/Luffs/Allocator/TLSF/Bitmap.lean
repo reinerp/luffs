@@ -12,6 +12,46 @@ def firstTrueIndex : List Bool -> Option Nat
 def firstSetFrom (bits : List Bool) (start : Nat) : Option Nat :=
   (firstTrueIndex (bits.drop start)).map (start + ·)
 
+theorem firstTrueIndex_append (left right : List Bool) :
+    firstTrueIndex (left ++ right) =
+      match firstTrueIndex left with
+      | some index => some index
+      | none => (firstTrueIndex right).map (left.length + ·) := by
+  induction left with
+  | nil => simp [firstTrueIndex]
+  | cons bit rest ih =>
+    cases bit with
+    | true => simp [firstTrueIndex]
+    | false =>
+      cases hrest : firstTrueIndex rest <;>
+        cases hright : firstTrueIndex right <;>
+        simp [firstTrueIndex, ih, hrest, hright] <;> omega
+
+theorem firstSetFrom_append (left right : List Bool) (start : Nat)
+    (hstart : start ≤ left.length) :
+    firstSetFrom (left ++ right) start =
+      match firstSetFrom left start with
+      | some index => some index
+      | none => (firstTrueIndex right).map (left.length + ·) := by
+  unfold firstSetFrom
+  rw [List.drop_append_of_le_length hstart, firstTrueIndex_append]
+  cases hleft : firstTrueIndex (left.drop start) with
+  | none =>
+    cases hright : firstTrueIndex right with
+    | none => simp [hleft, hright]
+    | some index =>
+      simp only [hleft, Option.map_none, hright, Option.map_some]
+      congr 1
+      rw [List.length_drop]
+      omega
+  | some index => simp [hleft]
+
+theorem firstSetFrom_add (bits : List Bool) (base offset : Nat) :
+    firstSetFrom bits (base + offset) =
+      (firstSetFrom (bits.drop base) offset).map (base + ·) := by
+  simp [firstSetFrom, List.drop_drop, Option.map_map, Function.comp_def,
+    Nat.add_assoc]
+
 theorem firstTrueIndex_sound {bits : List Bool} {i : Nat}
     (h : firstTrueIndex bits = some i) : bits[i]? = some true := by
   induction bits generalizing i with

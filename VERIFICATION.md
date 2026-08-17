@@ -696,12 +696,16 @@ concurrency are later extensions and are not prerequisites for `Box` and
   The formerly implicit `Box<i8>` case now also has concrete Luffs load/store
   bodies, generated one-byte programs, and direct equivalence to `Scalar.u8`;
   its Iris rules return the owned signed bit pattern or update it with exactly
-  one framed byte write.
+  one framed byte write. On the declared 64-bit target, `usize` and `isize`
+  loads/stores now both generate `BitVec 64` models, refine the proved u64
+  runtime operations, and emit exact eight-access WPs. The compiler preserves
+  the semantic distinction between pointer-sized indices (`Nat`) and stored
+  pointer-sized payloads (`BitVec 64`).
   The compositional source translator now assigns Lean `BitVec` models to all
   signed and unsigned scalar widths and lowers arbitrary 8/16/32/64/128-bit
   `from_le_bytes` expressions plus byte-extraction stores. `usize`/`isize` are
-  currently fixed to the existing 64-bit target model; generating complete
-  allocator-backed operations for each codec remains.
+  currently fixed to the existing 64-bit target model; target-width
+  parameterization remains.
 - [ ] `Vec<T>`: invariant `len <= capacity`, initialized prefix ownership,
   spare-capacity ownership, checked layout arithmetic, growth without loss or
   double-drop, `push`, `pop`, indexing, shared/mutable slices, and drop.

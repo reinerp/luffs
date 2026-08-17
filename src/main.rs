@@ -674,6 +674,9 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
                         }
                         params.push((name, "List (Fin 256)".to_owned()));
                     }
+                    "usize" if name == "value" && trimmed[3..open].trim().ends_with("_usize") => {
+                        params.push((name, "BitVec 64".to_owned()));
+                    }
                     "usize" => params.push((name, "Nat".to_owned())),
                     ty => match lean_scalar_type(ty) {
                         Some(ty) => params.push((name, ty)),
@@ -4671,6 +4674,25 @@ mod tests {
             "theorem box_store_i8_refines : box_store_i8_model = Luffs.Runtime.Containers.boxStoreI8"
         ));
         assert!(generated.contains("theorem box_store_i8_program_wp"));
+        assert!(generated.contains(
+            "theorem box_load_usize_refines : box_load_usize_model = Luffs.Runtime.Containers.boxLoadU64"
+        ));
+        assert!(generated.contains("theorem box_load_usize_program_wp"));
+        assert!(generated.contains(
+            "def box_store_usize_model (storage : List (Fin 256)) (begin : Nat) (value : BitVec 64)"
+        ));
+        assert!(generated.contains(
+            "theorem box_store_usize_refines : box_store_usize_model = Luffs.Runtime.Containers.boxStoreU64"
+        ));
+        assert!(generated.contains("theorem box_store_usize_program_wp"));
+        assert!(generated.contains(
+            "theorem box_load_isize_refines : box_load_isize_model = Luffs.Runtime.Containers.boxLoadU64"
+        ));
+        assert!(generated.contains("theorem box_load_isize_program_wp"));
+        assert!(generated.contains(
+            "theorem box_store_isize_refines : box_store_isize_model = Luffs.Runtime.Containers.boxStoreU64"
+        ));
+        assert!(generated.contains("theorem box_store_isize_program_wp"));
     }
 
     #[test]

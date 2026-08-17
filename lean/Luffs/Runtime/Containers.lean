@@ -2302,6 +2302,16 @@ def vecGrowU64Arrays := vecGrowArrays Scalar.u64
 /-- Sixteen-byte source specialization of codec-generic Vec growth. -/
 def vecGrowU128Arrays := vecGrowArrays Scalar.u128
 
+/-- Signed and target-word growth retain their typed codec while reusing the
+same byte-width transition. -/
+def vecGrowI8Arrays := vecGrowArrays Scalar.i8
+def vecGrowI16Arrays := vecGrowArrays Scalar.i16
+def vecGrowI32Arrays := vecGrowArrays Scalar.i32
+def vecGrowI64Arrays := vecGrowArrays Scalar.i64
+def vecGrowI128Arrays := vecGrowArrays Scalar.i128
+def vecGrowUsizeArrays := vecGrowArrays Scalar.usize
+def vecGrowIsizeArrays := vecGrowArrays Scalar.isize
+
 /-- Exact state transformer for `tlsf_vec_grow_u8`: validate the old live
 prefix, allocate a replacement, copy from the old prefix snapshot, and only
 then return the old block to TLSF. -/

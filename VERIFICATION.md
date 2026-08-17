@@ -786,10 +786,16 @@ concurrency are later extensions and are not prerequisites for `Box` and
   identifies them with `vecGrowArrays` at the matching scalar codec, so the
   generic refinement and Iris ownership laws apply directly. Their generated
   copy programs have closed weakest-precondition proofs for exactly
-  `len * size` byte steps. Source-shape regressions reject omission or
-  corruption of both initialized-length and capacity multiplications. Signed
-  and pointer-width source-level aliases to these width proofs are still
-  outstanding.
+  `len * size` byte steps. Signed `i8/i16/i32/i64/i128` and target-word
+  `usize/isize` Luffs entry points now delegate to the matching proved width
+  while their generated models retain the corresponding typed scalar codec;
+  consequently the same generic Iris law transfers the correctly typed
+  `Vec.Owns` capability. Alias recognition depends on recognition of the
+  underlying unsigned body. Source-shape regressions reject omission or
+  corruption of initialized-length/capacity multiplications, reject a signed
+  alias targeting the wrong width, and remove all dependent aliases when a
+  width implementation is invalidated. Allocator-backed growth now covers
+  every scalar type in the Luffs language.
   New, growth, and drop now all quantify over represented fixed-capacity
   physical-header arrays. The generalized public allocation theorem proves
   the active prefix refines abstract TLSF while framing unused slots, closing
@@ -964,8 +970,8 @@ alias semantics. This removes the one-store restriction that blocked
   eight-access programs and refine the proved u64 bit-pattern transition on
   the declared 64-bit target. Thus construction, in-capacity push, indexed
   get, generic pop, and generic drop cover every scalar type currently in the
-  Luffs language; growth monomorphization and scoped slices remain before the
-  overall Vec item is complete.
+  Luffs language; allocator-backed growth now has matching coverage. Scoped
+  slices remain before the overall Vec item is complete.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.
   All four checked-in examples are currently accepted by Lean and compile to

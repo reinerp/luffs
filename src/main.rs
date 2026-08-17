@@ -2530,6 +2530,50 @@ fn parse_tlsf_vec_grow_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
             });
         }
     }
+    let aliases = [
+        ("tlsf_vec_grow_i8", "tlsf_vec_grow_u8"),
+        ("tlsf_vec_grow_i16", "tlsf_vec_grow_u16"),
+        ("tlsf_vec_grow_i32", "tlsf_vec_grow_u32"),
+        ("tlsf_vec_grow_i64", "tlsf_vec_grow_u64"),
+        ("tlsf_vec_grow_i128", "tlsf_vec_grow_u128"),
+        ("tlsf_vec_grow_usize", "tlsf_vec_grow_u64"),
+        ("tlsf_vec_grow_isize", "tlsf_vec_grow_u64"),
+    ];
+    for (name, dependency) in aliases {
+        let Some(index) = lines
+            .iter()
+            .position(|line| line.trim().starts_with(&format!("fn {name}(")))
+        else {
+            continue;
+        };
+        let Some(target) = index
+            .checked_sub(1)
+            .and_then(|i| lines.get(i))
+            .and_then(|line| line.trim().strip_prefix("// refines "))
+        else {
+            continue;
+        };
+        let body = lexical_function_body(&lines, index);
+        let call = format!(
+            "{dependency}(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, old_offset, len, old_capacity, new_capacity)"
+        );
+        if body.iter().any(|line| line == &call) {
+            models.push(TlsfCoalescePhysicalModel {
+                name: name.to_owned(),
+                refines: target.trim().to_owned(),
+            });
+        }
+    }
+    let recognized = models
+        .iter()
+        .map(|model| model.name.clone())
+        .collect::<BTreeSet<_>>();
+    models.retain(|model| {
+        aliases
+            .iter()
+            .find_map(|(alias, dependency)| (*alias == model.name).then_some(*dependency))
+            .is_none_or(|dependency| recognized.contains(dependency))
+    });
     models
 }
 
@@ -3887,10 +3931,13 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
             model.name, model.name, model.refines
         ));
         let copied_len = match model.name.as_str() {
-            "tlsf_vec_grow_u16" => "len * 2",
-            "tlsf_vec_grow_u32" => "len * 4",
-            "tlsf_vec_grow_u64" => "len * 8",
-            "tlsf_vec_grow_u128" => "len * 16",
+            "tlsf_vec_grow_u16" | "tlsf_vec_grow_i16" => "len * 2",
+            "tlsf_vec_grow_u32" | "tlsf_vec_grow_i32" => "len * 4",
+            "tlsf_vec_grow_u64"
+            | "tlsf_vec_grow_i64"
+            | "tlsf_vec_grow_usize"
+            | "tlsf_vec_grow_isize" => "len * 8",
+            "tlsf_vec_grow_u128" | "tlsf_vec_grow_i128" => "len * 16",
             _ => "len",
         };
         out.push_str(&format!(
@@ -4346,6 +4393,22 @@ mod tests {
         ));
         assert!(generated.contains("theorem tlsf_vec_grow_u128_copy_program_wp"));
         assert!(generated.contains("theorem tlsf_vec_grow_u128_copy_program_wp_exact"));
+        for (name, target) in [
+            ("i8", "vecGrowI8Arrays"),
+            ("i16", "vecGrowI16Arrays"),
+            ("i32", "vecGrowI32Arrays"),
+            ("i64", "vecGrowI64Arrays"),
+            ("i128", "vecGrowI128Arrays"),
+            ("usize", "vecGrowUsizeArrays"),
+            ("isize", "vecGrowIsizeArrays"),
+        ] {
+            assert!(generated.contains(&format!(
+                "theorem tlsf_vec_grow_{name}_refines : tlsf_vec_grow_{name}_model = Luffs.Runtime.Containers.{target}"
+            )));
+            assert!(generated.contains(&format!(
+                "theorem tlsf_vec_grow_{name}_copy_program_wp_exact"
+            )));
+        }
         assert!(generated.contains("exact hsteps.copyLoop_wp_exact"));
         assert!(generated.contains("hsrc : ∀ i, i < len * 2 → mem.mapped (oldBase + i)"));
         assert!(generated.contains(
@@ -4642,6 +4705,31 @@ mod tests {
             !m.tlsf_vec_grow_models
                 .iter()
                 .any(|model| model.name == "tlsf_vec_grow_u64")
+        );
+        for dependent in [
+            "tlsf_vec_grow_i64",
+            "tlsf_vec_grow_usize",
+            "tlsf_vec_grow_isize",
+        ] {
+            assert!(
+                !m.tlsf_vec_grow_models
+                    .iter()
+                    .any(|model| model.name == dependent)
+            );
+        }
+    }
+
+    #[test]
+    fn tlsf_vec_grow_signed_alias_rejects_wrong_width_dependency() {
+        let source = include_str!("../stdlib/tlsf.luffs").replace(
+            "tlsf_vec_grow_u32(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, old_offset, len, old_capacity, new_capacity)",
+            "tlsf_vec_grow_u16(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, old_offset, len, old_capacity, new_capacity)",
+        );
+        let m = parse(&source).unwrap();
+        assert!(
+            !m.tlsf_vec_grow_models
+                .iter()
+                .any(|model| model.name == "tlsf_vec_grow_i32")
         );
     }
 

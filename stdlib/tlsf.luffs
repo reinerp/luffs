@@ -1033,3 +1033,39 @@ fn tlsf_vec_grow_u128(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes:
     tlsf_box_drop_u8(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, old_offset)?;
     Some(new_offset)
 }
+
+// Scalar representations of equal width share the proved growth transition.
+// refines Luffs.Runtime.Containers.vecGrowI8Arrays
+fn tlsf_vec_grow_i8(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], old_offset: usize, len: usize, old_capacity: usize, new_capacity: usize) -> Option<usize> {
+    tlsf_vec_grow_u8(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, old_offset, len, old_capacity, new_capacity)
+}
+
+// refines Luffs.Runtime.Containers.vecGrowI16Arrays
+fn tlsf_vec_grow_i16(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], old_offset: usize, len: usize, old_capacity: usize, new_capacity: usize) -> Option<usize> {
+    tlsf_vec_grow_u16(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, old_offset, len, old_capacity, new_capacity)
+}
+
+// refines Luffs.Runtime.Containers.vecGrowI32Arrays
+fn tlsf_vec_grow_i32(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], old_offset: usize, len: usize, old_capacity: usize, new_capacity: usize) -> Option<usize> {
+    tlsf_vec_grow_u32(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, old_offset, len, old_capacity, new_capacity)
+}
+
+// refines Luffs.Runtime.Containers.vecGrowI64Arrays
+fn tlsf_vec_grow_i64(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], old_offset: usize, len: usize, old_capacity: usize, new_capacity: usize) -> Option<usize> {
+    tlsf_vec_grow_u64(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, old_offset, len, old_capacity, new_capacity)
+}
+
+// refines Luffs.Runtime.Containers.vecGrowI128Arrays
+fn tlsf_vec_grow_i128(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], old_offset: usize, len: usize, old_capacity: usize, new_capacity: usize) -> Option<usize> {
+    tlsf_vec_grow_u128(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, old_offset, len, old_capacity, new_capacity)
+}
+
+// refines Luffs.Runtime.Containers.vecGrowUsizeArrays
+fn tlsf_vec_grow_usize(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], old_offset: usize, len: usize, old_capacity: usize, new_capacity: usize) -> Option<usize> {
+    tlsf_vec_grow_u64(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, old_offset, len, old_capacity, new_capacity)
+}
+
+// refines Luffs.Runtime.Containers.vecGrowIsizeArrays
+fn tlsf_vec_grow_isize(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], old_offset: usize, len: usize, old_capacity: usize, new_capacity: usize) -> Option<usize> {
+    tlsf_vec_grow_u64(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, old_offset, len, old_capacity, new_capacity)
+}

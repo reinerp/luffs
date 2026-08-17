@@ -9604,6 +9604,113 @@ theorem deallocateArraysOutcome_right_coalesce_total
   exact coalesceIfPossibleArraysOutcome_ne_failure_of_valid hmarkedValid hpoolMax
     hmarkedPhysical hmarkedSecond hmarkedBins
 
+theorem deallocateArraysOutcome_left_coalesce_total
+    {pool : Luffs.Memory.Region} {blocks : List Block} {state : Bins.State}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count i : Nat} {selected : Block}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {marked : DeallocateMachineState}
+    {afterRight : CoalesceClassResult}
+    (hphysical : RepresentsPhysicalArrays offsets sizes isFree prevFree count blocks)
+    (hget : blocks[i]? = some selected)
+    (hallocated : selected.free = false)
+    (hallocValid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hcountMax : count ≤ usizeMax)
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hfresh : ∀ query, selected.offset ∉
+      (state.chains query).map Block.offset)
+    (hmarked : deallocateUncoalescedArraysOutcome offsets sizes isFree prevFree
+      second first heads next previous count i selected.offset selected.bytes =
+        .success marked)
+    (hright : coalesceIfPossibleArraysOutcome offsets sizes marked.isFree
+      marked.prevFree marked.second marked.first marked.heads marked.next
+      marked.previous count i = .success afterRight) :
+    ∀ failed, coalesceIfPossibleArraysOutcome afterRight.offsets afterRight.sizes
+      afterRight.isFree afterRight.prevFree afterRight.second afterRight.first
+      afterRight.heads afterRight.next afterRight.previous afterRight.count
+      (i - 1) ≠ .failure failed := by
+  obtain ⟨_, markedAbstract, _, _, hmarkedValid, hmarkedPhysical,
+      hmarkedBins, hmarkedDisjoint, hmarkedSecond, hmarkedFirst⟩ :=
+    deallocateUncoalescedArraysOutcome_constructs_valid hphysical hget hallocated
+      hallocValid hsecond hfirst hbins hdisjoint hfresh hmarked
+  obtain ⟨abstractAfterRight, hrightAbstract, hrightPhysical,
+      _, hrightBins, hrightDisjoint, hrightSecond, _⟩ :=
+    coalesceIfPossibleArraysOutcome_refines_allocator hmarkedValid hpoolMax
+      hmarkedPhysical hcountMax hmarkedSecond hmarkedFirst hmarkedBins
+      hmarkedDisjoint hright
+  have hrightValid : Alloc.Valid pool abstractAfterRight :=
+    Dealloc.coalesceIfPossible_preserves_valid hmarkedValid hrightAbstract
+  exact coalesceIfPossibleArraysOutcome_ne_failure_of_valid hrightValid hpoolMax
+    hrightPhysical hrightSecond hrightBins
+
+/-- Public deallocation is transactional for every completely represented
+valid allocator: a rejected return carries the exact complete input metadata. -/
+theorem deallocateArraysOutcome_failure_eq_input
+    {pool : Luffs.Memory.Region} {blocks : List Block} {state : Bins.State}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count i : Nat} {selected : Block}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {failed : CoalesceClassResult}
+    (hphysical : RepresentsPhysicalArrays offsets sizes isFree prevFree count blocks)
+    (hget : blocks[i]? = some selected)
+    (hallocated : selected.free = false)
+    (hallocValid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hcountMax : count ≤ usizeMax)
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hfresh : ∀ query, selected.offset ∉
+      (state.chains query).map Block.offset)
+    (hfailure : deallocateArraysOutcome offsets sizes isFree prevFree second first
+      heads next previous count i selected.offset selected.bytes =
+        .failure failed) :
+    failed = allocatorArrays offsets sizes isFree prevFree second first heads next
+      previous count := by
+  apply deallocateArraysOutcome_failure_eq_input_of_coalesces_total
+  · intro marked hmarked
+    exact deallocateArraysOutcome_right_coalesce_total hphysical hget hallocated
+      hallocValid hpoolMax hsecond hfirst hbins hdisjoint hfresh hmarked
+  · intro marked afterRight hmarked hright _
+    exact deallocateArraysOutcome_left_coalesce_total hphysical hget hallocated
+      hallocValid hpoolMax hcountMax hsecond hfirst hbins hdisjoint hfresh
+      hmarked hright
+  · exact hfailure
+
+theorem deallocateArraysOutcome_failure_preserves_frame
+    {PROP : Type} [Iris.BI PROP]
+    {pool : Luffs.Memory.Region} {blocks : List Block} {state : Bins.State}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count i : Nat} {selected : Block}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {failed : CoalesceClassResult}
+    (frame : PROP)
+    (hphysical : RepresentsPhysicalArrays offsets sizes isFree prevFree count blocks)
+    (hget : blocks[i]? = some selected)
+    (hallocated : selected.free = false)
+    (hallocValid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hcountMax : count ≤ usizeMax)
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hfresh : ∀ query, selected.offset ∉
+      (state.chains query).map Block.offset)
+    (hfailure : deallocateArraysOutcome offsets sizes isFree prevFree second first
+      heads next previous count i selected.offset selected.bytes =
+        .failure failed) :
+    failed = allocatorArrays offsets sizes isFree prevFree second first heads next
+        previous count ∧ (frame ∗ (emp : PROP) ⊣⊢ frame) := by
+  exact ⟨deallocateArraysOutcome_failure_eq_input hphysical hget hallocated
+    hallocValid hpoolMax hcountMax hsecond hfirst hbins hdisjoint hfresh hfailure,
+    sep_emp⟩
+
 set_option maxHeartbeats 1000000 in
 /-- End-to-end pure refinement of the public Luffs deallocator. This composes
 the verified flag/bin insertion with right coalescing and, for nonzero block

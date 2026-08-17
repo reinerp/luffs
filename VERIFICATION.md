@@ -208,7 +208,7 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   control-flow theorem proves every failure returns the exact input metadata.
   Its Iris-Lean corollary preserves an arbitrary disjoint frame, including the
   allocator's complete `OwnsFree` assertion.
-- [ ] Prove `dealloc`: consuming exactly a live allocation restores it to the
+- [x] Prove `dealloc`: consuming exactly a live allocation restores it to the
   allocator without leaks, overlap, or double-free.
   The executable deallocation transition now requires the exact returned
   region, rejects already-free blocks, preserves the physical partition, and
@@ -394,6 +394,11 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   reconstructs `coalesceIfPossibleArrays`. The existing abstract refinement
   therefore proves every stateful success carries the complete allocator
   invariant to its successor, establishing the left-call precondition.
+  The right-success invariant now proves left coalescing total as well. Both
+  intermediate totality premises are discharged from the original valid
+  represented allocator, yielding the unconditional valid-call theorem that
+  every public failure returns the exact complete input metadata. Its
+  Iris-Lean corollary preserves an arbitrary disjoint allocator/client frame.
 - [x] Prove the bounded-step property of bin lookup and local list updates.
   The exact lowered flat-bitmap cost model counts inspected 64-bit words and
   is bounded by the input word count, hence at most four probes for the fixed

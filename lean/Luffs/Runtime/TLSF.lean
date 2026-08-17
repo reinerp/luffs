@@ -4649,6 +4649,57 @@ theorem markFreeArrays_lengths {isFree prevFree nextIsFree nextPrevFree : List (
   obtain ⟨_, _, _, _, _, _, _, rfl, rfl⟩ := markFreeArrays_result hmark
   split <;> simp_all
 
+/-- Concrete mutable metadata touched by `tlsf_mark_free`. Retaining it in a
+failure result prevents an `Option` model from erasing an intermediate write. -/
+structure MarkFreeMachineState where
+  isFree : List (Fin 256)
+  prevFree : List (Fin 256)
+deriving DecidableEq, Repr
+
+inductive MarkFreeOutcome where
+  | success (state : MarkFreeMachineState)
+  | failure (state : MarkFreeMachineState)
+deriving DecidableEq, Repr
+
+/-- Stateful, source-ordered semantics of `tlsf_mark_free`. Every rejection is
+before the two writes; after the writes there is no fallible operation. -/
+def markFreeArraysOutcome (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256))
+    (block returnedOffset returnedBytes : Nat) : MarkFreeOutcome :=
+  let input : MarkFreeMachineState := ⟨isFree, prevFree⟩
+  if block ≥ offsets.length then .failure input
+  else if block ≥ sizes.length then .failure input
+  else if block ≥ isFree.length then .failure input
+  else if block ≥ prevFree.length then .failure input
+  else if isFree[block]? != some 0 then .failure input
+  else if offsets[block]? != some returnedOffset then .failure input
+  else if sizes[block]? != some returnedBytes then .failure input
+  else
+    let nextIsFree := isFree.set block 1
+    let successor := block + 1
+    let nextPrevFree := if successor < prevFree.length then
+      prevFree.set successor 1 else prevFree
+    .success ⟨nextIsFree, nextPrevFree⟩
+
+theorem markFreeArraysOutcome_failure_eq_input
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {block returnedOffset returnedBytes : Nat} {failed : MarkFreeMachineState}
+    (hfailure : markFreeArraysOutcome offsets sizes isFree prevFree block
+      returnedOffset returnedBytes = .failure failed) :
+    failed = ⟨isFree, prevFree⟩ := by
+  unfold markFreeArraysOutcome at hfailure
+  split at hfailure <;> simp_all
+
+theorem markFreeArraysOutcome_failure_preserves_frame
+    {PROP : Type} [Iris.BI PROP]
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {block returnedOffset returnedBytes : Nat} {failed : MarkFreeMachineState}
+    (frame : PROP)
+    (hfailure : markFreeArraysOutcome offsets sizes isFree prevFree block
+      returnedOffset returnedBytes = .failure failed) :
+    failed = ⟨isFree, prevFree⟩ ∧ (frame ∗ (emp : PROP) ⊣⊢ frame) := by
+  exact ⟨markFreeArraysOutcome_failure_eq_input hfailure, sep_emp⟩
+
 def freeFlags (blocks : List Block) : List (Fin 256) :=
   blocks.map fun block => if block.free then 1 else 0
 

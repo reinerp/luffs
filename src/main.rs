@@ -26,6 +26,17 @@ struct Module {
     rust: String,
     proofs: Vec<Proof>,
     accesses: Vec<Access>,
+    scalar_models: Vec<ScalarModel>,
+}
+
+#[derive(Debug)]
+struct ScalarModel {
+    name: String,
+    params: Vec<String>,
+    guards: Vec<String>,
+    lets: Vec<(String, String)>,
+    result: String,
+    refines: Option<String>,
 }
 
 #[derive(Debug)]
@@ -262,7 +273,117 @@ fn parse(source: &str) -> Result<Module, String> {
         rust,
         proofs,
         accesses,
+        scalar_models: parse_scalar_models(source),
     })
+}
+
+fn parse_scalar_models(source: &str) -> Vec<ScalarModel> {
+    #[derive(Default)]
+    struct Pending {
+        name: String,
+        params: Vec<String>,
+        guards: Vec<String>,
+        lets: Vec<(String, String)>,
+        result: Option<String>,
+        depth: usize,
+        eligible: bool,
+        refines: Option<String>,
+    }
+
+    let mut models = Vec::new();
+    let mut pending: Option<Pending> = None;
+    let mut next_refinement = None;
+    for raw in source.lines() {
+        let trimmed = raw.trim();
+        if pending.is_none()
+            && let Some(target) = trimmed.strip_prefix("// refines ")
+        {
+            next_refinement = Some(target.trim().to_owned());
+            continue;
+        }
+        if pending.is_none() && trimmed.starts_with("fn ") {
+            let Some(open) = trimmed.find('(') else {
+                continue;
+            };
+            let Some(close) = trimmed.rfind(')') else {
+                continue;
+            };
+            if !trimmed[close + 1..].contains("-> Option<usize>") {
+                continue;
+            }
+            let name = trimmed[3..open].trim().to_owned();
+            let mut params = Vec::new();
+            let mut eligible = true;
+            for param in trimmed[open + 1..close].split(',') {
+                let Some((name, ty)) = param.split_once(':') else {
+                    eligible = false;
+                    break;
+                };
+                if ty.trim() != "usize" {
+                    eligible = false;
+                    break;
+                }
+                params.push(name.trim().to_owned());
+            }
+            pending = Some(Pending {
+                name,
+                params,
+                depth: 1,
+                eligible,
+                refines: next_refinement.take(),
+                ..Pending::default()
+            });
+            continue;
+        }
+
+        let Some(model) = pending.as_mut() else {
+            continue;
+        };
+        if trimmed.starts_with("//") || trimmed.is_empty() {
+            continue;
+        }
+        if let Some(condition) = control_condition(trimmed, "if")
+            && trimmed.contains("{ return None; }")
+        {
+            model.guards.push(to_lean_expr(condition));
+        } else if let Some((name, expression)) = usize_let(trimmed) {
+            model
+                .lets
+                .push((lean_ident(name), to_lean_expr(expression)));
+        } else if let Some(result) = trimmed
+            .strip_prefix("Some(")
+            .and_then(|rest| rest.strip_suffix(')'))
+            .or_else(|| {
+                trimmed
+                    .strip_prefix("return Some(")
+                    .and_then(|rest| rest.strip_suffix(");"))
+            })
+        {
+            model.result = Some(to_lean_expr(result));
+        } else if trimmed != "}" {
+            model.eligible = false;
+        }
+
+        let opens = raw.bytes().filter(|byte| *byte == b'{').count();
+        let closes = raw.bytes().filter(|byte| *byte == b'}').count();
+        model.depth = model.depth.saturating_add(opens).saturating_sub(closes);
+        if model.depth == 0 {
+            let model = pending.take().expect("pending model exists");
+            if model.eligible
+                && let Some(result) = model.result
+            {
+                models.push(ScalarModel {
+                    name: model.name,
+                    params: model.params,
+                    guards: model.guards,
+                    lets: model.lets,
+                    result,
+                    refines: model.refines,
+                });
+            }
+        }
+    }
+    models
 }
 
 fn logical_lines(source: &str) -> Result<Vec<(usize, String)>, String> {
@@ -537,8 +658,16 @@ fn validate(module: &Module) -> Result<(), String> {
 }
 
 fn lean(module: &Module) -> String {
-    let mut out = String::from(
-        "import Init.Omega\n\nset_option autoImplicit false\nset_option linter.unusedVariables false\n\nnamespace LuffsGenerated\n\n",
+    let mut out = String::from("import Init.Omega\n");
+    if module
+        .scalar_models
+        .iter()
+        .any(|model| model.refines.is_some())
+    {
+        out.push_str("import Luffs.Runtime.Containers\n");
+    }
+    out.push_str(
+        "\nset_option autoImplicit false\nset_option linter.unusedVariables false\n\nnamespace LuffsGenerated\n\n",
     );
     for proof in &module.proofs {
         out.push_str("theorem ");
@@ -552,6 +681,47 @@ fn lean(module: &Module) -> String {
         out.push_str(" := by ");
         out.push_str(&proof.body);
         out.push_str("\n\n");
+    }
+    for model in &module.scalar_models {
+        out.push_str("def ");
+        out.push_str(&model.name);
+        out.push_str("_model");
+        if !model.params.is_empty() {
+            out.push_str(" (");
+            out.push_str(&model.params.join(" "));
+            out.push_str(" : Nat)");
+        }
+        out.push_str(" : Option Nat :=\n  ");
+        for guard in &model.guards {
+            out.push_str("if ");
+            out.push_str(guard);
+            out.push_str(" then none else\n  ");
+        }
+        for (name, expression) in &model.lets {
+            out.push_str("let ");
+            out.push_str(name);
+            out.push_str(" := ");
+            out.push_str(expression);
+            out.push_str("\n  ");
+        }
+        out.push_str("some (");
+        out.push_str(&model.result);
+        out.push_str(")\n\n");
+        if let Some(target) = &model.refines {
+            out.push_str("theorem ");
+            out.push_str(&model.name);
+            out.push_str("_refines : ");
+            out.push_str(&model.name);
+            out.push_str("_model = ");
+            out.push_str(target);
+            out.push_str(" := by\n  funext ");
+            out.push_str(&model.params.join(" "));
+            out.push_str("\n  simp [");
+            out.push_str(&model.name);
+            out.push_str("_model, ");
+            out.push_str(target);
+            out.push_str(", Nat.pos_iff_ne_zero]\n\n");
+        }
     }
     out.push_str("end LuffsGenerated\n");
     out
@@ -739,5 +909,32 @@ mod tests {
         );
         assert!(m.rust.contains("get_unchecked_mut"));
         assert!(m.rust.contains("copy_from_slice"));
+    }
+
+    #[test]
+    fn emits_scalar_function_semantics_from_the_same_source() {
+        let m = parse(
+            "fn pop_len(len: usize) -> Option<usize> {\nif len == 0 { return None; }\nlet next: usize = len - 1;\nSome(next)\n}",
+        )
+        .unwrap();
+        assert_eq!(m.scalar_models.len(), 1);
+        let generated = lean(&m);
+        assert!(generated.contains("def pop_len_model (len : Nat) : Option Nat :="));
+        assert!(generated.contains("if len = 0 then none else"));
+        assert!(generated.contains("let next := len - 1"));
+        assert!(generated.contains("some (next)"));
+    }
+
+    #[test]
+    fn checked_refinement_targets_generated_semantics() {
+        let m = parse(
+            "// refines Luffs.Runtime.Containers.vecLenAfterPop\nfn vec_len_after_pop(len: usize) -> Option<usize> {\nif len == 0 { return None; }\nlet next_len: usize = len - 1;\nSome(next_len)\n}",
+        )
+        .unwrap();
+        let generated = lean(&m);
+        assert!(generated.contains("import Luffs.Runtime.Containers"));
+        assert!(generated.contains(
+            "theorem vec_len_after_pop_refines : vec_len_after_pop_model = Luffs.Runtime.Containers.vecLenAfterPop"
+        ));
     }
 }

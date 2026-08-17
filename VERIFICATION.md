@@ -236,7 +236,13 @@ proof-gated unchecked accesses and checked scalar arithmetic. The corresponding
 Lean reference semantics proves successful runtime operations' bounds, storage
 updates, length preservation, and refinement to the abstract Vec push/pop
 handle transitions. Compiler-generated function semantics still need to
-replace this hand-associated reference module before the end-to-end refinement
-claim is complete.
+replace the remaining hand-associated reference functions before the
+end-to-end refinement claim is complete. The compiler now generates executable
+Lean semantics for its straight-line scalar `Option<usize>` subset directly
+from the function body. `vec_len_after_pop` carries a `refines` declaration,
+and Lean checks extensional equality between that generated definition and the
+verified runtime model; source/model drift therefore fails `luffs check`.
+Array mutation, loops, and checked-arithmetic semantics are the next translation
+cases.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.

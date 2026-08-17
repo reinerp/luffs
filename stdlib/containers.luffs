@@ -32,6 +32,7 @@ fn vec_last_u8(storage: &[u8], len: usize) -> Option<u8> {
     Some(storage[index])
 }
 
+// refines Luffs.Runtime.Containers.vecLenAfterPop
 fn vec_len_after_pop(len: usize) -> Option<usize> {
     if len == 0 { return None; }
     let next_len: usize = len - 1;

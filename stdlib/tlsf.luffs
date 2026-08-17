@@ -103,6 +103,9 @@ fn tlsf_initialize(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_fr
     if next.len() != offsets.len() { return None; }
     if previous.len() != offsets.len() { return None; }
     if first_nonempty.len() == 0 { return None; }
+    // Free-list links are indexed by byte offset in this bounded-pool
+    // implementation, so every pool offset must fit the link arrays.
+    if pool_bytes > next.len() { return None; }
     let bin: usize = tlsf_classify_size(pool_bytes)?;
     let sentinel: usize = next.len();
 

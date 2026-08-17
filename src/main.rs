@@ -1644,6 +1644,7 @@ fn parse_tlsf_initialize_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> 
         "if next.len() != offsets.len() { return None; }",
         "if previous.len() != offsets.len() { return None; }",
         "if first_nonempty.len() == 0 { return None; }",
+        "if pool_bytes > next.len() { return None; }",
         "let bin: usize = tlsf_classify_size(pool_bytes)?;",
         "while cursor < offsets.len() {",
         "offsets[cursor] = 0;",
@@ -3100,6 +3101,14 @@ mod tests {
     fn tlsf_initializer_refinement_rejects_uncleared_sizes() {
         let source = include_str!("../stdlib/tlsf.luffs")
             .replace("sizes[cursor] = 0;", "sizes[cursor] = pool_bytes;");
+        let m = parse(&source).unwrap();
+        assert!(m.tlsf_initialize_models.is_empty());
+    }
+
+    #[test]
+    fn tlsf_initializer_refinement_rejects_unbounded_pool() {
+        let source = include_str!("../stdlib/tlsf.luffs")
+            .replace("if pool_bytes > next.len() { return None; }", "");
         let m = parse(&source).unwrap();
         assert!(m.tlsf_initialize_models.is_empty());
     }

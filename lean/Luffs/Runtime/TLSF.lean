@@ -5819,6 +5819,7 @@ def initializeArrays (offsets sizes : List Nat)
   if offsets.length = 0 ∨ sizes.length ≠ offsets.length ∨
       isFree.length ≠ offsets.length ∨ prevFree.length ≠ offsets.length ∨
       next.length ≠ offsets.length ∨ previous.length ≠ offsets.length then none
+  else if poolBytes > next.length then none
   else
     let bin ← classifySizeBin poolBytes
     let sentinel := next.length
@@ -5931,24 +5932,40 @@ theorem initializeArrays_result
   split at hsuccess
   next => contradiction
   next =>
-    cases hclass : classifySizeBin poolBytes with
-    | none => simp [hclass] at hsuccess
-    | some bin =>
-        rw [hclass] at hsuccess
-        simp only [Option.bind_eq_bind, Option.bind_some] at hsuccess
-        cases hinsert : insertClassArrays
-            (List.replicate second.length (0 : BitVec 32)) 0
-            (List.replicate heads.length next.length)
-            (List.replicate next.length next.length)
-            (List.replicate previous.length next.length) bin 0 with
-        | none => rw [hinsert] at hsuccess; contradiction
-        | some inserted =>
-            rw [hinsert] at hsuccess
-            simp only [Option.bind_some, Option.pure_def,
-              Option.some.injEq] at hsuccess
-            subst result
-            exact ⟨bin, inserted, rfl, hinsert, rfl, rfl, rfl, rfl,
-              rfl, rfl, rfl, rfl, rfl, rfl⟩
+    split at hsuccess
+    next => contradiction
+    next =>
+      cases hclass : classifySizeBin poolBytes with
+      | none => simp [hclass] at hsuccess
+      | some bin =>
+          rw [hclass] at hsuccess
+          simp only [Option.bind_eq_bind, Option.bind_some] at hsuccess
+          cases hinsert : insertClassArrays
+              (List.replicate second.length (0 : BitVec 32)) 0
+              (List.replicate heads.length next.length)
+              (List.replicate next.length next.length)
+              (List.replicate previous.length next.length) bin 0 with
+          | none => rw [hinsert] at hsuccess; contradiction
+          | some inserted =>
+              rw [hinsert] at hsuccess
+              simp only [Option.bind_some, Option.pure_def,
+                Option.some.injEq] at hsuccess
+              subst result
+              exact ⟨bin, inserted, rfl, hinsert, rfl, rfl, rfl, rfl,
+                rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+theorem initializeArrays_poolBytes_le
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {poolBytes : Nat}
+    {result : InitializeArraysResult}
+    (hsuccess : initializeArrays offsets sizes isFree prevFree second first
+      heads next previous poolBytes = some result) :
+    poolBytes ≤ next.length := by
+  by_cases hle : poolBytes ≤ next.length
+  · exact hle
+  · have htooLarge : poolBytes > next.length := by omega
+    simp [initializeArrays, htooLarge] at hsuccess
 
 theorem initializedPhysical_represents (capacity poolBytes : Nat)
     (hcapacity : 0 < capacity) :

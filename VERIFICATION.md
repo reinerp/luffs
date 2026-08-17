@@ -114,6 +114,9 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   `deallocateUncoalesced` transition, so its Iris-Lean ownership theorem applies
   directly: the client's exact returned `OwnsBytes` capability is consumed and
   becomes part of the allocator's `OwnsFree` assertion.
+  Initialization now also rejects pools larger than the 4096-byte intrusive
+  link address space. Lean proves every successful concrete initialization
+  satisfies that bound, so later byte-offset link indexing is representable.
 - [ ] Prove physical blocks form a disjoint partition of every mapped pool.
   `partitions` now requires adjacency from offset zero plus exact byte coverage,
   closing the gap permitted by the earlier ordered/sum-only invariant.

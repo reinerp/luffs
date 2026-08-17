@@ -207,6 +207,11 @@ concurrency are later extensions and are not prerequisites for `Box` and
   weakest-precondition rule remains for growth. Reading a Vec's initialized
   prefix is now a framed Iris rule producing the complete operational load
   trace and the codec round-trip for every logical element. Element-focused
-  decoded reads, slices, and Luffs lowering remain.
+  reads now split out exactly one encoding, execute its load trace, decode it,
+  and reassemble the unchanged owner. Begin/end slice handles have checked
+  element and byte ranges; shared slice reads similarly isolate the selected
+  initialized sublist, produce its exact operational trace, and reassemble all
+  prefix/suffix ownership. Mutable slice transfer/recombination and Luffs
+  lowering remain.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.

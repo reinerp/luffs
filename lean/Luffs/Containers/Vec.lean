@@ -27,15 +27,99 @@ theorem encodeValues_length {α : Type} (codec : Codec α) (values : List α) :
       rw [List.length_append, codec.encode_length, ih, Nat.add_mul]
       omega
 
+theorem encodeValues_split_at {α : Type} (codec : Codec α)
+    (values : List α) {i : Nat} (hi : i < values.length) :
+    encodeValues codec values =
+      encodeValues codec (values.take i) ++
+        (codec.encode values[i] ++ encodeValues codec (values.drop (i + 1))) := by
+  calc
+    encodeValues codec values =
+        encodeValues codec (values.take i ++ values.drop i) :=
+      congrArg (encodeValues codec) (List.take_append_drop i values).symm
+    _ = encodeValues codec (values.take i) ++ encodeValues codec (values.drop i) :=
+      encodeValues_append codec _ _
+    _ = encodeValues codec (values.take i) ++
+        (codec.encode values[i] ++
+          encodeValues codec (values.drop (i + 1))) := by
+      rw [List.drop_eq_getElem_cons hi]
+      rfl
+
 structure Handle where
   block : Block
   len : Nat
   capacity : Nat
 deriving DecidableEq, Repr
 
+structure SliceHandle where
+  begin : Nat
+  «end» : Nat
+deriving DecidableEq, Repr
+
 def Valid {α : Type} (codec : Codec α) (handle : Handle) : Prop :=
   handle.len ≤ handle.capacity ∧
     handle.capacity * codec.size ≤ handle.block.bytes
+
+def SliceValid (handle : Handle) (slice : SliceHandle) : Prop :=
+  slice.begin ≤ slice.end ∧ slice.end ≤ handle.len
+
+def sliceValues {α : Type} (values : List α) (slice : SliceHandle) : List α :=
+  (values.drop slice.begin).take (slice.end - slice.begin)
+
+def sliceRegion {α : Type} (codec : Codec α) (pool : Region)
+    (handle : Handle) (slice : SliceHandle) : Region :=
+  { base := (handle.block.region pool).base + slice.begin * codec.size
+    bytes := (slice.end - slice.begin) * codec.size }
+
+theorem sliceRegion_fits {α : Type} {codec : Codec α} {handle : Handle}
+    (hvalid : Valid codec handle) {slice : SliceHandle}
+    (hslice : SliceValid handle slice) :
+    slice.begin * codec.size + (slice.end - slice.begin) * codec.size ≤
+      handle.block.bytes := by
+  rcases hvalid with ⟨hlen, hcapacity⟩
+  rcases hslice with ⟨hbegin, hend⟩
+  have hendCapacity : slice.end ≤ handle.capacity := Nat.le_trans hend hlen
+  have hbytes := Nat.mul_le_mul_right codec.size hendCapacity
+  rw [← Nat.add_mul, Nat.add_sub_of_le hbegin]
+  exact Nat.le_trans hbytes hcapacity
+
+theorem values_slice_decomposition {α : Type} (values : List α)
+    (slice : SliceHandle) (hbegin : slice.begin ≤ slice.end)
+    (hend : slice.end ≤ values.length) :
+    values = values.take slice.begin ++ sliceValues values slice ++
+      values.drop slice.end := by
+  have hbeginLen : slice.begin ≤ values.length := Nat.le_trans hbegin hend
+  have hdrop : (values.drop slice.begin).drop (slice.end - slice.begin) =
+      values.drop slice.end := by
+    rw [List.drop_drop, Nat.add_sub_of_le hbegin]
+  calc
+    values = values.take slice.begin ++ values.drop slice.begin :=
+      (List.take_append_drop slice.begin values).symm
+    _ = values.take slice.begin ++
+        ((values.drop slice.begin).take (slice.end - slice.begin) ++
+          (values.drop slice.begin).drop (slice.end - slice.begin)) := by
+      exact congrArg (values.take slice.begin ++ ·)
+        (List.take_append_drop (slice.end - slice.begin)
+          (values.drop slice.begin)).symm
+    _ = values.take slice.begin ++ sliceValues values slice ++
+        values.drop slice.end := by
+      simp only [sliceValues, hdrop, List.append_assoc]
+
+theorem encodeValues_slice_decomposition {α : Type} (codec : Codec α)
+    (values : List α) (slice : SliceHandle) (hbegin : slice.begin ≤ slice.end)
+    (hend : slice.end ≤ values.length) :
+    encodeValues codec values =
+      encodeValues codec (values.take slice.begin) ++
+        (encodeValues codec (sliceValues values slice) ++
+          encodeValues codec (values.drop slice.end)) := by
+  have hdecomp := values_slice_decomposition values slice hbegin hend
+  calc
+    encodeValues codec values = encodeValues codec
+        (values.take slice.begin ++ sliceValues values slice ++
+          values.drop slice.end) := congrArg (encodeValues codec) hdecomp
+    _ = encodeValues codec (values.take slice.begin) ++
+        (encodeValues codec (sliceValues values slice) ++
+          encodeValues codec (values.drop slice.end)) := by
+      rw [encodeValues_append, encodeValues_append, List.append_assoc]
 
 structure AllocResult where
   handle : Handle
@@ -511,6 +595,129 @@ theorem read_initialized_prefix {GF : BundledGFunctors}
   ihave ⟨Hread, %hsteps⟩ := pointsToBytes_read_steps hrep
     (handle.block.region pool).base (encodeValues codec values) $$ Hread
   icases Hread with ⟨Hcontents, Hpoints⟩
+  isplitl [Hcontents Hregion Hpoints]
+  · isplitl [Hcontents]
+    · iassumption
+    · isplitl [Hregion]
+      · iassumption
+      · iassumption
+  · ipureintro
+    exact ⟨hsteps, fun value _ => codec.decode_encode value⟩
+
+theorem read_element {GF : BundledGFunctors}
+    [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
+    (codec : Codec α) {pool : Region} {handle : Handle} {values : List α}
+    (hlen : values.length = handle.len) {contents : ContentsMap} {mem : Memory}
+    (hrep : ContentsRep contents mem) {i : Nat} (hi : i < handle.len) :
+    contentsInterp (G := G) contents ∗ Owns codec pool handle values ⊢
+      (contentsInterp contents ∗ Owns codec pool handle values) ∗
+        ⌜ReadSteps ((handle.block.region pool).base + i * codec.size)
+            (codec.encode values[i]) mem ∧
+          codec.decode (codec.encode values[i]) = some values[i]⌝ := by
+  have hiValues : i < values.length := by simpa [hlen] using hi
+  have hsplit := encodeValues_split_at codec values hiValues
+  have hprefixLength : (encodeValues codec (values.take i)).length =
+      i * codec.size := by
+    rw [encodeValues_length, List.length_take, Nat.min_eq_left (Nat.le_of_lt hiValues)]
+  simp only [Owns]
+  rw [hsplit]
+  iintro ⟨Hcontents, Hvec⟩
+  icases Hvec with ⟨Hregion, Hpoints⟩
+  ihave Hsplit := (pointsToBytes_append (handle.block.region pool).base
+    (encodeValues codec (values.take i))
+    (codec.encode values[i] ++ encodeValues codec (values.drop (i + 1)))).mp
+      $$ Hpoints
+  icases Hsplit with ⟨Hprefix, Hrest⟩
+  ihave Hsplit := (pointsToBytes_append
+    ((handle.block.region pool).base +
+      (encodeValues codec (values.take i)).length)
+    (codec.encode values[i])
+    (encodeValues codec (values.drop (i + 1)))).mp $$ Hrest
+  icases Hsplit with ⟨Helement, Hsuffix⟩
+  icombine Hcontents Helement as Hread
+  ihave ⟨Hread, %hsteps⟩ := pointsToBytes_read_steps hrep
+    ((handle.block.region pool).base +
+      (encodeValues codec (values.take i)).length)
+    (codec.encode values[i]) $$ Hread
+  icases Hread with ⟨Hcontents, Helement⟩
+  rw [hprefixLength] at hsteps
+  icombine Helement Hsuffix as Hrest
+  ihave Hrest := (pointsToBytes_append
+    ((handle.block.region pool).base +
+      (encodeValues codec (values.take i)).length)
+    (codec.encode values[i])
+    (encodeValues codec (values.drop (i + 1)))).mpr $$ Hrest
+  icombine Hprefix Hrest as Hpoints
+  ihave Hpoints := (pointsToBytes_append (handle.block.region pool).base
+    (encodeValues codec (values.take i))
+    (codec.encode values[i] ++ encodeValues codec (values.drop (i + 1)))).mpr
+      $$ Hpoints
+  isplitl [Hcontents Hregion Hpoints]
+  · isplitl [Hcontents]
+    · iassumption
+    · isplitl [Hregion]
+      · iassumption
+      · iassumption
+  · ipureintro
+    exact ⟨hsteps, codec.decode_encode values[i]⟩
+
+theorem read_slice {GF : BundledGFunctors}
+    [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
+    (codec : Codec α) {pool : Region} {handle : Handle} {values : List α}
+    (hlen : values.length = handle.len) {slice : SliceHandle}
+    (hslice : SliceValid handle slice) {contents : ContentsMap} {mem : Memory}
+    (hrep : ContentsRep contents mem) :
+    contentsInterp (G := G) contents ∗ Owns codec pool handle values ⊢
+      (contentsInterp contents ∗ Owns codec pool handle values) ∗
+        ⌜ReadSteps (sliceRegion codec pool handle slice).base
+            (encodeValues codec (sliceValues values slice)) mem ∧
+          ∀ value ∈ sliceValues values slice,
+            codec.decode (codec.encode value) = some value⌝ := by
+  have hbegin : slice.begin ≤ slice.end := hslice.1
+  have hend : slice.end ≤ values.length := by simpa [hlen] using hslice.2
+  have hsplit := encodeValues_slice_decomposition codec values slice hbegin hend
+  have hprefixLength :
+      (encodeValues codec (values.take slice.begin)).length =
+        slice.begin * codec.size := by
+    rw [encodeValues_length, List.length_take,
+      Nat.min_eq_left (Nat.le_trans hbegin hend)]
+  simp only [Owns]
+  rw [hsplit]
+  iintro ⟨Hcontents, Hvec⟩
+  icases Hvec with ⟨Hregion, Hpoints⟩
+  ihave Hsplit := (pointsToBytes_append (handle.block.region pool).base
+    (encodeValues codec (values.take slice.begin))
+    (encodeValues codec (sliceValues values slice) ++
+      encodeValues codec (values.drop slice.end))).mp $$ Hpoints
+  icases Hsplit with ⟨Hprefix, Hrest⟩
+  ihave Hsplit := (pointsToBytes_append
+    ((handle.block.region pool).base +
+      (encodeValues codec (values.take slice.begin)).length)
+    (encodeValues codec (sliceValues values slice))
+    (encodeValues codec (values.drop slice.end))).mp $$ Hrest
+  icases Hsplit with ⟨Hmiddle, Hsuffix⟩
+  icombine Hcontents Hmiddle as Hread
+  ihave ⟨Hread, %hsteps⟩ := pointsToBytes_read_steps hrep
+    ((handle.block.region pool).base +
+      (encodeValues codec (values.take slice.begin)).length)
+    (encodeValues codec (sliceValues values slice)) $$ Hread
+  icases Hread with ⟨Hcontents, Hmiddle⟩
+  have hbase : (sliceRegion codec pool handle slice).base =
+      (handle.block.region pool).base +
+        (encodeValues codec (values.take slice.begin)).length := by
+    simp [sliceRegion, hprefixLength]
+  rw [← hbase] at hsteps
+  icombine Hmiddle Hsuffix as Hrest
+  ihave Hrest := (pointsToBytes_append
+    ((handle.block.region pool).base +
+      (encodeValues codec (values.take slice.begin)).length)
+    (encodeValues codec (sliceValues values slice))
+    (encodeValues codec (values.drop slice.end))).mpr $$ Hrest
+  icombine Hprefix Hrest as Hpoints
+  ihave Hpoints := (pointsToBytes_append (handle.block.region pool).base
+    (encodeValues codec (values.take slice.begin))
+    (encodeValues codec (sliceValues values slice) ++
+      encodeValues codec (values.drop slice.end))).mpr $$ Hpoints
   isplitl [Hcontents Hregion Hpoints]
   · isplitl [Hcontents]
     · iassumption

@@ -616,3 +616,48 @@ fn tlsf_deallocate(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_fr
     let left: usize = block - 1;
     tlsf_coalesce_if_possible(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, after_right, left)
 }
+
+// Byte-monomorphized allocator-backed Box. Until Luffs gains structs, the
+// handle is the allocation's byte offset within `pool`; TLSF retains its size.
+// refines Luffs.Runtime.Containers.boxNewU8Arrays
+fn tlsf_box_new_u8(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], value: u8) -> Option<usize> {
+    let offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, 8)?;
+    if offset >= pool.len() { return None; }
+    pool[offset] = value;
+    Some(offset)
+}
+
+// refines Luffs.Runtime.Containers.boxLoadU8
+fn tlsf_box_load_u8(pool: &[u8; 4096], offset: usize) -> Option<u8> {
+    if offset >= pool.len() { return None; }
+    Some(pool[offset])
+}
+
+// refines Luffs.Runtime.Containers.boxStoreU8
+fn tlsf_box_store_u8(pool: &mut [u8; 4096], offset: usize, value: u8) -> Option<()> {
+    if offset >= pool.len() { return None; }
+    pool[offset] = value;
+    Some(())
+}
+
+// refines Luffs.Runtime.Containers.boxDropU8Arrays
+fn tlsf_box_drop_u8(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], returned_offset: usize) -> Option<()> {
+    if block_count.len() == 0 { return None; }
+    let count: usize = block_count[0];
+    if count == 0 { return None; }
+    if count > offsets.len() { return None; }
+    if count > sizes.len() { return None; }
+    if count > is_free.len() { return None; }
+    let mut block: usize = 0;
+    while block < count {
+        if offsets[block] == returned_offset { break; }
+        if block == usize::MAX { return None; }
+        block = block + 1;
+    }
+    if block >= count { return None; }
+    if is_free[block] != 0 { return None; }
+    let returned_bytes: usize = sizes[block];
+    let next_count: usize = tlsf_deallocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, count, block, returned_offset, returned_bytes)?;
+    block_count[0] = next_count;
+    Some(())
+}

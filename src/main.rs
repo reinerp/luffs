@@ -44,6 +44,8 @@ struct Module {
     tlsf_initialize_models: Vec<TlsfCoalescePhysicalModel>,
     tlsf_allocate_physical_models: Vec<TlsfCoalescePhysicalModel>,
     tlsf_allocate_models: Vec<TlsfCoalescePhysicalModel>,
+    tlsf_box_new_models: Vec<TlsfCoalescePhysicalModel>,
+    tlsf_box_drop_models: Vec<TlsfCoalescePhysicalModel>,
     tlsf_remove_class_models: Vec<TlsfInsertClassModel>,
     tlsf_deallocate_uncoalesced_models: Vec<TlsfDeallocateUncoalescedModel>,
     tlsf_coalesce_physical_models: Vec<TlsfCoalescePhysicalModel>,
@@ -414,6 +416,8 @@ fn parse(source: &str) -> Result<Module, String> {
         tlsf_initialize_models: parse_tlsf_initialize_models(source),
         tlsf_allocate_physical_models: parse_tlsf_allocate_physical_models(source),
         tlsf_allocate_models: parse_tlsf_allocate_models(source),
+        tlsf_box_new_models: parse_tlsf_box_new_models(source),
+        tlsf_box_drop_models: parse_tlsf_box_drop_models(source),
         tlsf_remove_class_models: parse_tlsf_remove_class_models(source),
         tlsf_deallocate_uncoalesced_models: parse_tlsf_deallocate_uncoalesced_models(source),
         tlsf_coalesce_physical_models: parse_tlsf_coalesce_physical_models(source),
@@ -1811,6 +1815,96 @@ fn parse_tlsf_allocate_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
     }
 }
 
+fn parse_tlsf_box_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
+    let lines = source.lines().collect::<Vec<_>>();
+    let Some(index) = lines
+        .iter()
+        .position(|line| line.trim().starts_with("fn tlsf_box_new_u8("))
+    else {
+        return Vec::new();
+    };
+    let Some(target) = index
+        .checked_sub(1)
+        .and_then(|i| lines.get(i))
+        .and_then(|line| line.trim().strip_prefix("// refines "))
+    else {
+        return Vec::new();
+    };
+    let body = lines[index + 1..]
+        .iter()
+        .map(|line| line.trim())
+        .collect::<Vec<_>>();
+    let required = [
+        "let offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, 8)?;",
+        "if offset >= pool.len() { return None; }",
+        "pool[offset] = value;",
+        "Some(offset)",
+    ];
+    let mut position = 0;
+    if required.iter().all(|expected| {
+        if let Some(offset) = body[position..].iter().position(|line| line == expected) {
+            position += offset + 1;
+            true
+        } else {
+            false
+        }
+    }) {
+        vec![TlsfCoalescePhysicalModel {
+            name: "tlsf_box_new_u8".to_owned(),
+            refines: target.trim().to_owned(),
+        }]
+    } else {
+        Vec::new()
+    }
+}
+
+fn parse_tlsf_box_drop_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
+    let lines = source.lines().collect::<Vec<_>>();
+    let Some(index) = lines
+        .iter()
+        .position(|line| line.trim().starts_with("fn tlsf_box_drop_u8("))
+    else {
+        return Vec::new();
+    };
+    let Some(target) = index
+        .checked_sub(1)
+        .and_then(|i| lines.get(i))
+        .and_then(|line| line.trim().strip_prefix("// refines "))
+    else {
+        return Vec::new();
+    };
+    let body = lines[index + 1..]
+        .iter()
+        .map(|line| line.trim())
+        .collect::<Vec<_>>();
+    let required = [
+        "let count: usize = block_count[0];",
+        "while block < count {",
+        "if offsets[block] == returned_offset { break; }",
+        "if is_free[block] != 0 { return None; }",
+        "let returned_bytes: usize = sizes[block];",
+        "let next_count: usize = tlsf_deallocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, count, block, returned_offset, returned_bytes)?;",
+        "block_count[0] = next_count;",
+        "Some(())",
+    ];
+    let mut position = 0;
+    if required.iter().all(|expected| {
+        if let Some(offset) = body[position..].iter().position(|line| line == expected) {
+            position += offset + 1;
+            true
+        } else {
+            false
+        }
+    }) {
+        vec![TlsfCoalescePhysicalModel {
+            name: "tlsf_box_drop_u8".to_owned(),
+            refines: target.trim().to_owned(),
+        }]
+    } else {
+        Vec::new()
+    }
+}
+
 fn parse_tlsf_deallocate_uncoalesced_models(source: &str) -> Vec<TlsfDeallocateUncoalescedModel> {
     let lines = source.lines().collect::<Vec<_>>();
     let Some(index) = lines
@@ -2355,6 +2449,8 @@ fn lean(module: &Module) -> String {
             .array_models
             .iter()
             .any(|model| model.refines.is_some())
+        || !module.tlsf_box_new_models.is_empty()
+        || !module.tlsf_box_drop_models.is_empty()
         || module
             .read_models
             .iter()
@@ -2781,6 +2877,26 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
             model.name, model.name, model.refines
         ));
     }
+    for model in &module.tlsf_box_new_models {
+        out.push_str(&format!(
+            "def {}_model (storage : List (Fin 256)) (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (value : Fin 256) : Option Luffs.Runtime.Containers.BoxNewU8ArraysResult :=\n  {} storage offsets sizes is_free prev_free count second first heads next previous value\n\n",
+            model.name, model.refines
+        ));
+        out.push_str(&format!(
+            "theorem {}_refines : {}_model = {} := by rfl\n\n",
+            model.name, model.name, model.refines
+        ));
+    }
+    for model in &module.tlsf_box_drop_models {
+        out.push_str(&format!(
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (returned_offset : Nat) : Option Luffs.Runtime.TLSF.CoalesceClassResult :=\n  {} offsets sizes is_free prev_free count second first heads next previous returned_offset\n\n",
+            model.name, model.refines
+        ));
+        out.push_str(&format!(
+            "theorem {}_refines : {}_model = {} := by rfl\n\n",
+            model.name, model.name, model.refines
+        ));
+    }
     for model in &module.tlsf_deallocate_uncoalesced_models {
         out.push_str(&format!(
             "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (count block returned_offset returned_bytes : Nat) : Option Luffs.Runtime.TLSF.DeallocateUncoalescedResult :=\n  {} offsets sizes is_free prev_free second first heads next previous count block returned_offset returned_bytes\n\n",
@@ -3079,6 +3195,12 @@ mod tests {
             "theorem tlsf_allocate_refines : tlsf_allocate_model = Luffs.Runtime.TLSF.allocateArrays"
         ));
         assert!(generated.contains(
+            "theorem tlsf_box_new_u8_refines : tlsf_box_new_u8_model = Luffs.Runtime.Containers.boxNewU8Arrays"
+        ));
+        assert!(generated.contains(
+            "theorem tlsf_box_drop_u8_refines : tlsf_box_drop_u8_model = Luffs.Runtime.Containers.boxDropU8Arrays"
+        ));
+        assert!(generated.contains(
             "theorem tlsf_remove_class_refines : tlsf_remove_class_model = Luffs.Runtime.TLSF.removeClassArrays"
         ));
         assert!(generated.contains(
@@ -3139,6 +3261,21 @@ mod tests {
             .replace("if count >= offsets.len() { return None; }", "");
         let m = parse(&source).unwrap();
         assert!(m.tlsf_allocate_models.is_empty());
+    }
+
+    #[test]
+    fn tlsf_box_refinement_rejects_missing_initialization_write() {
+        let source = include_str!("../stdlib/tlsf.luffs").replace("pool[offset] = value;", "");
+        let m = parse(&source).unwrap();
+        assert!(m.tlsf_box_new_models.is_empty());
+    }
+
+    #[test]
+    fn tlsf_box_drop_refinement_rejects_missing_count_update() {
+        let source =
+            include_str!("../stdlib/tlsf.luffs").replace("block_count[0] = next_count;", "");
+        let m = parse(&source).unwrap();
+        assert!(m.tlsf_box_drop_models.is_empty());
     }
 
     #[test]

@@ -14,7 +14,10 @@ The final trusted computing base is intended to contain only:
 3. the platform refinement of the `mmap`/`munmap` specification;
 4. Rust/LLVM and the operating system at execution time.
 
-In particular, TLSF is not an axiom and `malloc` is not a primitive.
+In particular, TLSF is not an axiom and `malloc` is not a primitive. Failed
+trusted mappings have the exact Iris postcondition `emp`, so a proved frame
+law preserves every caller-owned resource unchanged. Successful mmap ownership
+transfers directly into the initial TLSF `OwnsFree` assertion.
 
 ## Semantic layers
 
@@ -445,7 +448,17 @@ concurrency are later extensions and are not prerequisites for `Box` and
   now prove every destination is mapped from the old encoded ownership,
   execute an explicit store step for every new byte, update the authoritative
   content map and all fragments, and preserve exclusive Box ownership of the
-  new logical value. Target-width parameterization and Luffs lowering remain
+  new logical value. The first allocator-backed Luffs lowering is now complete
+  for `Box<u8>`: `tlsf_box_new_u8` calls the concrete public TLSF allocator,
+  initializes the returned pool byte, and returns its offset handle;
+  load/store operate on that handle, and `tlsf_box_drop_u8` resolves the live
+  physical header, invokes the full coalescing deallocator, and commits its
+  new header count. Compiler source-shape refinements tie constructor and drop
+  to exact Lean array transformers. Lean composes constructor success with the
+  abstract `Box.allocate` and Iris initialization update, producing typed
+  exclusive `Box.Owns`; drop is composed with abstract `Box.drop` and consumes
+  that typed capability exactly once while returning the region to TLSF.
+  Generic Luffs monomorphization and target-width parameterization remain
   before this item is complete.
 - [ ] `Vec<T>`: invariant `len <= capacity`, initialized prefix ownership,
   spare-capacity ownership, checked layout arithmetic, growth without loss or

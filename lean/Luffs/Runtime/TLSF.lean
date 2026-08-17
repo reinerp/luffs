@@ -4975,6 +4975,26 @@ def findOffsetIndex : List Nat → Nat → Nat → Option Nat
       if offset = target then some 0
       else (findOffsetIndex rest count target).map Nat.succ
 
+theorem findOffsetIndex_sound {offsets : List Nat} {count target i : Nat}
+    (hfind : findOffsetIndex offsets count target = some i) :
+    i < count ∧ offsets[i]? = some target := by
+  induction offsets generalizing count i with
+  | nil =>
+      cases count <;> simp [findOffsetIndex] at hfind
+  | cons offset rest ih =>
+      cases count with
+      | zero => simp [findOffsetIndex] at hfind
+      | succ count =>
+          by_cases heq : offset = target
+          · simp [findOffsetIndex, heq] at hfind
+            subst i
+            exact ⟨by omega, by simp [heq]⟩
+          · simp only [findOffsetIndex, heq, if_false] at hfind
+            rw [Option.map_eq_some_iff] at hfind
+            obtain ⟨j, hrest, rfl⟩ := hfind
+            have hj := ih hrest
+            exact ⟨by omega, by simpa using hj.2⟩
+
 theorem findOffsetIndex_blockOffsets_eq_findPhysicalIndex
     (blocks : List Block) (target : Block)
     (hoffset : ∀ b ∈ blocks,
@@ -6135,6 +6155,22 @@ theorem initialAllocator_ownsMappedPool
     Luffs.Memory.OwnsBytes pool
   exact Iris.BI.sep_emp
 
+/-- A successful trusted mmap transfers its complete byte capability directly
+into the initial TLSF free-pool assertion; no allocator implementation is
+trusted in this handoff. -/
+theorem mmap_success_ownsInitialAllocator
+    {PROP : Type} [Iris.BI PROP] [Luffs.Memory.ByteRegionLogic PROP]
+    [Luffs.Memory.MMapSpec PROP]
+    (bytes : Nat) (hbytes : 0 < bytes) (pool : Luffs.Memory.Region) :
+    Luffs.Memory.MMapSpec.mmapPost (PROP := PROP) bytes (some pool) ⊢
+      ⌜pool.bytes = bytes ∧
+        pool.base % Luffs.Memory.MMapSpec.pageSize (PROP := PROP) = 0⌝ ∗
+      Luffs.Allocator.TLSF.Ownership.OwnsFree (PROP := PROP) pool
+        [initialBlock pool.bytes] := by
+  exact (Luffs.Memory.MMapSpec.success (PROP := PROP) bytes hbytes pool).trans
+    (Iris.BI.sep_mono_right
+      (initialAllocator_ownsMappedPool (PROP := PROP) pool).mpr)
+
 
 theorem coalesceClassArrays_result
     {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
@@ -7152,6 +7188,26 @@ theorem deallocateArrays_refines
       simpa [hnonzero, Nat.pred_eq_sub_one] using hleftAbstract
     exact ⟨abstractAfterLeft, hdeallocate, hleftPhysical, hleftBinsValid,
       hleftBins, hleftDisjoint, hleftSecond, hleftFirst⟩
+
+theorem allocatedBlock_offset_fresh
+    {pool : Luffs.Memory.Region} {blocks : List Block} {state : Bins.State}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    {i : Nat} {selected : Block} (hget : blocks[i]? = some selected)
+    (hallocated : selected.free = false) :
+    ∀ query, selected.offset ∉ (state.chains query).map Block.offset := by
+  intro query hoffset
+  obtain ⟨cached, hcached, hcachedOffset⟩ := List.mem_map.mp hoffset
+  obtain ⟨actual, hactual, hsame⟩ := hvalid.2.2.1 query cached hcached
+  have hselectedMem : selected ∈ blocks :=
+    List.mem_iff_getElem?.2 ⟨i, hget⟩
+  have hoffsetEq : actual.offset = selected.offset := by
+    rw [hsame.1, hcachedOffset]
+  have heq : actual = selected :=
+    wellFormed_same_offset hvalid.1 hactual hselectedMem hoffsetEq
+  have hcachedFree := Bins.member_free hvalid.2.1 hcached
+  have hactualFree := Bins.samePhysical_free hsame |>.trans hcachedFree
+  rw [heq, hallocated] at hactualFree
+  contradiction
 
 /-- Iris ownership corollary for the complete concrete public deallocator.
 The returned client capability is consumed exactly once; both optional

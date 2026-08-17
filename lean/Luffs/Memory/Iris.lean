@@ -60,7 +60,16 @@ class MMapSpec (PROP : Type) [BI PROP] [ByteRegionLogic PROP] where
   success (bytes : Nat) (hbytes : 0 < bytes) (r : Region) :
     mmapPost bytes (some r) ⊢
       ⌜r.bytes = bytes ∧ r.base % pageSize = 0⌝ ∗ OwnsBytes (PROP := PROP) r
-  failure (bytes : Nat) : mmapPost bytes none ⊢ True
+  failure (bytes : Nat) : mmapPost bytes none ⊣⊢ emp
   munmap (r : Region) : OwnsBytes (PROP := PROP) r ⊢ mmapPost r.bytes none
+
+/-- A failed mmap is resource-neutral, so every disjoint caller frame is
+preserved exactly. This is the separation-logic statement of transactional
+failure at the sole trusted allocation boundary. -/
+theorem mmap_failure_preserves_frame
+    {PROP : Type} [BI PROP] [ByteRegionLogic PROP] [MMapSpec PROP]
+    (frame : PROP) (bytes : Nat) :
+    frame ∗ MMapSpec.mmapPost (PROP := PROP) bytes none ⊣⊢ frame := by
+  exact (sep_congr_right (MMapSpec.failure (PROP := PROP) bytes)).trans sep_emp
 
 end Luffs.Memory

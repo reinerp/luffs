@@ -563,6 +563,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   codec-wide store. Its storage write is proved to occur exactly after the
   initialized encoding prefix, its length result refines abstract `Vec.push`,
   and its Iris theorem appends exactly one encoded value to `Vec.Owns codec`.
+  Generic indexed get performs the corresponding checked element-address
+  calculation, decodes exactly one codec-sized storage range, and is linked to
+  the Iris `read_element` trace and codec round trip. Generic pop now connects
+  the source length transition to `Vec.pop_owns`, deleting exactly the last
+  encoding, and concrete TLSF-backed drop is generalized over every codec; the
+  byte theorem delegates to that generic ownership result.
   Generated Vec-construction semantics now calls the generated TLSF allocator
   model with the verified byte-capacity request rather than directly aliasing
   the hand-written Vec constructor transformer. The specialized source checker

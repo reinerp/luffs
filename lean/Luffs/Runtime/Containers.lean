@@ -858,6 +858,91 @@ theorem vecPush_owns {GF : Iris.BundledGFunctors}
   intro contents hfresh
   exact Luffs.Containers.Vec.push_owns codec value contents hpush hfresh
 
+def vecGet {α : Type} (codec : Codec α) (storage : List Byte)
+    (offset len index : Nat) : Option α :=
+  if index ≥ len then none
+  else if index > Luffs.Runtime.TLSF.usizeMax / codec.size then none
+  else
+    let byteOffset := index * codec.size
+    if offset > Luffs.Runtime.TLSF.usizeMax - byteOffset then none
+    else
+      let address := offset + byteOffset
+      if address > Luffs.Runtime.TLSF.usizeMax - codec.size then none
+      else boxLoad codec storage address
+
+theorem vecGet_result {α : Type} {codec : Codec α} {storage : List Byte}
+    {offset len index : Nat} {value : α}
+    (hsuccess : vecGet codec storage offset len index = some value) :
+    index < len ∧ index ≤ Luffs.Runtime.TLSF.usizeMax / codec.size ∧
+      offset ≤ Luffs.Runtime.TLSF.usizeMax - index * codec.size ∧
+      offset + index * codec.size ≤
+        Luffs.Runtime.TLSF.usizeMax - codec.size ∧
+      offset + index * codec.size + codec.size ≤ storage.length ∧
+      codec.decode
+        ((storage.drop (offset + index * codec.size)).take codec.size) =
+          some value := by
+  unfold vecGet at hsuccess
+  split at hsuccess
+  next => contradiction
+  next hindex =>
+    split at hsuccess
+    next => contradiction
+    next hmul =>
+      dsimp only at hsuccess
+      split at hsuccess
+      next => contradiction
+      next hoffset =>
+        split at hsuccess
+        next => contradiction
+        next haddress =>
+          obtain ⟨hstorage, hdecode⟩ := boxLoad_result hsuccess
+          exact ⟨Nat.lt_of_not_ge hindex, Nat.le_of_not_gt hmul,
+            Nat.le_of_not_gt hoffset, Nat.le_of_not_gt haddress,
+            hstorage, hdecode⟩
+
+theorem vecGet_value {α : Type} {codec : Codec α} {storage : List Byte}
+    {handle : Luffs.Containers.Vec.Handle} {index : Nat}
+    {value expected : α}
+    (hsuccess : vecGet codec storage handle.block.offset handle.len index =
+      some value)
+    (hencoded :
+      (storage.drop (handle.block.offset + index * codec.size)).take codec.size =
+        codec.encode expected) :
+    value = expected := by
+  have hresult := vecGet_result hsuccess
+  have hdecode := hresult.2.2.2.2.2
+  rw [hencoded, codec.decode_encode] at hdecode
+  exact Option.some.inj hdecode |>.symm
+
+theorem vecGet_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {α : Type} (codec : Codec α) {pool : Region}
+    {storage : List Byte} {handle : Luffs.Containers.Vec.Handle}
+    {values : List α} {index : Nat} {value expected : α}
+    (hlen : values.length = handle.len)
+    (hsuccess : vecGet codec storage handle.block.offset handle.len index =
+      some value)
+    (hvalues : values[index]? = some expected)
+    (hencoded :
+      (storage.drop (handle.block.offset + index * codec.size)).take codec.size =
+        codec.encode expected)
+    {contents : ContentsMap} {mem : Memory} (hrep : ContentsRep contents mem) :
+    value = expected ∧
+      (contentsInterp (G := G) contents ∗
+          Luffs.Containers.Vec.Owns codec pool handle values ⊢
+        (contentsInterp contents ∗
+          Luffs.Containers.Vec.Owns codec pool handle values) ∗
+          ⌜ReadSteps ((handle.block.region pool).base + index * codec.size)
+              (codec.encode expected) mem ∧
+            codec.decode (codec.encode expected) = some expected⌝) := by
+  have hresult := vecGet_result hsuccess
+  have hiValues : index < values.length := (getElem?_eq_some_iff.mp hvalues).1
+  have hvalueAt : values[index] = expected :=
+    (getElem?_eq_some_iff.mp hvalues).2
+  refine ⟨vecGet_value hsuccess hencoded, ?_⟩
+  simpa [hvalueAt] using
+    (Luffs.Containers.Vec.read_element codec hlen hrep hresult.1)
+
 def vecNewU8Arrays (offsets sizes : List Nat)
     (isFree prevFree : List (Fin 256)) (count : Nat)
     (second : List (BitVec 32)) (first : BitVec 64)
@@ -1051,6 +1136,51 @@ theorem vecGetU8Offset_result
           Nat.lt_of_not_ge hbound, by
             simpa [vecGetU8Offset, hindex, hoverflow, hbound] using hget⟩
 
+theorem vecDropArrays_owns
+    {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
+    [G : Luffs.Memory.ByteContentsGS GF] {α : Type} (codec : Codec α)
+    {pool : Region} {blocks : List Block} {state : Bins.State}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {offset len capacity : Nat}
+    {result : Luffs.Runtime.TLSF.CoalesceClassResult}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hcountMax : count ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins { heads, next, previous } state)
+    (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
+    (hsuccess : boxDropU8Arrays offsets sizes isFree prevFree count second first
+      heads next previous offset = some result) :
+    ∃ (handle : Luffs.Containers.Vec.Handle) (abstractNext : Alloc.State),
+      handle.block.offset = offset ∧ handle.len = len ∧
+      handle.capacity = capacity ∧
+      Luffs.Containers.Vec.drop pool
+          { physical := blocks, bins := state } handle = some abstractNext ∧
+      ∀ (values : List α) (contents : ContentsMap),
+        values.length = len →
+        contentsInterp (G := G) contents ∗
+            (Luffs.Containers.Vec.Owns codec pool handle values ∗
+              Ownership.OwnsFree pool blocks) ==∗
+          contentsInterp
+              (deleteBytes contents (handle.block.region pool).base
+                (Luffs.Containers.Vec.encodeValues codec values)) ∗
+            Ownership.OwnsFree pool abstractNext.physical := by
+  obtain ⟨selected, abstractNext, hoffset, _, hdrop, _⟩ :=
+    boxDropU8Arrays_refines_box (PROP := Iris.IProp GF) hvalid hpoolMax hcountMax
+      hsecond hfirst hbins hdisjoint hphysical hsuccess
+  let handle : Luffs.Containers.Vec.Handle := ⟨selected, len, capacity⟩
+  have hvecDrop : Luffs.Containers.Vec.drop pool
+      { physical := blocks, bins := state } handle = some abstractNext := by
+    simpa [Luffs.Containers.Vec.drop, handle] using hdrop
+  refine ⟨handle, abstractNext, by simpa [handle] using hoffset,
+    rfl, rfl, hvecDrop, ?_⟩
+  intro values contents _
+  exact Luffs.Containers.Vec.drop_owns codec values contents hvecDrop
+
 theorem vecDropU8Arrays_owns
     {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
     [G : Luffs.Memory.ByteContentsGS GF]
@@ -1086,17 +1216,8 @@ theorem vecDropU8Arrays_owns
               (deleteBytes contents (handle.block.region pool).base
                 (Luffs.Containers.Vec.encodeValues Scalar.u8 values)) ∗
             Ownership.OwnsFree pool abstractNext.physical := by
-  obtain ⟨selected, abstractNext, hoffset, _, hdrop, _⟩ :=
-    boxDropU8Arrays_refines_box (PROP := Iris.IProp GF) hvalid hpoolMax hcountMax hsecond
-      hfirst hbins hdisjoint hphysical hsuccess
-  let handle : Luffs.Containers.Vec.Handle := ⟨selected, len, capacity⟩
-  have hvecDrop : Luffs.Containers.Vec.drop pool
-      { physical := blocks, bins := state } handle = some abstractNext := by
-    simpa [Luffs.Containers.Vec.drop, handle] using hdrop
-  refine ⟨handle, abstractNext, by simpa [handle] using hoffset,
-    rfl, rfl, hvecDrop, ?_⟩
-  intro values contents _
-  exact Luffs.Containers.Vec.drop_owns Scalar.u8 values contents hvecDrop
+  exact vecDropArrays_owns Scalar.u8 hvalid hpoolMax hcountMax hsecond hfirst
+    hbins hdisjoint hphysical hsuccess
 
 theorem vecDropPointerU8Arrays_owns
     {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
@@ -1703,6 +1824,27 @@ theorem vecLenAfterPop_refines_handle {handle : Luffs.Containers.Vec.Handle}
     subst nextLen
     simp [Luffs.Containers.Vec.pop, hpositive]
   next => contradiction
+
+theorem vecLenAfterPop_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {α : Type} (codec : Codec α) {pool : Region}
+    {handle : Luffs.Containers.Vec.Handle} {nextLen : Nat}
+    (initValues : List α) (last : α) (contents : ContentsMap)
+    (hlen : handle.len = initValues.length + 1)
+    (hpop : vecLenAfterPop handle.len = some nextLen) :
+    contentsInterp (G := G) contents ∗
+        Luffs.Containers.Vec.Owns codec pool handle (initValues ++ [last]) ==∗
+      contentsInterp
+          (deleteBytes contents
+            ((handle.block.region pool).base +
+              (Luffs.Containers.Vec.encodeValues codec initValues).length)
+            (codec.encode last)) ∗
+        (⌜nextLen = initValues.length⌝ ∗
+          Luffs.Containers.Vec.Owns codec pool
+            { handle with len := nextLen } initValues) := by
+  have habstract := vecLenAfterPop_refines_handle (handle := handle) hpop
+  exact Luffs.Containers.Vec.pop_owns codec initValues last contents hlen
+    habstract
 
 theorem vecGetU8_result {storage : List Byte} {len index : Nat} {value : Byte}
     (hget : vecGetU8 storage len index = some value) :

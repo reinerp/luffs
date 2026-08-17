@@ -4168,6 +4168,20 @@ theorem representsPhysicalArrays_get_offset
   rw [List.getElem?_take_of_lt hi] at hoffsets
   simpa [blockOffsets, hget] using hoffsets
 
+theorem representsPhysicalArrays_get_free
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count i : Nat} {blocks : List Block} {block : Block}
+    (hrep : RepresentsPhysicalArrays offsets sizes isFree prevFree count blocks)
+    (hget : blocks[i]? = some block) :
+    isFree[i]? = some (if block.free then 1 else 0) := by
+  have hi : i < count := by
+    rw [hrep.1]
+    exact (List.getElem?_eq_some_iff.mp hget).1
+  have hfree := congrArg (fun values : List (Fin 256) => values[i]?)
+    hrep.2.2.2.2.2.2.2.1
+  rw [List.getElem?_take_of_lt hi] at hfree
+  simpa [freeFlags, hget] using hfree
+
 structure DeallocateUncoalescedResult where
   isFree : List (Fin 256)
   prevFree : List (Fin 256)
@@ -4223,6 +4237,99 @@ theorem compactActive_append_pair_length {α : Type} [Inhabited α]
         rest.length := by omega
   simp [compactActive, hremaining, hdropcount]
   omega
+
+theorem compactActive_prefix_append_pair {α : Type} [Inhabited α]
+    (pre : List α) (left right : α) (rest spare : List α) :
+    (compactActive ((pre ++ left :: right :: rest) ++ spare)
+      (pre ++ left :: right :: rest).length (pre.length + 1)).take
+        ((pre ++ left :: right :: rest).length - 1) =
+      pre ++ left :: rest := by
+  let active := pre ++ left :: right :: rest
+  have htake : (active ++ spare).take (pre.length + 1) = pre ++ [left] := by
+    rw [show active ++ spare = pre ++ left :: right :: (rest ++ spare) by
+      simp [active]]
+    rw [List.take_append, List.take_of_length_le (by omega)]
+    simp
+  have hdrop : (active ++ spare).drop (pre.length + 1 + 1) = rest ++ spare := by
+    rw [show active ++ spare = pre ++ left :: right :: (rest ++ spare) by
+      simp [active]]
+    rw [List.drop_append, List.drop_eq_nil_of_le (by omega)]
+    have htwo : pre.length + 1 + 1 - pre.length = 2 := by omega
+    rw [htwo]
+    rfl
+  have hremaining : active.length - (pre.length + 1) - 1 = rest.length := by
+    simp [active]
+    omega
+  rw [compactActive, htake, hdrop, hremaining]
+  have hrestTake : (rest ++ spare).take rest.length = rest := by
+    simp [List.take_append]
+  rw [hrestTake]
+  simp only [List.append_assoc]
+  rw [List.take_append, List.take_of_length_le (by simp)]
+  simp [active]
+
+theorem compactActive_prefix_append_pair_length {α : Type} [Inhabited α]
+    (pre : List α) (left right : α) (rest spare : List α) :
+    (compactActive ((pre ++ left :: right :: rest) ++ spare)
+      (pre ++ left :: right :: rest).length (pre.length + 1)).length =
+      ((pre ++ left :: right :: rest) ++ spare).length := by
+  simp [compactActive]
+  omega
+
+theorem compactActive_of_represented_prefix {α : Type} [Inhabited α]
+    {values : List α} (pre : List α) (left right : α)
+    (rest : List α) {count : Nat}
+    (hcount : count = (pre ++ left :: right :: rest).length)
+    (hprefix : values.take count = pre ++ left :: right :: rest) :
+    (compactActive values count (pre.length + 1)).take (count - 1) =
+      pre ++ left :: rest := by
+  have hdecompose : values =
+      (pre ++ left :: right :: rest) ++ values.drop count := by
+    calc
+      values = values.take count ++ values.drop count :=
+        (List.take_append_drop count values).symm
+      _ = (pre ++ left :: right :: rest) ++ values.drop count := by
+        rw [hprefix]
+  subst count
+  rw [hdecompose]
+  exact compactActive_prefix_append_pair pre left right rest _
+
+theorem compactActive_of_represented_prefix_length {α : Type} [Inhabited α]
+    {values : List α} (pre : List α) (left right : α)
+    (rest : List α) {count : Nat}
+    (hcount : count = (pre ++ left :: right :: rest).length)
+    (hprefix : values.take count = pre ++ left :: right :: rest) :
+    (compactActive values count (pre.length + 1)).length = values.length := by
+  have hdecompose : values =
+      (pre ++ left :: right :: rest) ++ values.drop count := by
+    calc
+      values = values.take count ++ values.drop count :=
+        (List.take_append_drop count values).symm
+      _ = (pre ++ left :: right :: rest) ++ values.drop count := by
+        rw [hprefix]
+  subst count
+  rw [hdecompose]
+  exact compactActive_prefix_append_pair_length pre left right rest _
+
+theorem set_represented_prefix {α : Type}
+    {values : List α} (pre : List α) (left right updated : α)
+    (rest : List α) {count : Nat}
+    (hcount : count = (pre ++ left :: right :: rest).length)
+    (hprefix : values.take count = pre ++ left :: right :: rest) :
+    (values.set pre.length updated).take count =
+      pre ++ updated :: right :: rest := by
+  have hdecompose : values =
+      (pre ++ left :: right :: rest) ++ values.drop count := by
+    calc
+      values = values.take count ++ values.drop count :=
+        (List.take_append_drop count values).symm
+      _ = (pre ++ left :: right :: rest) ++ values.drop count := by
+        rw [hprefix]
+  subst count
+  rw [hdecompose]
+  simp [List.set_append]
+  rw [List.take_append, List.take_of_length_le (by omega)]
+  simp
 
 structure CoalescePhysicalResult where
   offsets : List Nat
@@ -4411,6 +4518,125 @@ theorem coalescePhysicalArrays_refines_append (pre : List Block)
     freeFlags, prevFreeFlags, hleftFree, hrightFree, hadjacent,
     RepresentsPhysicalArrays, coalesceAt_append_pair, coalesceBlocks,
     hoffsets, hsizes, hfree, hprev, hoffsetsLen, hsizesLen, hfreeLen, hprevLen]
+
+/-- Active-prefix form of physical coalescing. Unlike the canonical theorem,
+this permits arbitrary spare capacity after `count`, which is required for a
+second coalescing step after the first header compaction. -/
+theorem coalescePhysicalArrays_refines_represented_append
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count : Nat} (pre : List Block) (left right : Block) (rest : List Block)
+    (hrep : RepresentsPhysicalArrays offsets sizes isFree prevFree count
+      (pre ++ left :: right :: rest))
+    (hcan : canCoalesce left right) {result : CoalescePhysicalResult}
+    (hsuccess : coalescePhysicalArrays offsets sizes isFree prevFree count
+      pre.length = some result) :
+    RepresentsPhysicalArrays result.offsets result.sizes result.isFree
+      result.prevFree result.count
+      (coalesceAt (pre ++ left :: right :: rest) pre.length) := by
+  rcases hcan with ⟨hleftFree, hrightFree, hadjacent⟩
+  have hleftGet : (pre ++ left :: right :: rest)[pre.length]? = some left := by
+    simp
+  have hrightGet : (pre ++ left :: right :: rest)[pre.length + 1]? =
+      some right := by simp
+  have hleftOffset := representsPhysicalArrays_get_offset hrep hleftGet
+  have hrightOffset := representsPhysicalArrays_get_offset hrep hrightGet
+  have hleftSize := representsPhysicalArrays_get_size hrep hleftGet
+  have hrightSize := representsPhysicalArrays_get_size hrep hrightGet
+  have hleftFlag := representsPhysicalArrays_get_free hrep hleftGet
+  have hrightFlag := representsPhysicalArrays_get_free hrep hrightGet
+  have hbounds : count ≤ offsets.length ∧ count ≤ sizes.length ∧
+      count ≤ isFree.length ∧ count ≤ prevFree.length :=
+    ⟨hrep.2.1, hrep.2.2.1, hrep.2.2.2.1, hrep.2.2.2.2.1⟩
+  have hrightBound : pre.length + 1 < count := by
+    rw [hrep.1]
+    simp
+  unfold coalescePhysicalArrays at hsuccess
+  simp only [hbounds, if_true, Nat.not_le.mpr hrightBound, if_false,
+    hleftFlag, hrightFlag, hleftFree, hrightFree, hleftOffset, hleftSize,
+    hrightOffset, hrightSize, Option.getD_some] at hsuccess
+  simp only [hadjacent, ne_eq, not_true_eq_false, if_false,
+    Option.some.injEq] at hsuccess
+  simp at hsuccess
+  subst result
+  have hcount : count = (pre ++ left :: right :: rest).length := hrep.1
+  have hoffsets := compactActive_of_represented_prefix
+    (pre.map Block.offset) left.offset right.offset (rest.map Block.offset)
+    (by simpa [blockOffsets] using hcount)
+    (by simpa [blockOffsets] using hrep.2.2.2.2.2.1)
+  have hsizesSet := set_represented_prefix
+    (pre.map Block.bytes) left.bytes right.bytes (left.bytes + right.bytes)
+    (rest.map Block.bytes) (by simpa [blockSizes] using hcount)
+    (by simpa [blockSizes] using hrep.2.2.2.2.2.2.1)
+  have hsizes := compactActive_of_represented_prefix
+    (pre.map Block.bytes) (left.bytes + right.bytes) right.bytes
+    (rest.map Block.bytes) (by simpa [blockSizes] using hcount) hsizesSet
+  have hfree := compactActive_of_represented_prefix
+    (pre.map fun block => if block.free then (1 : Fin 256) else 0)
+    (1 : Fin 256) (1 : Fin 256)
+    (rest.map fun block => if block.free then (1 : Fin 256) else 0)
+    (by simpa [freeFlags] using hcount)
+    (by simpa [freeFlags, hleftFree, hrightFree] using
+      hrep.2.2.2.2.2.2.2.1)
+  have hprev := compactActive_of_represented_prefix
+    (pre.map fun block => if block.prevFree then (1 : Fin 256) else 0)
+    (if left.prevFree then (1 : Fin 256) else 0)
+    (if right.prevFree then (1 : Fin 256) else 0)
+    (rest.map fun block => if block.prevFree then (1 : Fin 256) else 0)
+    (by simpa [prevFreeFlags] using hcount)
+    (by simpa [prevFreeFlags] using hrep.2.2.2.2.2.2.2.2)
+  have hnewCount : count - 1 =
+      (pre ++ coalesceBlocks left right :: rest).length := by
+    rw [hcount]
+    simp
+  have hoffsetsBound : count - 1 ≤
+      (compactActive offsets count (pre.length + 1)).length := by
+    have hlen := compactActive_of_represented_prefix_length
+      (pre.map Block.offset) left.offset right.offset (rest.map Block.offset)
+      (by simpa [blockOffsets] using hcount)
+      (by simpa [blockOffsets] using hrep.2.2.2.2.2.1)
+    simp only [List.length_map] at hlen
+    rw [hlen]
+    omega
+  have hsizesBound : count - 1 ≤
+      (compactActive (sizes.set pre.length (left.bytes + right.bytes)) count
+        (pre.length + 1)).length := by
+    have hlen := compactActive_of_represented_prefix_length
+      (pre.map Block.bytes) (left.bytes + right.bytes) right.bytes
+      (rest.map Block.bytes) (by simpa [blockSizes] using hcount) hsizesSet
+    simp only [List.length_map, List.length_set] at hlen
+    rw [hlen]
+    omega
+  have hfreeBound : count - 1 ≤
+      (compactActive isFree count (pre.length + 1)).length := by
+    have hlen := compactActive_of_represented_prefix_length
+      (pre.map fun block => if block.free then (1 : Fin 256) else 0)
+      (1 : Fin 256) (1 : Fin 256)
+      (rest.map fun block => if block.free then (1 : Fin 256) else 0)
+      (by simpa [freeFlags] using hcount)
+      (by simpa [freeFlags, hleftFree, hrightFree] using
+        hrep.2.2.2.2.2.2.2.1)
+    simp only [List.length_map] at hlen
+    rw [hlen]
+    omega
+  have hprevBound : count - 1 ≤
+      (compactActive prevFree count (pre.length + 1)).length := by
+    have hlen := compactActive_of_represented_prefix_length
+      (pre.map fun block => if block.prevFree then (1 : Fin 256) else 0)
+      (if left.prevFree then (1 : Fin 256) else 0)
+      (if right.prevFree then (1 : Fin 256) else 0)
+      (rest.map fun block => if block.prevFree then (1 : Fin 256) else 0)
+      (by simpa [prevFreeFlags] using hcount)
+      (by simpa [prevFreeFlags] using hrep.2.2.2.2.2.2.2.2)
+    simp only [List.length_map] at hlen
+    rw [hlen]
+    omega
+  rw [coalesceAt_append_pair]
+  refine ⟨hnewCount, hoffsetsBound, hsizesBound, hfreeBound, hprevBound,
+    ?_, ?_, ?_, ?_⟩
+  · simpa [blockOffsets, coalesceBlocks] using hoffsets
+  · simpa [blockSizes, coalesceBlocks] using hsizes
+  · simpa [freeFlags, coalesceBlocks] using hfree
+  · simpa [prevFreeFlags, coalesceBlocks] using hprev
 
 /-- Full metadata transaction for coalescing an adjacent free pair: detach both
 old size-class nodes, compact the physical headers, and insert the merged node
@@ -4612,6 +4838,8 @@ set_option maxHeartbeats 400000 in
 /-- The complete concrete coalescing transaction refines the corresponding
 abstract allocator transition, including physical headers and all bin caches. -/
 theorem coalesceClassArrays_refines_allocator_append
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count : Nat}
     (pre : List Block) (leftBlock rightBlock : Block) (rest : List Block)
     (hcan : canCoalesce leftBlock rightBlock)
     {state abstractNext : Bins.State}
@@ -4622,6 +4850,8 @@ theorem coalesceClassArrays_refines_allocator_append
     (hfirst : FirstBitmapRep first second)
     (hbins : RepresentsBins { heads, next, previous } state)
     (hdisjoint : BinsOffsetsDisjoint state)
+    (hphysicalInput : RepresentsPhysicalArrays offsets sizes isFree prevFree
+      count (pre ++ leftBlock :: rightBlock :: rest))
     (hpair : Dealloc.coalescePair
       { physical := pre ++ leftBlock :: rightBlock :: rest, bins := state }
       pre.length = some
@@ -4629,12 +4859,8 @@ theorem coalesceClassArrays_refines_allocator_append
             pre.length,
           bins := abstractNext })
     (hsuccess : coalesceClassArrays
-      (blockOffsets (pre ++ leftBlock :: rightBlock :: rest))
-      (blockSizes (pre ++ leftBlock :: rightBlock :: rest))
-      (freeFlags (pre ++ leftBlock :: rightBlock :: rest))
-      (prevFreeFlags (pre ++ leftBlock :: rightBlock :: rest))
-      second first heads next previous
-      (pre ++ leftBlock :: rightBlock :: rest).length pre.length = some result) :
+      offsets sizes isFree prevFree second first heads next previous count
+      pre.length = some result) :
     RepresentsPhysicalArrays result.offsets result.sizes result.isFree
         result.prevFree result.count
         (coalesceAt (pre ++ leftBlock :: rightBlock :: rest) pre.length) ∧
@@ -4644,8 +4870,6 @@ theorem coalesceClassArrays_refines_allocator_append
       BinsOffsetsDisjoint abstractNext ∧
       RepresentsSecondBitmap result.second abstractNext ∧
       FirstBitmapRep result.first result.second := by
-  have hphysical := coalesceClassArrays_refines_physical_append pre leftBlock
-    rightBlock rest hcan hsuccess
   obtain ⟨left, right, leftClass, rightClass, removedLeft, afterLeft,
       removedRight, afterRight, mergedClass, hleft, hright, _,
       hleftClass, hrightClass, hremoveLeftAbstract, hremoveRightAbstract,
@@ -4667,22 +4891,28 @@ theorem coalesceClassArrays_refines_allocator_append
       hmergedBin, hinsert, hoffsets, hsizes, hisFree, hprevFree, hcount,
       hsecondResult, hfirstResult, hheads, hnext, hprevious⟩ :=
     coalesceClassArrays_result hsuccess
+  have hphysical := coalescePhysicalArrays_refines_represented_append pre
+    leftBlock rightBlock rest hphysicalInput hcan hphysicalStep
   have hleftOffsetEq : leftOffset = leftBlock.offset := by
-    have h := hleftOffset
-    simp [blockOffsets] at h
-    exact h.symm
+    have hget : (pre ++ leftBlock :: rightBlock :: rest)[pre.length]? =
+        some leftBlock := by simp
+    exact Option.some.inj (hleftOffset.symm.trans
+      (representsPhysicalArrays_get_offset hphysicalInput hget))
   have hrightOffsetEq : rightOffset = rightBlock.offset := by
-    have h := hrightOffset
-    simp [blockOffsets] at h
-    exact h.symm
+    have hget : (pre ++ leftBlock :: rightBlock :: rest)[pre.length + 1]? =
+        some rightBlock := by simp
+    exact Option.some.inj (hrightOffset.symm.trans
+      (representsPhysicalArrays_get_offset hphysicalInput hget))
   have hleftSizeEq : leftSize = leftBlock.bytes := by
-    have h := hleftSize
-    simp [blockSizes] at h
-    exact h.symm
+    have hget : (pre ++ leftBlock :: rightBlock :: rest)[pre.length]? =
+        some leftBlock := by simp
+    exact Option.some.inj (hleftSize.symm.trans
+      (representsPhysicalArrays_get_size hphysicalInput hget))
   have hrightSizeEq : rightSize = rightBlock.bytes := by
-    have h := hrightSize
-    simp [blockSizes] at h
-    exact h.symm
+    have hget : (pre ++ leftBlock :: rightBlock :: rest)[pre.length + 1]? =
+        some rightBlock := by simp
+    exact Option.some.inj (hrightSize.symm.trans
+      (representsPhysicalArrays_get_size hphysicalInput hget))
   subst leftOffset
   subst rightOffset
   subst leftSize
@@ -4697,12 +4927,8 @@ theorem coalesceClassArrays_refines_allocator_append
   have hrightClassEq : rightRuntimeClass = rightClass :=
     Option.some.inj (hrightRuntimeClass.symm.trans hrightClass)
   subst rightRuntimeClass
-  have hphysicalRep := coalescePhysicalArrays_refines_append pre leftBlock
-    rightBlock rest hcan
-  obtain ⟨expectedPhysical, hexpectedPhysical, hphysicalArrays⟩ := hphysicalRep
-  have hphysicalEq : physical = expectedPhysical :=
-    Option.some.inj (hphysicalStep.symm.trans hexpectedPhysical)
-  subst physical
+  have hphysicalArrays := coalescePhysicalArrays_refines_represented_append pre
+    leftBlock rightBlock rest hphysicalInput hcan hphysicalStep
   have hmergedGet :
       (coalesceAt (pre ++ leftBlock :: rightBlock :: rest) pre.length)[pre.length]? =
         some (coalesceBlocks leftBlock rightBlock) := by
@@ -4801,7 +5027,7 @@ theorem coalesceClassArrays_complete_refinement
       subst abstractPhysical
       have hrefine := coalesceClassArrays_refines_allocator_append pre leftBlock
         rightBlock rest hcan (hvalid := hallocValid.2.1) hsecond hfirst hbins
-        hdisjoint hpair hsuccess
+        hdisjoint (canonical_representsPhysicalArrays _) hpair hsuccess
       let final : Alloc.State := {
         physical := coalesceAt (pre ++ leftBlock :: rightBlock :: rest) pre.length
         bins := abstractBins }

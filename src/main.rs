@@ -261,7 +261,12 @@ fn parse(source: &str) -> Result<Module, String> {
             }
         }
         if let Some((name, expression)) = usize_let(trimmed) {
-            if arithmetic_expression(expression) {
+            if let Some(checked) = checked_arithmetic_expression(expression) {
+                if fact_supported(&checked, &nat_vars) {
+                    facts.push(format!("{} = {}", lean_ident(name), checked));
+                    facts.push(format!("({checked}) ≤ usize_max"));
+                }
+            } else if arithmetic_expression(expression) {
                 let conclusion = overflow_obligation(expression)?;
                 proofs.push(Proof {
                     name: format!("__overflow_{overflow_proof}"),
@@ -1927,9 +1932,7 @@ fn parse_tlsf_box_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
             "tlsf_box_new_u16",
             vec![
                 "let offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, 8)?;",
-                "if usize::MAX < 2 { return None; }",
-                "if offset > usize::MAX - 2 { return None; }",
-                "let end: usize = offset + 2;",
+                "let end: usize = offset.checked_add(2)?;",
                 "if end > pool.len() { return None; }",
                 "pool[offset] = value as u8;",
                 "let high: usize = offset + 1;",
@@ -2602,6 +2605,22 @@ fn usize_let(line: &str) -> Option<(&str, &str)> {
 
 fn arithmetic_expression(expr: &str) -> bool {
     expr.contains('+') || expr.contains('*') || expr.contains('-')
+}
+
+fn checked_arithmetic_expression(expr: &str) -> Option<String> {
+    let expression = expr.strip_suffix('?')?;
+    for (method, operator) in [(".checked_add(", "+"), (".checked_mul(", "*")] {
+        if let Some((left, right)) = expression.split_once(method)
+            && let Some(right) = right.strip_suffix(')')
+        {
+            return Some(format!(
+                "{} {operator} {}",
+                to_lean_expr(left.trim()),
+                to_lean_expr(right.trim())
+            ));
+        }
+    }
+    None
 }
 
 fn overflow_obligation(expr: &str) -> Result<String, String> {
@@ -3594,6 +3613,18 @@ mod tests {
                 .facts
                 .iter()
                 .any(|fact| fact == "¬ (b > usize_max - a)")
+        );
+    }
+
+    #[test]
+    fn checked_add_success_adds_cfg_result_and_overflow_facts() {
+        assert_eq!(
+            checked_arithmetic_expression("begin.checked_add(2)?"),
+            Some("begin + 2".to_owned())
+        );
+        assert_eq!(
+            checked_arithmetic_expression("count.checked_mul(width)?"),
+            Some("count * width".to_owned())
         );
     }
 

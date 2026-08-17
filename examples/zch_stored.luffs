@@ -1,8 +1,8 @@
-// A first, deliberately small zch decoder: one stored block, no raw tail.
-// The current zch wire format starts with u64 little-endian plaintext length,
-// then a u16 block prefix. Prefix zero means a stored block.
+// A verified decoder for the stored-block subset of the current zch wire
+// format. Unlike the original one-block example, this handles every 32 KiB
+// stored block plus the final sub-128-byte raw tail.
 fn decode_zch_stored(input: &[u8], output: &mut [u8]) -> Option<usize> {
-    if input.len() < 10 { return None; }
+    if input.len() < 8 { return None; }
 
     let plen64: u64 = (input[0] as u64)
         | ((input[1] as u64) << 8)
@@ -12,30 +12,59 @@ fn decode_zch_stored(input: &[u8], output: &mut [u8]) -> Option<usize> {
         | ((input[5] as u64) << 40)
         | ((input[6] as u64) << 48)
         | ((input[7] as u64) << 56);
-    if plen64 > usize::MAX as u64 {
-        return None;
-    }
+    if plen64 > usize::MAX as u64 { return None; }
     let plen: usize = plen64 as usize;
-    if plen == 0 || plen > 32768 || (plen & 127) != 0 {
-        return None;
-    }
-    let prefix: u16 = (input[8] as u16) | ((input[9] as u16) << 8);
-    if prefix != 0 {
-        return None;
+    if plen > output.len() { return None; }
+
+    let plen_blocks: usize = plen & !127;
+    let mut input_pos: usize = 8;
+    let mut output_pos: usize = 0;
+    while output_pos < plen_blocks {
+        let remaining: usize = plen_blocks - output_pos;
+        let mut block_len: usize = remaining;
+        if block_len > 32768 {
+            block_len = 32768;
+        }
+
+        if input_pos == usize::MAX { return None; }
+        let prefix_end: usize = input_pos + 1;
+        if prefix_end >= input.len() { return None; }
+        let prefix: u16 = (input[input_pos] as u16)
+            | ((input[prefix_end] as u16) << 8);
+        if prefix != 0 { return None; }
+
+        if input_pos > usize::MAX - 2 { return None; }
+        let content_begin: usize = input_pos + 2;
+        if content_begin > usize::MAX - block_len { return None; }
+        let content_end: usize = content_begin + block_len;
+        if content_end > input.len() { return None; }
+        if output_pos > usize::MAX - block_len { return None; }
+        let output_end: usize = output_pos + block_len;
+        if output_end > output.len() { return None; }
+
+        let stored: &[u8] = input[content_begin..<content_end];
+        let dst: &mut [u8] = output[output_pos..<output_end];
+        dst.copy_from_slice(stored);
+        input_pos = content_end;
+        output_pos = output_end;
     }
 
-    if input.len() < 10 + plen { return None; }
-    if output.len() < plen { return None; }
-
-    // `..+` is a (begin, length) slice. `..<` is a (begin, end) slice.
-    let stored: &[u8] = input[10..+plen];
-    let dst: &mut [u8] = output[0..<plen];
-    dst.copy_from_slice(stored);
-    Some(plen)
+    let tail: usize = plen & 127;
+    if input_pos > usize::MAX - tail { return None; }
+    let input_end: usize = input_pos + tail;
+    if input_end > input.len() { return None; }
+    if output_pos > usize::MAX - tail { return None; }
+    let output_end: usize = output_pos + tail;
+    if output_end > output.len() { return None; }
+    let raw: &[u8] = input[input_pos..<input_end];
+    let dst: &mut [u8] = output[output_pos..<output_end];
+    dst.copy_from_slice(raw);
+    Some(output_end)
 }
 
 fn main() {
-    let input: [u8; 138] = [0; 138];
-    let mut output: [u8; 128] = [0; 128];
+    // 128 bytes in one stored block followed by a three-byte raw tail.
+    let input: [u8; 141] = [0; 141];
+    let mut output: [u8; 131] = [0; 131];
     let _ = decode_zch_stored(&input, &mut output);
 }

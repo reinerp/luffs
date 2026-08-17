@@ -849,3 +849,9 @@ alias semantics. This removes the one-store restriction that blocked
   the generic allocator-backed exactly-once drop theorem to `Scalar.u16`.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.
+  All four checked-in examples are currently accepted by Lean and compile to
+  native executables. Their generated Rust uses unchecked slice operations for
+  every proved access. The zch reference now handles arbitrarily many 32 KiB
+  stored blocks and its final raw tail, with a regression requiring every
+  access to have a generated proof. A hermetic clean-checkout gate and coded
+  zch blocks remain before this item is complete.

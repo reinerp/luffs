@@ -140,14 +140,15 @@ version. `emit` only needs Rust.
 ## zch reference
 
 [`examples/zch_stored.luffs`](examples/zch_stored.luffs) follows the current
-zch framing: an eight-byte little-endian plaintext length, a two-byte block
-prefix, and prefix zero for a stored block. The example proves every header and
-payload access, uses both slice conventions, and emits unchecked accesses after
+zch framing: an eight-byte little-endian plaintext length, 32 KiB stored blocks
+with two-byte zero prefixes, and a final sub-128-byte raw tail. The example
+handles any number of stored blocks, proves every header and payload access,
+uses parser-friendly begin/end slices, and emits unchecked accesses only after
 the corresponding ordinary Rust early-return checks.
 
-It currently decodes one stored 128-byte-multiple block. Full zch compatibility
-still requires raw tails, multiple blocks, canonical Huffman table validation,
-four-way bitstream decoding, zero expansion, and architecture-specific SIMD.
+Full zch compatibility still requires coded-block dispatch, canonical Huffman
+table validation, four-way bitstream decoding, zero expansion, rANS blocks,
+and architecture-specific SIMD.
 Those pieces should be added only alongside their Lean models and safety proofs.
 
 ## Safety boundary and current limitations

@@ -4397,6 +4397,28 @@ mod tests {
     }
 
     #[test]
+    fn zch_stored_stream_has_only_proved_accesses() {
+        let module = parse(include_str!("../examples/zch_stored.luffs")).unwrap();
+        validate(&module).unwrap();
+        assert!(module.rust.contains("while output_pos < plen_blocks"));
+        assert!(module.rust.contains("let tail: usize = plen & 127;"));
+        assert!(
+            module
+                .rust
+                .contains("get_unchecked(content_begin..content_end)")
+        );
+        assert!(module.rust.contains("get_unchecked(input_pos..input_end)"));
+        assert_eq!(
+            module.accesses.len(),
+            module
+                .proofs
+                .iter()
+                .filter(|proof| proof.name.starts_with("__auto_"))
+                .count()
+        );
+    }
+
+    #[test]
     fn emits_scalar_function_semantics_from_the_same_source() {
         let m = parse(
             "fn pop_len(len: usize) -> Option<usize> {\nif len == 0 { return None; }\nlet next: usize = len - 1;\nSome(next)\n}",

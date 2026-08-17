@@ -673,7 +673,11 @@ concurrency are later extensions and are not prerequisites for `Box` and
   preserves that ownership, and exposes its exact four-read trace. A
   successful store exchanges `Box::Owns` of the old value for ownership of the
   new value under arbitrary frames, updates the authoritative contents, and
-  closes the exact four-write program WP.
+  closes the exact four-write program WP. The concrete `u64` load/store path
+  now has the corresponding source-to-Iris connection over all eight encoded
+  bytes: loads retain exclusive ownership and expose the eight-read trace,
+  while stores update the logical value and authoritative byte contents and
+  close the exact eight-write WP.
   The compositional source translator now assigns Lean `BitVec` models to all
   signed and unsigned scalar widths and lowers arbitrary 8/16/32/64/128-bit
   `from_le_bytes` expressions plus byte-extraction stores. `usize`/`isize` are

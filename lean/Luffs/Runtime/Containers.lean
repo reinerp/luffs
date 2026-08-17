@@ -2721,6 +2721,93 @@ theorem boxLoadU64_eq_generic (storage : List Byte) (begin : Nat)
       exact (drop_take_eight_of_getElem? storage begin b0 b1 b2 b3 b4 b5 b6 b7
         hb0 hb1 hb2 hb3 hb4 hb5 hb6 hb7).symm
 
+theorem boxStoreU64_eq_generic (storage : List Byte) (begin : Nat)
+    (value : BitVec 64)
+    (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax) :
+    boxStoreU64 storage begin value = boxStore Scalar.u64 storage begin value := by
+  by_cases hword : begin > Luffs.Runtime.TLSF.usizeMax - 7
+  · have hgeneric : begin + Scalar.u64.size > storage.length := by
+      simp only [Scalar.u64]
+      omega
+    simp [boxStoreU64, boxStore, hword, hgeneric]
+  · by_cases hbound : begin + 7 ≥ storage.length
+    · have hgeneric : begin + Scalar.u64.size > storage.length := by
+        simp only [Scalar.u64]
+        omega
+      simp [boxStoreU64, boxStore, hword, hbound, hgeneric]
+    · have hfit : begin + 8 ≤ storage.length := by omega
+      have hwrite := writeBytes_eight_eq_set storage begin
+        (Scalar.byteAt value 0) (Scalar.byteAt value 8)
+        (Scalar.byteAt value 16) (Scalar.byteAt value 24)
+        (Scalar.byteAt value 32) (Scalar.byteAt value 40)
+        (Scalar.byteAt value 48) (Scalar.byteAt value 56) hfit
+      simp [boxStoreU64, boxStore, hword, hbound, writeBytes,
+        Scalar.u64, Scalar.encode64]
+      exact ⟨hfit, by
+        simpa only [List.cons_append, List.nil_append, List.append_assoc] using
+          hwrite.symm⟩
+
+/-- A successful concrete eight-byte Box load returns the logical value encoded
+in the owned allocation and preserves both authoritative contents and exclusive
+Box ownership while exposing the exact read trace. -/
+theorem boxLoadU64_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {block : Block} {storage : List Byte}
+    {value expected : BitVec 64} (hstorageMax : storage.length ≤
+      Luffs.Runtime.TLSF.usizeMax)
+    (hload : boxLoadU64 storage block.offset = some value)
+    (hencoded : (storage.drop block.offset).take Scalar.u64.size =
+      Scalar.u64.encode expected)
+    {contents : ContentsMap} {mem : Memory} (hrep : ContentsRep contents mem) :
+    value = expected ∧
+      (contentsInterp (G := G) contents ∗
+          Luffs.Containers.Box.Owns Scalar.u64 pool block expected ⊢
+        (contentsInterp contents ∗
+          Luffs.Containers.Box.Owns Scalar.u64 pool block expected) ∗
+          ⌜ReadSteps (block.region pool).base (Scalar.u64.encode expected) mem ∧
+            Scalar.u64.decode (Scalar.u64.encode expected) = some expected⌝) := by
+  have hgeneric : boxLoad Scalar.u64 storage block.offset = some value := by
+    rw [← boxLoadU64_eq_generic storage block.offset hstorageMax]
+    exact hload
+  have hexpected : boxLoad Scalar.u64 storage block.offset = some expected :=
+    boxLoad_of_encoded Scalar.u64 storage block.offset expected
+      (boxLoad_result hgeneric).1 hencoded
+  have hvalue : value = expected := by
+    rw [hgeneric] at hexpected
+    exact Option.some.inj hexpected
+  refine ⟨hvalue, ?_⟩
+  exact Luffs.Containers.Box.deref_read Scalar.u64 hrep
+
+/-- A successful concrete eight-byte Box store is exactly the generic codec
+write and inherits its frame-preserving Iris ownership update and closed WP. -/
+theorem boxStoreU64_owns_wp {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {block : Block} {storage nextStorage : List Byte}
+    (oldValue newValue : BitVec 64)
+    (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hstore : boxStoreU64 storage block.offset newValue = some nextStorage)
+    (contents : ContentsMap) (mem : Memory) (hrep : ContentsRep contents mem) :
+    nextStorage = writeBytes storage block.offset (Scalar.u64.encode newValue) ∧
+      (contentsInterp (G := G) contents ∗
+          Luffs.Containers.Box.Owns Scalar.u64 pool block oldValue ==∗
+        (contentsInterp
+            (insertBytes contents (block.region pool).base
+              (Scalar.u64.encode newValue)) ∗
+          Luffs.Containers.Box.Owns Scalar.u64 pool block newValue) ∗
+          ⌜∃ next,
+            WriteSteps (block.region pool).base (Scalar.u64.encode newValue)
+              mem next ∧
+            (⊢@{Iris.IProp GF} Program.wp
+              (Program.writeBytes (block.region pool).base
+                (Scalar.u64.encode newValue))
+              mem (fun final => final = next))⌝) := by
+  have hgeneric : boxStore Scalar.u64 storage block.offset newValue =
+      some nextStorage := by
+    rw [← boxStoreU64_eq_generic storage block.offset newValue hstorageMax]
+    exact hstore
+  exact ⟨(boxStore_result hgeneric).2, Luffs.Containers.Box.store_wp Scalar.u64
+    oldValue newValue contents mem hrep⟩
+
 theorem boxStoreU32_eq_generic (storage : List Byte) (begin : Nat)
     (value : BitVec 32)
     (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax) :

@@ -4623,6 +4623,14 @@ mod tests {
             "theorem box_store_u32_refines : box_store_u32_model = Luffs.Runtime.Containers.boxStoreU32"
         ));
         assert!(generated.contains("theorem box_store_u32_program_wp"));
+        assert!(generated.contains(
+            "theorem box_load_u64_refines : box_load_u64_model = Luffs.Runtime.Containers.boxLoadU64"
+        ));
+        assert!(generated.contains("theorem box_load_u64_program_wp"));
+        assert!(generated.contains(
+            "theorem box_store_u64_refines : box_store_u64_model = Luffs.Runtime.Containers.boxStoreU64"
+        ));
+        assert!(generated.contains("theorem box_store_u64_program_wp"));
     }
 
     #[test]

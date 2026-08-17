@@ -259,6 +259,33 @@ theorem store {GF : BundledGFunctors}
   · ipureintro
     exact hwrite
 
+/-- Generic Box assignment now crosses the adequacy boundary: alongside the
+updated typed ownership it returns an exact write trace and a closed WP for the
+generated store program. -/
+theorem store_wp {GF : BundledGFunctors}
+    [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
+    (codec : Codec α) {pool : Region} {block : Block} (oldValue newValue : α)
+    (contents : ContentsMap) (mem : Memory) (hrep : ContentsRep contents mem) :
+    contentsInterp (G := G) contents ∗ Owns codec pool block oldValue ==∗
+      (contentsInterp
+          (insertBytes contents (block.region pool).base
+            (codec.encode newValue)) ∗
+        Owns codec pool block newValue) ∗
+        ⌜∃ next,
+          WriteSteps (block.region pool).base (codec.encode newValue) mem next ∧
+          (⊢@{IProp GF} Program.wp
+            (Program.writeBytes (block.region pool).base
+              (codec.encode newValue))
+            mem (fun final => final = next))⌝ := by
+  iintro H
+  imod store codec oldValue newValue contents mem hrep $$ H with ⟨H, %hwrite⟩
+  imodintro
+  isplitl [H]
+  · iassumption
+  · ipureintro
+    obtain ⟨next, hsteps⟩ := hwrite
+    exact ⟨next, hsteps, hsteps.program_wp⟩
+
 theorem drop_owns {GF : BundledGFunctors}
     [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
     (codec : Codec α) {pool : Region} {state next : Alloc.State}

@@ -44,8 +44,14 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   lift into it. Generic `Box<T>` dereference and initialized-prefix `Vec<T>`
   reads now retain their typed ownership while producing this closed WP, so
   adequacy yields complete non-stuck executions for every encoded-byte load.
-  Generated stores, branches/loops, and compiler emission of these program
-  terms still need composition before this end-to-end item can be checked off.
+  Contiguous generated stores now likewise have an exact program, complete
+  execution theorem, deterministic final-memory theorem, and closed WP lifted
+  from `WriteSteps`. Generic `Box<T>` assignment and mutable Vec-slice
+  replacement retain their updated typed ownership while returning both the
+  exact store trace and its adequacy-ready WP. Stores into previously
+  uninitialized Vec spare capacity, branches/loops, and compiler emission of
+  these program terms still need composition before this end-to-end item can
+  be checked off.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

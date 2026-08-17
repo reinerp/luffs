@@ -489,6 +489,47 @@ theorem ReadSteps.program_wp {GF : BundledGFunctors} {base : Addr}
       (fun final => final = mem) :=
   Program.readBytes_wp base values.length mem hsteps.mapped
 
+/-- The effect program emitted for a contiguous checked byte write. -/
+def Program.writeBytes (base : Addr) : List Byte → Program
+  | [] => .done
+  | value :: rest =>
+      .call (.store base value) (fun _ => writeBytes (base + 1) rest)
+
+theorem WriteSteps.program_exec {base : Addr} {values : List Byte}
+    {before after : Memory}
+    (hsteps : WriteSteps base values before after) :
+    Program.Exec (Program.writeBytes base values) before after := by
+  induction hsteps with
+  | nil => exact .done
+  | cons hstore hold htail ih => exact .call hstore ih
+
+theorem WriteSteps.program_exec_unique {base : Addr} {values : List Byte}
+    {before after final : Memory}
+    (hsteps : WriteSteps base values before after)
+    (hexec : Program.Exec (Program.writeBytes base values) before final) :
+    final = after := by
+  induction hsteps generalizing final with
+  | nil =>
+      cases hexec
+      rfl
+  | cons hstore hold htail ih =>
+      cases hexec with
+      | call executed rest =>
+          cases executed
+          exact ih rest
+
+/-- An exact generated write trace is sufficient for a closed no-stuck WP
+whose postcondition identifies the complete final memory. -/
+theorem WriteSteps.program_wp {GF : BundledGFunctors} {base : Addr}
+    {values : List Byte} {before after : Memory}
+    (hsteps : WriteSteps base values before after) :
+    ⊢@{IProp GF} Program.wp (Program.writeBytes base values) before
+      (fun final => final = after) := by
+  unfold Program.wp
+  ipureintro
+  exact ⟨⟨after, hsteps.program_exec⟩,
+    fun final hexec => hsteps.program_exec_unique hexec⟩
+
 /-- Iris adequacy for the Luffs primitive language. This is the closed-proof
 boundary: semantic validity of a WP yields an actual complete execution. -/
 theorem Program.wp_adequacy {GF : BundledGFunctors} {program : Program}

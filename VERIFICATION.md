@@ -605,7 +605,11 @@ whose result theorem proves both bounds and destination-length preservation.
 `vec_push_u8` is translated
 from its two early-return guards and mutation into executable Lean semantics,
 then checked extensionally against `vecPushU8`; its result theorem connects that
-model to the abstract verified Vec handle transition. Multiple mutations,
-loops, and general checked-arithmetic semantics are the next translation cases.
+model to the abstract verified Vec handle transition. Ordered multiple
+mutations of one byte array are now translated directly: each generated
+`List.set` consumes the previous generated state, preserving Rust's sequential
+alias semantics. This removes the one-store restriction that blocked
+multi-byte scalar encodings. Loops, typed scalar expressions, and general
+checked-arithmetic semantics are the next translation cases.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.

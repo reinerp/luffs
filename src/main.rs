@@ -77,7 +77,7 @@ struct ArrayModel {
     params: Vec<(String, String)>,
     guards: Vec<String>,
     lets: Vec<(String, String)>,
-    assignment: (String, String),
+    assignments: Vec<(String, String)>,
     result: String,
     returns_unit: bool,
     refines: Option<String>,
@@ -563,7 +563,7 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
         params: Vec<(String, String)>,
         guards: Vec<String>,
         lets: Vec<(String, String)>,
-        assignment: Option<(String, String)>,
+        assignments: Vec<(String, String)>,
         result: Option<String>,
         returns_unit: bool,
         refines: Option<String>,
@@ -657,7 +657,7 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
             && left.ends_with(']')
         {
             let index = &left[model.array.len() + 1..left.len() - 1];
-            model.assignment = Some((
+            model.assignments.push((
                 model_expr(index, &model.array),
                 model_expr(right, &model.array),
             ));
@@ -676,7 +676,8 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
         if model.depth == 0 {
             let model = pending.take().expect("pending model exists");
             if model.eligible
-                && let (Some(assignment), Some(result)) = (model.assignment, model.result)
+                && !model.assignments.is_empty()
+                && let Some(result) = model.result
             {
                 models.push(ArrayModel {
                     name: model.name,
@@ -684,7 +685,7 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
                     params: model.params,
                     guards: model.guards,
                     lets: model.lets,
-                    assignment,
+                    assignments: model.assignments,
                     result,
                     returns_unit: model.returns_unit,
                     refines: model.refines,
@@ -2857,15 +2858,18 @@ fn lean(module: &Module) -> String {
             out.push_str(expression);
             out.push_str("\n  ");
         }
-        out.push_str("let ");
-        out.push_str(&model.array);
-        out.push_str(" := ");
-        out.push_str(&model.array);
-        out.push_str(".set ");
-        out.push_str(&model.assignment.0);
-        out.push(' ');
-        out.push_str(&model.assignment.1);
-        out.push_str("\n  some (");
+        for (index, value) in &model.assignments {
+            out.push_str("let ");
+            out.push_str(&model.array);
+            out.push_str(" := ");
+            out.push_str(&model.array);
+            out.push_str(".set ");
+            out.push_str(index);
+            out.push(' ');
+            out.push_str(value);
+            out.push_str("\n  ");
+        }
+        out.push_str("some (");
         out.push_str(&model.array);
         if !model.returns_unit {
             out.push_str(", ");
@@ -3838,6 +3842,20 @@ mod tests {
         assert!(generated.contains("let storage := storage.set len value"));
         assert!(generated.contains(
             "theorem vec_push_u8_refines : vec_push_u8_model = Luffs.Runtime.Containers.vecPushU8"
+        ));
+    }
+
+    #[test]
+    fn emits_ordered_multi_byte_array_mutations() {
+        let m = parse(
+            "fn store_pair(storage: &mut [u8], begin: usize, low: u8, high: u8) -> Option<()> {\nif begin >= storage.len() { return None; }\nlet second: usize = begin + 1;\nif second >= storage.len() { return None; }\nstorage[begin] = low;\nstorage[second] = high;\nSome(())\n}",
+        )
+        .unwrap();
+        assert_eq!(m.array_models.len(), 1);
+        assert_eq!(m.array_models[0].assignments.len(), 2);
+        let generated = lean(&m);
+        assert!(generated.contains(
+            "let storage := storage.set begin low\n  let storage := storage.set second high"
         ));
     }
 

@@ -193,6 +193,11 @@ checks its ordered conditional bypass and detachment writes extensionally
 against `removeArrays`; this preserves sequential alias behavior even for
 malformed metadata, while the `RepresentsBin` theorems supply well-formedness
 for allocator calls.
+The current linear size/free-array fallback also has executable list semantics.
+Success is proved to return an in-bounds entry whose flag is nonzero and whose
+size satisfies the request; conversely, any such entry proves lookup cannot
+fail. Compiler-generated loop semantics and eventual replacement by the
+two-level O(1) bitmap path remain.
 
 The first target is sequential TLSF with fixed-size pools obtained from `mmap`.
 Growing pools, `realloc`, aligned allocation beyond the base alignment, and

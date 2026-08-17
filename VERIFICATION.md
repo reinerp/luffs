@@ -193,6 +193,16 @@ checks its ordered conditional bypass and detachment writes extensionally
 against `removeArrays`; this preserves sequential alias behavior even for
 malformed metadata, while the `RepresentsBin` theorems supply well-formedness
 for allocator calls.
+The concrete Luffs runtime now composes bounded bitmap lookup with head loading,
+intrusive removal, and exhausted-bin bitmap clearing in
+`tlsf_take_candidate`. All potentially failing bounds checks precede the first
+write. Its exact array/bitmap transition has a Lean model; success proves the
+returned bin was a set bit at or above the requested start, all selected
+indices were valid, the modeled removal occurred, and the bitmap changes only
+through the exhausted-chain clear operation. The compiler's specialized
+source-shape gate emits the corresponding refinement declaration. Relating
+this fixed-array state to `Bins.State.takeCandidate` is still required before
+the abstract allocator proof can consume it.
 The current linear size/free-array fallback also has executable list semantics.
 Success is proved to return an in-bounds entry whose flag is nonzero and whose
 size satisfies the request; conversely, any such entry proves lookup cannot

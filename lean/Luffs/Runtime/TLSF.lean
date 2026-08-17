@@ -437,6 +437,86 @@ theorem findNonemptyBin_minimal {words : List (BitVec 64)} {start found earlier 
     (bitmapBits words)[earlier]? = some false := by
   exact firstSetFrom_minimal hfind hstart hearlier
 
+def clearBinBit (words : List (BitVec 64)) (bin : Nat) : List (BitVec 64) :=
+  let wordIndex := bin / 64
+  let bit := bin % 64
+  let bitmap := words[wordIndex]?.getD 0
+  words.set wordIndex (bitmap &&& ~~~(BitVec.ofNat 64 1 <<< bit))
+
+structure CandidateResult where
+  block : Nat
+  bin : Nat
+  words : List (BitVec 64)
+  heads : List Nat
+  next : List Nat
+  previous : List Nat
+deriving DecidableEq, Repr
+
+/-- Exact pure effect of `tlsf_take_candidate`: all checks precede removal,
+and an exhausted chain clears its cached nonempty bit. -/
+def takeCandidateArrays (words : List (BitVec 64))
+    (heads next previous : List Nat) (start : Nat) : Option CandidateResult :=
+  match findNonemptyBinLowered words start with
+  | none => none
+  | some bin =>
+      if bin ≥ heads.length then none else
+      let wordIndex := bin / 64
+      if wordIndex ≥ words.length then none else
+      let block := heads[bin]?.getD next.length
+      if block ≥ next.length then none else
+      if block ≥ previous.length then none else
+      let successor := next[block]?.getD next.length
+      match removeArrays heads next previous bin block with
+      | none => none
+      | some (nextHeads, nextLinks, nextPrevious) =>
+          let nextWords :=
+            if successor ≥ next.length then clearBinBit words bin else words
+          some (CandidateResult.mk block bin nextWords nextHeads nextLinks
+            nextPrevious)
+
+theorem takeCandidateArrays_result {words : List (BitVec 64)}
+    {heads next previous : List Nat} {start : Nat} {result : CandidateResult}
+    (htake : takeCandidateArrays words heads next previous start = some result) :
+    findNonemptyBinLowered words start = some result.bin ∧
+      start ≤ result.bin ∧ result.bin < words.length * 64 ∧
+      (bitmapBits words)[result.bin]? = some true ∧
+      result.bin < heads.length ∧ result.bin / 64 < words.length ∧
+      result.block = heads[result.bin]?.getD next.length ∧
+      result.block < next.length ∧ result.block < previous.length ∧
+      removeArrays heads next previous result.bin result.block =
+        some (result.heads, result.next, result.previous) ∧
+      result.words =
+        if next[result.block]?.getD next.length ≥ next.length then
+          clearBinBit words result.bin else words := by
+  unfold takeCandidateArrays at htake
+  split at htake <;> try contradiction
+  next bin hfind =>
+    split at htake <;> try contradiction
+    next hbin =>
+      dsimp only at htake
+      split at htake <;> try contradiction
+      next hword =>
+        split at htake <;> try contradiction
+        next hnext =>
+          split at htake <;> try contradiction
+          next hprevious =>
+            cases hremove : removeArrays heads next previous bin
+                (heads[bin]?.getD next.length) with
+            | none => simp [hremove] at htake
+            | some arrays =>
+              obtain ⟨nextHeads, nextLinks, nextPrevious⟩ := arrays
+              simp only [hremove, Option.some.injEq] at htake
+              subst result
+              have hlogical : findNonemptyBin words start = some bin := by
+                rw [← findNonemptyBinLowered_refines]
+                exact hfind
+              obtain ⟨hstart, hbound, hset⟩ := findNonemptyBin_sound hlogical
+              simp only [CandidateResult.bin, CandidateResult.block,
+                CandidateResult.words, CandidateResult.heads,
+                CandidateResult.next, CandidateResult.previous]
+              exact ⟨hfind, hstart, hbound, hset, by omega, by omega, trivial,
+                by omega, by omega, hremove, trivial⟩
+
 def linked (state : Metadata) : Nat → List Nat → Prop
   | _, [] => True
   | expectedPrevious, block :: rest =>

@@ -34,6 +34,7 @@ struct Module {
     tlsf_remove_models: Vec<TlsfRemoveModel>,
     tlsf_find_fit_models: Vec<TlsfFindFitModel>,
     tlsf_find_nonempty_bin_models: Vec<TlsfFindNonemptyBinModel>,
+    tlsf_take_candidate_models: Vec<TlsfTakeCandidateModel>,
 }
 
 #[derive(Debug)]
@@ -100,6 +101,12 @@ struct TlsfFindFitModel {
 
 #[derive(Debug)]
 struct TlsfFindNonemptyBinModel {
+    name: String,
+    refines: String,
+}
+
+#[derive(Debug)]
+struct TlsfTakeCandidateModel {
     name: String,
     refines: String,
 }
@@ -346,6 +353,7 @@ fn parse(source: &str) -> Result<Module, String> {
         tlsf_remove_models: parse_tlsf_remove_models(source),
         tlsf_find_fit_models: parse_tlsf_find_fit_models(source),
         tlsf_find_nonempty_bin_models: parse_tlsf_find_nonempty_bin_models(source),
+        tlsf_take_candidate_models: parse_tlsf_take_candidate_models(source),
     })
 }
 
@@ -1101,6 +1109,60 @@ fn parse_tlsf_find_nonempty_bin_models(source: &str) -> Vec<TlsfFindNonemptyBinM
     }
 }
 
+fn parse_tlsf_take_candidate_models(source: &str) -> Vec<TlsfTakeCandidateModel> {
+    let lines = source.lines().collect::<Vec<_>>();
+    let Some(index) = lines
+        .iter()
+        .position(|line| line.trim().starts_with("fn tlsf_take_candidate("))
+    else {
+        return Vec::new();
+    };
+    let Some(target) = index
+        .checked_sub(1)
+        .and_then(|i| lines.get(i))
+        .and_then(|line| line.trim().strip_prefix("// refines "))
+    else {
+        return Vec::new();
+    };
+    let body = lines[index + 1..]
+        .iter()
+        .map(|line| line.trim())
+        .collect::<Vec<_>>();
+    let required = [
+        "let bin: usize = tlsf_find_nonempty_bin(nonempty, start_bin)?;",
+        "if bin >= heads.len() { return None; }",
+        "let word: usize = bin >> 6;",
+        "let bit: usize = bin & 63;",
+        "if word >= nonempty.len() { return None; }",
+        "let block: usize = heads[bin];",
+        "if block >= next.len() { return None; }",
+        "if block >= previous.len() { return None; }",
+        "let successor: usize = next[block];",
+        "tlsf_remove(heads, next, previous, bin, block)?;",
+        "if successor >= next.len() {",
+        "let bitmap: u64 = nonempty[word];",
+        "let bit_mask: u64 = 1 << bit;",
+        "nonempty[word] = bitmap & !bit_mask;",
+        "Some(block)",
+    ];
+    let mut position = 0;
+    if required.iter().all(|expected| {
+        if let Some(offset) = body[position..].iter().position(|line| line == expected) {
+            position += offset + 1;
+            true
+        } else {
+            false
+        }
+    }) {
+        vec![TlsfTakeCandidateModel {
+            name: "tlsf_take_candidate".to_owned(),
+            refines: target.trim().to_owned(),
+        }]
+    } else {
+        Vec::new()
+    }
+}
+
 fn logical_lines(source: &str) -> Result<Vec<(usize, String)>, String> {
     let lines: Vec<&str> = source.lines().collect();
     let mut result = Vec::new();
@@ -1397,6 +1459,7 @@ fn lean(module: &Module) -> String {
         || !module.tlsf_remove_models.is_empty()
         || !module.tlsf_find_fit_models.is_empty()
         || !module.tlsf_find_nonempty_bin_models.is_empty()
+        || !module.tlsf_take_candidate_models.is_empty()
     {
         out.push_str("import Luffs.Runtime.TLSF\n");
     }
@@ -1676,6 +1739,17 @@ exact Luffs.Runtime.TLSF.findNonemptyBinLowered_refines words start\n\n",
             model.name, model.name, model.refines
         ));
     }
+    for model in &module.tlsf_take_candidate_models {
+        out.push_str(&format!(
+            "def {}_model (words : List (BitVec 64)) (heads next previous : List Nat) (start : Nat) : Option Luffs.Runtime.TLSF.CandidateResult :=\n  \
+{} words heads next previous start\n\n",
+            model.name, model.refines
+        ));
+        out.push_str(&format!(
+            "theorem {}_refines : {}_model = {} := by rfl\n\n",
+            model.name, model.name, model.refines
+        ));
+    }
     out.push_str("end LuffsGenerated\n");
     out
 }
@@ -1850,6 +1924,7 @@ mod tests {
         assert_eq!(m.tlsf_remove_models.len(), 1);
         assert_eq!(m.tlsf_find_fit_models.len(), 1);
         assert_eq!(m.tlsf_find_nonempty_bin_models.len(), 1);
+        assert_eq!(m.tlsf_take_candidate_models.len(), 1);
         let generated = lean(&m);
         assert!(generated.contains(
             "theorem tlsf_insert_refines : tlsf_insert_model = Luffs.Runtime.TLSF.insertArrays"
@@ -1862,6 +1937,9 @@ mod tests {
         ));
         assert!(generated.contains(
             "theorem tlsf_find_nonempty_bin_refines : tlsf_find_nonempty_bin_model = Luffs.Runtime.TLSF.findNonemptyBin"
+        ));
+        assert!(generated.contains(
+            "theorem tlsf_take_candidate_refines : tlsf_take_candidate_model = Luffs.Runtime.TLSF.takeCandidateArrays"
         ));
     }
 

@@ -355,6 +355,13 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   only the proved-total commit. Consequently every failure preserves the
   complete physical, bin, link, bitmap, and count state, with an Iris-Lean
   arbitrary-frame corollary.
+  The public deallocator now also has state-retaining semantics across the
+  uncoalesced call and both optional coalescing calls. Its compositional Lean
+  theorem proves exact input-state preservation once coalescing totality is
+  supplied at the two actual intermediate states, and provides the matching
+  Iris-Lean frame law. Discharging those two premises directly from the full
+  allocator representation invariant remains before the public failure theorem
+  is unconditional for valid allocator calls.
 - [x] Prove the bounded-step property of bin lookup and local list updates.
   The exact lowered flat-bitmap cost model counts inspected 64-bit words and
   is bounded by the input word count, hence at most four probes for the fixed

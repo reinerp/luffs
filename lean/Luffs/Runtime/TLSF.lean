@@ -8463,6 +8463,136 @@ def deallocateArrays (offsets sizes : List Nat)
     (block - 1)
   return afterLeft
 
+inductive DeallocateOutcome where
+  | success (state : CoalesceClassResult)
+  | failure (state : CoalesceClassResult)
+deriving DecidableEq, Repr
+
+def deallocateStateFromUncoalesced (offsets sizes : List Nat) (count : Nat)
+    (state : DeallocateMachineState) : CoalesceClassResult :=
+  ⟨offsets, sizes, state.isFree, state.prevFree, count, state.second,
+    state.first, state.heads, state.next, state.previous⟩
+
+/-- Stateful semantics of the public sequential deallocator. Unlike the
+`Option` refinement model, failures retain the exact state at each call
+boundary, making a late failure observably distinct from an early rejection. -/
+def deallocateArraysOutcome (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (second : List (BitVec 32))
+    (first : BitVec 64) (heads next previous : List Nat)
+    (count block returnedOffset returnedBytes : Nat) : DeallocateOutcome :=
+  match deallocateUncoalescedArraysOutcome offsets sizes isFree prevFree second
+      first heads next previous count block returnedOffset returnedBytes with
+  | .failure failed => .failure
+      (deallocateStateFromUncoalesced offsets sizes count failed)
+  | .success marked =>
+    match coalesceIfPossibleArraysOutcome offsets sizes marked.isFree
+        marked.prevFree marked.second marked.first marked.heads marked.next
+        marked.previous count block with
+    | .failure failed => .failure failed
+    | .success afterRight =>
+      if block = 0 then .success afterRight
+      else match coalesceIfPossibleArraysOutcome afterRight.offsets
+          afterRight.sizes afterRight.isFree afterRight.prevFree afterRight.second
+          afterRight.first afterRight.heads afterRight.next afterRight.previous
+          afterRight.count (block - 1) with
+      | .failure failed => .failure failed
+      | .success afterLeft => .success afterLeft
+
+/-- Compositional public transactionality theorem. The two totality premises
+are deliberately stated at the actual intermediate states; later the complete
+allocator invariant discharges them for both optional coalescing calls. -/
+theorem deallocateArraysOutcome_failure_eq_input_of_coalesces_total
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat}
+    {count block returnedOffset returnedBytes : Nat}
+    {failed : CoalesceClassResult}
+    (hright : ∀ marked,
+      deallocateUncoalescedArraysOutcome offsets sizes isFree prevFree second
+          first heads next previous count block returnedOffset returnedBytes =
+        .success marked →
+      ∀ failedRight, coalesceIfPossibleArraysOutcome offsets sizes
+        marked.isFree marked.prevFree marked.second marked.first marked.heads
+        marked.next marked.previous count block ≠ .failure failedRight)
+    (hleft : ∀ marked afterRight,
+      deallocateUncoalescedArraysOutcome offsets sizes isFree prevFree second
+          first heads next previous count block returnedOffset returnedBytes =
+        .success marked →
+      coalesceIfPossibleArraysOutcome offsets sizes marked.isFree marked.prevFree
+          marked.second marked.first marked.heads marked.next marked.previous
+          count block = .success afterRight → block ≠ 0 →
+      ∀ failedLeft, coalesceIfPossibleArraysOutcome afterRight.offsets
+        afterRight.sizes afterRight.isFree afterRight.prevFree afterRight.second
+        afterRight.first afterRight.heads afterRight.next afterRight.previous
+        afterRight.count (block - 1) ≠ .failure failedLeft)
+    (hfailure : deallocateArraysOutcome offsets sizes isFree prevFree second first
+      heads next previous count block returnedOffset returnedBytes =
+        .failure failed) :
+    failed = allocatorArrays offsets sizes isFree prevFree second first heads next
+      previous count := by
+  unfold deallocateArraysOutcome at hfailure
+  cases hunco : deallocateUncoalescedArraysOutcome offsets sizes isFree prevFree
+      second first heads next previous count block returnedOffset returnedBytes with
+  | failure rejected =>
+      simp only [hunco, DeallocateOutcome.failure.injEq] at hfailure
+      subst failed
+      have hrejected :=
+        deallocateUncoalescedArraysOutcome_failure_eq_input hunco
+      subst rejected
+      rfl
+  | success marked =>
+    simp only [hunco] at hfailure
+    cases hrightOutcome : coalesceIfPossibleArraysOutcome offsets sizes
+        marked.isFree marked.prevFree marked.second marked.first marked.heads
+        marked.next marked.previous count block with
+    | failure failedRight => exact (hright marked hunco failedRight
+        hrightOutcome).elim
+    | success afterRight =>
+      simp only [hrightOutcome] at hfailure
+      by_cases hblock : block = 0
+      · simp [hblock] at hfailure
+      · simp only [hblock, if_false] at hfailure
+        cases hleftOutcome : coalesceIfPossibleArraysOutcome afterRight.offsets
+            afterRight.sizes afterRight.isFree afterRight.prevFree
+            afterRight.second afterRight.first afterRight.heads afterRight.next
+            afterRight.previous afterRight.count (block - 1) with
+        | failure failedLeft => exact (hleft marked afterRight hunco hrightOutcome
+            hblock failedLeft hleftOutcome).elim
+        | success afterLeft => simp [hleftOutcome] at hfailure
+
+theorem deallocateArraysOutcome_failure_preserves_frame_of_coalesces_total
+    {PROP : Type} [Iris.BI PROP]
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat}
+    {count block returnedOffset returnedBytes : Nat}
+    {failed : CoalesceClassResult} (frame : PROP)
+    (hright : ∀ marked,
+      deallocateUncoalescedArraysOutcome offsets sizes isFree prevFree second
+          first heads next previous count block returnedOffset returnedBytes =
+        .success marked →
+      ∀ failedRight, coalesceIfPossibleArraysOutcome offsets sizes
+        marked.isFree marked.prevFree marked.second marked.first marked.heads
+        marked.next marked.previous count block ≠ .failure failedRight)
+    (hleft : ∀ marked afterRight,
+      deallocateUncoalescedArraysOutcome offsets sizes isFree prevFree second
+          first heads next previous count block returnedOffset returnedBytes =
+        .success marked →
+      coalesceIfPossibleArraysOutcome offsets sizes marked.isFree marked.prevFree
+          marked.second marked.first marked.heads marked.next marked.previous
+          count block = .success afterRight → block ≠ 0 →
+      ∀ failedLeft, coalesceIfPossibleArraysOutcome afterRight.offsets
+        afterRight.sizes afterRight.isFree afterRight.prevFree afterRight.second
+        afterRight.first afterRight.heads afterRight.next afterRight.previous
+        afterRight.count (block - 1) ≠ .failure failedLeft)
+    (hfailure : deallocateArraysOutcome offsets sizes isFree prevFree second first
+      heads next previous count block returnedOffset returnedBytes =
+        .failure failed) :
+    failed = allocatorArrays offsets sizes isFree prevFree second first heads next
+        previous count ∧ (frame ∗ (emp : PROP) ⊣⊢ frame) := by
+  exact ⟨deallocateArraysOutcome_failure_eq_input_of_coalesces_total hright
+    hleft hfailure, sep_emp⟩
+
 theorem coalesceIfPossibleArrays_result
     {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
     {second : List (BitVec 32)} {first : BitVec 64}

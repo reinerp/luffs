@@ -478,7 +478,9 @@ concurrency are later extensions and are not prerequisites for `Box` and
   converts the raw allocation capability into `Box.Owns codec ... value` while
   retaining exactly the allocator's remaining free ownership. Scalar-specific
   Luffs monomorphization and target-width parameterization remain before this
-  item is complete.
+  item is complete. The current `u8` constructor is now proved equal to the
+  generic constructor specialized with `Scalar.u8`, including equivalence of
+  its one-byte bounds check and `List.set` update to the generic range write.
 - [ ] `Vec<T>`: invariant `len <= capacity`, initialized prefix ownership,
   spare-capacity ownership, checked layout arithmetic, growth without loss or
   double-drop, `push`, `pop`, indexing, shared/mutable slices, and drop.

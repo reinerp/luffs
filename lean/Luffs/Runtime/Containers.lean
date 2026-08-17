@@ -18,6 +18,21 @@ deriving DecidableEq, Repr
 def writeBytes (storage : List Byte) (offset : Nat) (bytes : List Byte) : List Byte :=
   storage.take offset ++ bytes ++ storage.drop (offset + bytes.length)
 
+theorem writeBytes_singleton_eq_set {α : Type} (values : List α)
+    (offset : Nat) (value : α) (hbound : offset < values.length) :
+    values.take offset ++ [value] ++ values.drop (offset + 1) =
+      values.set offset value := by
+  induction values generalizing offset with
+  | nil => simp at hbound
+  | cons head tail ih =>
+      cases offset with
+      | zero => simp
+      | succ offset =>
+          simp only [List.length_cons, Nat.succ_lt_succ_iff] at hbound
+          simp only [List.take_succ_cons, List.drop_succ_cons, List.set,
+            List.cons_append, List.cons.injEq, true_and]
+          simpa [Nat.succ_eq_add_one] using ih offset hbound
+
 /-- Codec-generic executable state transformer for allocator-backed Box
 construction. A Luffs monomorphization supplies one of the verified scalar
 codecs and lowers the finite encoding to byte stores. -/
@@ -229,6 +244,41 @@ theorem boxNewU8Arrays_result
 @[simp] theorem boxU8_requestBytes :
     Luffs.Containers.Box.requestBytes Scalar.u8.size = 8 := by
   decide
+
+theorem boxNewU8Arrays_eq_generic
+    (storage : List Byte) (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (value : Byte) :
+    boxNewU8Arrays storage offsets sizes isFree prevFree count second first
+        heads next previous value =
+      boxNewArrays Scalar.u8 storage offsets sizes isFree prevFree count second
+        first heads next previous (Scalar.bv8OfByte value) := by
+  unfold boxNewU8Arrays boxNewArrays
+  rw [boxU8_requestBytes]
+  cases halloc : Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree prevFree
+      count second first heads next previous 8 with
+  | none => simp [halloc]
+  | some allocated =>
+      by_cases hbound : allocated.allocatedOffset ≥ storage.length
+      · have hgeneric : allocated.allocatedOffset + Scalar.u8.size >
+            storage.length := by
+          simp only [Scalar.u8]
+          omega
+        simp [halloc, hbound, hgeneric]
+      · have hlt : allocated.allocatedOffset < storage.length :=
+          Nat.lt_of_not_ge hbound
+        have hgeneric : ¬allocated.allocatedOffset + Scalar.u8.size >
+            storage.length := by
+          simp only [Scalar.u8]
+          omega
+        have hwrite := writeBytes_singleton_eq_set storage
+          allocated.allocatedOffset value hlt
+        simp [halloc, hbound, hgeneric, writeBytes, Scalar.u8, Scalar.encode8,
+          Scalar.bv8OfByte, Scalar.byteOfBV8, hwrite]
+        exact ⟨by omega, by
+          simpa only [List.cons_append, List.nil_append, List.append_assoc] using
+            hwrite.symm⟩
 
 set_option maxHeartbeats 1200000 in
 /-- The allocator-backed Luffs byte Box constructor is the abstract verified

@@ -506,9 +506,17 @@ concurrency are later extensions and are not prerequisites for `Box` and
   typed handle and framed initialization rule. Growth statically checks every
   loop address and has a source-recognized exact Lean state transformer that
   sequences replacement allocation, snapshot-prefix copying, old-block
-  deallocation/coalescing, and the returned offset. Composing that concrete
-  growth transformer with `grow_owns_step`, plus generic Luffs
-  monomorphization, remains before this item is complete.
+  deallocation/coalescing, and the returned offset. That concrete transformer
+  is now composed with abstract `Vec.grow`: allocation is proved to preserve
+  the old live block, deallocation finds it through link-insensitive physical
+  identity, and `grow_owns_step` transfers exactly one typed Vec capability to
+  the replacement while returning the old region to TLSF. The public concrete
+  deallocator was generalized to fixed-capacity arrays represented by an
+  active prefix, including framed boundary-tag writes into spare capacity, so
+  this composition no longer assumes canonical arrays after allocation.
+  Connecting the source-derived byte-copy state transformer to the operational
+  copy trace and Iris content-map update, plus generic Luffs monomorphization,
+  remains before this item is complete.
 
 `stdlib/containers.luffs` now contains the first byte-monomorphized Box and Vec
 lowering: initialization/load/store, push/pop length transitions, indexed get,

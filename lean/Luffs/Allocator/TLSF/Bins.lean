@@ -275,6 +275,23 @@ theorem samePhysical_trans {left middle right : Block}
   rcases hright with ⟨h₁', h₂', h₃'⟩
   exact ⟨h₁.trans h₁', h₂.trans h₂', h₃.trans h₃'⟩
 
+theorem findPhysicalIndex_congr_target {physical : List Block}
+    {left right : Block} (hsame : SamePhysical left right) :
+    findPhysicalIndex physical left = findPhysicalIndex physical right := by
+  induction physical with
+  | nil => rfl
+  | cons head rest ih =>
+      have hiff : SamePhysical head left ↔ SamePhysical head right := by
+        constructor
+        · intro h
+          exact samePhysical_trans h hsame
+        · intro h
+          exact samePhysical_trans h (samePhysical_symm hsame)
+      simp only [findPhysicalIndex]
+      by_cases hleft : SamePhysical head left
+      · rw [if_pos hleft, if_pos (hiff.mp hleft)]
+      · rw [if_neg hleft, if_neg (fun h => hleft (hiff.mpr h)), ih]
+
 theorem samePhysical_withLinks (b : Block) (previous next : Option Nat)
     (hfree : b.free = true) :
     SamePhysical b (FreeList.withLinks b previous next) := by

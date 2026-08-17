@@ -174,8 +174,10 @@ The exact parallel-array removal transition is now defined in the same layer,
 including head replacement, predecessor/successor bypass writes, and final
 detachment. Successful removal proves all input indices were valid, preserves
 all metadata-array lengths, and leaves the removed node's links at the two
-array-length sentinels. Bypass and chain-erasure preservation will be proved
-under `RepresentsBin`, which excludes malformed self-links.
+array-length sentinels. Head removal is now proved complete under
+`RepresentsBin`: every represented `block :: rest` produces a next state that
+represents exactly `rest`, preserves its entire linked tail, and detaches
+`block`. Arbitrary interior-node bypass and erasure remain.
 
 The first target is sequential TLSF with fixed-size pools obtained from `mmap`.
 Growing pools, `realloc`, aligned allocation beyond the base alignment, and

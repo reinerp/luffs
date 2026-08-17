@@ -287,4 +287,93 @@ theorem remove_detaches {state nextState : Metadata} {bin block : Nat}
   all_goals subst nextState
   all_goals simp_all
 
+theorem remove_front_complete {state : Metadata} {bin block : Nat}
+    {rest : List Nat} (hrep : RepresentsBin state bin (block :: rest)) :
+    ∃ nextState, remove state bin block = some nextState ∧
+      RepresentsBin nextState bin rest ∧
+      nextState.next[block]? = some state.next.length ∧
+      nextState.previous[block]? = some state.previous.length := by
+  rcases hrep with ⟨hbin, hlens, hhead, hlinked, hnodup⟩
+  simp only [linked] at hlinked
+  rcases hlinked with ⟨hblockNext, hblockPrevious, hprev, hnxt, htail⟩
+  have hheadValue : state.heads[bin]?.getD 0 = block := by
+    simpa using hhead
+  have hprevValue : state.previous[block]?.getD state.next.length =
+      state.next.length := by
+    simp [hprev]
+  have hnextValue : state.next[block]?.getD state.next.length =
+      rest.head?.getD state.next.length := by
+    simp [hnxt]
+  unfold remove
+  simp only [Nat.not_le.mpr hbin, Nat.not_le.mpr hblockNext,
+    Nat.not_le.mpr hblockPrevious, if_false, hprevValue]
+  simp only [ge_iff_le]
+  simp
+  cases rest with
+  | nil =>
+    simp only [List.head?_nil, Option.getD_none] at hnextValue
+    have hsuccessorOut : ¬ state.next.length < state.previous.length := by omega
+    simp only [hnextValue, hsuccessorOut, if_false]
+    refine ⟨?_, ?_, ?_⟩
+    · simp [RepresentsBin, linked, hbin, hlens]
+    · simp [hblockNext]
+    · simp [hblockPrevious]
+  | cons successor tail =>
+    simp only [List.head?_cons, Option.getD_some] at hnextValue
+    simp only [linked] at htail
+    rcases htail with
+      ⟨hsuccessorNext, hsuccessorPrevious, hsuccessorPrev, hsuccessorNxt,
+        htailLinked⟩
+    have hsuccessorIn : successor < state.previous.length := hsuccessorPrevious
+    simp only [hnextValue, hsuccessorIn, if_true]
+    let nextState : Metadata := {
+      heads := state.heads.set bin successor
+      next := state.next.set block state.next.length
+      previous := (state.previous.set successor state.next.length).set
+        block state.previous.length
+    }
+    change RepresentsBin nextState bin (successor :: tail) ∧
+      nextState.next[block]? = some state.next.length ∧
+      nextState.previous[block]? = some state.previous.length
+    refine ⟨?_, ?_, ?_⟩
+    · refine ⟨by simp [nextState, hbin], by simp [nextState, hlens],
+        by simp [nextState, hbin], ?_, (List.nodup_cons.mp hnodup).2⟩
+      simp only [linked]
+      have hsuccessorBlock : successor ≠ block := by
+        intro heq
+        exact (List.nodup_cons.mp hnodup).1 (by simp [heq])
+      refine ⟨by simp [nextState, hsuccessorNext],
+        by simp [nextState, hsuccessorPrevious], ?_, ?_, ?_⟩
+      · dsimp [nextState]
+        rw [List.getElem?_set_ne (Ne.symm hsuccessorBlock),
+          List.getElem?_set_self hsuccessorPrevious]
+        simp
+      · rw [show nextState.next = state.next.set block state.next.length from rfl,
+          List.getElem?_set_ne (Ne.symm hsuccessorBlock)]
+        simpa [nextState] using hsuccessorNxt
+      · refine linked_congr (state := state) (nextState := nextState)
+          (by simp [nextState]) (by simp [nextState]) ?_ ?_ htailLinked
+        · intro node hmem
+          have hnodeBlock : node ≠ block := by
+            intro heq
+            apply (List.nodup_cons.mp hnodup).1
+            rw [← heq]
+            simp [hmem]
+          simp [nextState, List.getElem?_set_ne (Ne.symm hnodeBlock)]
+        · intro node hmem
+          have hnodeBlock : node ≠ block := by
+            intro heq
+            apply (List.nodup_cons.mp hnodup).1
+            rw [← heq]
+            simp [hmem]
+          have hnodeSuccessor : node ≠ successor := by
+            exact fun heq => (List.nodup_cons.mp (List.nodup_cons.mp hnodup).2).1
+              (by simpa [heq] using hmem)
+          simp [nextState, List.getElem?_set_ne (Ne.symm hnodeBlock),
+            List.getElem?_set_ne (Ne.symm hnodeSuccessor)]
+    · dsimp [nextState]
+      simp [hblockNext]
+    · dsimp [nextState]
+      simp [hblockPrevious]
+
 end Luffs.Runtime.TLSF

@@ -211,7 +211,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   and reassemble the unchanged owner. Begin/end slice handles have checked
   element and byte ranges; shared slice reads similarly isolate the selected
   initialized sublist, produce its exact operational trace, and reassemble all
-  prefix/suffix ownership. Mutable slice transfer/recombination and Luffs
-  lowering remain.
+  prefix/suffix ownership. Mutable begin/end slicing now transfers the exact
+  middle allocation and initialized fragments away from the parent, retains
+  opaque prefix/tail resources, and proves duplicate nonempty mutable-slice
+  ownership contradictory. An equal-length replacement executes an explicit
+  store trace and updates the Iris content map; recombination reconstructs the
+  Vec with the new logical middle and unchanged prefix/suffix. Scoped lifetime
+  notation in Luffs and lowering remain.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.

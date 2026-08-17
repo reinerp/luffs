@@ -30,6 +30,21 @@ theorem ownsBytes_exclusive {PROP : Type} [BI PROP] [ByteRegionLogic PROP]
     OwnsBytes (PROP := PROP) r ∗ OwnsBytes r ⊢ False :=
   ByteRegionLogic.exclusive (PROP := PROP) h
 
+theorem ownsBytes_split3 {PROP : Type} [BI PROP] [ByteRegionLogic PROP]
+    (r : Region) (first middle last : Nat)
+    (hlength : r.bytes = first + middle + last) :
+    OwnsBytes (PROP := PROP) r ⊣⊢
+      OwnsBytes { base := r.base, bytes := first } ∗
+        (OwnsBytes { base := r.base + first, bytes := middle } ∗
+          OwnsBytes { base := r.base + first + middle, bytes := last }) := by
+  have hfirst : r.bytes = first + (middle + last) := by omega
+  have hrest : (middle + last) = middle + last := rfl
+  refine (ByteRegionLogic.split (PROP := PROP) hfirst).trans ?_
+  refine sep_congr_right ?_
+  simpa [OwnsBytes, Nat.add_assoc] using
+    (ByteRegionLogic.split (PROP := PROP)
+      (r := { base := r.base + first, bytes := middle + last }) hrest)
+
 /--
 The sole trusted allocator boundary. A platform implementation must refine this
 contract to `mmap`: success returns exclusive ownership of a fresh, page-aligned

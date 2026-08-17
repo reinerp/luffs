@@ -238,6 +238,282 @@ def Owns {GF : BundledGFunctors} [ByteRegionGS GF] [ByteContentsGS GF]
   iprop(OwnsBytes (handle.block.region pool) ∗
     PointsToBytes (handle.block.region pool).base (encodeValues codec values))
 
+def slicePrefixRegion {α : Type} (codec : Codec α) (pool : Region)
+    (handle : Handle) (slice : SliceHandle) : Region :=
+  { base := (handle.block.region pool).base
+    bytes := slice.begin * codec.size }
+
+def sliceTailRegion {α : Type} (codec : Codec α) (pool : Region)
+    (handle : Handle) (slice : SliceHandle) : Region :=
+  { base := (handle.block.region pool).base + slice.end * codec.size
+    bytes := handle.block.bytes - slice.end * codec.size }
+
+def MutSliceOwns {GF : BundledGFunctors}
+    [ByteRegionGS GF] [ByteContentsGS GF] {α : Type}
+    (codec : Codec α) (pool : Region) (handle : Handle) (slice : SliceHandle)
+    (values : List α) : IProp GF :=
+  iprop(OwnsBytes (sliceRegion codec pool handle slice) ∗
+    PointsToBytes (sliceRegion codec pool handle slice).base
+      (encodeValues codec values))
+
+def MutSliceRest {GF : BundledGFunctors}
+    [ByteRegionGS GF] [ByteContentsGS GF] {α : Type}
+    (codec : Codec α) (pool : Region) (handle : Handle) (slice : SliceHandle)
+    (prefixValues suffixValues : List α) : IProp GF :=
+  iprop((OwnsBytes (slicePrefixRegion codec pool handle slice) ∗
+      OwnsBytes (sliceTailRegion codec pool handle slice)) ∗
+    (PointsToBytes (handle.block.region pool).base
+        (encodeValues codec prefixValues) ∗
+      PointsToBytes ((handle.block.region pool).base +
+          slice.end * codec.size) (encodeValues codec suffixValues)))
+
+theorem mutSlice_owns_exclusive {GF : BundledGFunctors}
+    [ByteRegionGS GF] [ByteContentsGS GF] {α : Type}
+    (codec : Codec α) (pool : Region) (handle : Handle) (slice : SliceHandle)
+    (left right : List α) (hnonempty : slice.begin < slice.end) :
+    MutSliceOwns (GF := GF) codec pool handle slice left ∗
+        MutSliceOwns codec pool handle slice right ⊢ False := by
+  have hbytes : 0 < (sliceRegion codec pool handle slice).bytes := by
+    simp only [sliceRegion]
+    exact Nat.mul_pos (Nat.sub_pos_of_lt hnonempty) codec.size_pos
+  unfold MutSliceOwns
+  iintro ⟨Hleft, Hright⟩
+  icases Hleft with ⟨HleftRegion, _⟩
+  icases Hright with ⟨HrightRegion, _⟩
+  icombine HleftRegion HrightRegion as Hregions
+  iapply ownsBytes_exclusive (sliceRegion codec pool handle slice) hbytes $$ Hregions
+
+theorem mutSlice_split {GF : BundledGFunctors}
+    [ByteRegionGS GF] [ByteContentsGS GF] {α : Type}
+    (codec : Codec α) (pool : Region) (handle : Handle) (values : List α)
+    (hlen : values.length = handle.len) (slice : SliceHandle)
+    (hvalid : Valid codec handle) (hslice : SliceValid handle slice) :
+    Owns (GF := GF) codec pool handle values ⊣⊢
+      MutSliceOwns codec pool handle slice (sliceValues values slice) ∗
+        MutSliceRest codec pool handle slice (values.take slice.begin)
+          (values.drop slice.end) := by
+  have hbegin : slice.begin ≤ slice.end := hslice.1
+  have hend : slice.end ≤ values.length := by simpa [hlen] using hslice.2
+  have hencoded := encodeValues_slice_decomposition codec values slice hbegin hend
+  have hfit := sliceRegion_fits hvalid hslice
+  let first := slice.begin * codec.size
+  let middle := (slice.end - slice.begin) * codec.size
+  let last := handle.block.bytes - (first + middle)
+  have htotal : handle.block.bytes = first + middle + last := by
+    dsimp [first, middle, last]
+    omega
+  have hendBytes : first + middle = slice.end * codec.size := by
+    dsimp [first, middle]
+    rw [← Nat.add_mul, Nat.add_sub_of_le hbegin]
+  have hlast : last = handle.block.bytes - slice.end * codec.size := by
+    simp [last, hendBytes]
+  have hmiddleLength :
+      (encodeValues codec (sliceValues values slice)).length = middle := by
+    rw [encodeValues_length]
+    have hsliceLength : (sliceValues values slice).length =
+        slice.end - slice.begin := by
+      simp [sliceValues, List.length_take, List.length_drop]
+      omega
+    rw [hsliceLength]
+  have hprefixLength :
+      (encodeValues codec (values.take slice.begin)).length = first := by
+    rw [encodeValues_length, List.length_take,
+      Nat.min_eq_left (Nat.le_trans hbegin hend)]
+  have hregionSplit :
+      OwnsBytes (PROP := IProp GF) (handle.block.region pool) ⊣⊢
+        OwnsBytes (slicePrefixRegion codec pool handle slice) ∗
+          (OwnsBytes (sliceRegion codec pool handle slice) ∗
+            OwnsBytes (sliceTailRegion codec pool handle slice)) := by
+    simpa [slicePrefixRegion, sliceRegion, sliceTailRegion, first, middle,
+      hendBytes, hlast,
+      Nat.add_sub_of_le hbegin, Nat.add_mul, Nat.add_assoc] using
+      (ownsBytes_split3 (PROP := IProp GF) (handle.block.region pool)
+        first middle last (by simpa [Block.region] using htotal))
+  have hpointsSplit :
+      PointsToBytes (G := (inferInstance : ByteContentsGS GF))
+          (handle.block.region pool).base (encodeValues codec values) ⊣⊢
+        PointsToBytes (handle.block.region pool).base
+            (encodeValues codec (values.take slice.begin)) ∗
+          (PointsToBytes (sliceRegion codec pool handle slice).base
+              (encodeValues codec (sliceValues values slice)) ∗
+            PointsToBytes ((handle.block.region pool).base +
+                slice.end * codec.size)
+              (encodeValues codec (values.drop slice.end))) := by
+    rw [hencoded]
+    have hsplit := (pointsToBytes_append (G :=
+      (inferInstance : ByteContentsGS GF)) (handle.block.region pool).base
+      (encodeValues codec (values.take slice.begin))
+      (encodeValues codec (sliceValues values slice) ++
+        encodeValues codec (values.drop slice.end))).trans
+      (sep_congr_right (pointsToBytes_append
+        ((handle.block.region pool).base +
+          (encodeValues codec (values.take slice.begin)).length)
+        (encodeValues codec (sliceValues values slice))
+        (encodeValues codec (values.drop slice.end))))
+    simpa [sliceRegion, hprefixLength, hmiddleLength, first, middle, hendBytes,
+      Nat.add_sub_of_le hbegin, Nat.add_mul, Nat.add_assoc] using hsplit
+  unfold Owns MutSliceOwns MutSliceRest
+  constructor
+  · iintro ⟨Hregion, Hpoints⟩
+    ihave Hregions := hregionSplit.mp $$ Hregion
+    icases Hregions with ⟨HprefixRegion, HmiddleAndTail⟩
+    icases HmiddleAndTail with ⟨HmiddleRegion, HtailRegion⟩
+    ihave Hpoints := hpointsSplit.mp $$ Hpoints
+    icases Hpoints with ⟨HprefixPoints, HmiddleAndSuffix⟩
+    icases HmiddleAndSuffix with ⟨HmiddlePoints, HsuffixPoints⟩
+    isplitl [HmiddleRegion HmiddlePoints]
+    · isplitl [HmiddleRegion]
+      · iassumption
+      · iassumption
+    · isplitl [HprefixRegion HtailRegion]
+      · isplitl [HprefixRegion]
+        · iassumption
+        · iassumption
+      · isplitl [HprefixPoints]
+        · iassumption
+        · iassumption
+  · iintro ⟨Hslice, Hrest⟩
+    icases Hslice with ⟨HmiddleRegion, HmiddlePoints⟩
+    icases Hrest with ⟨Hregions, Hpoints⟩
+    icases Hregions with ⟨HprefixRegion, HtailRegion⟩
+    icases Hpoints with ⟨HprefixPoints, HsuffixPoints⟩
+    icombine HmiddlePoints HsuffixPoints as HmiddleAndSuffix
+    icombine HprefixPoints HmiddleAndSuffix as HallPoints
+    ihave HallPoints := hpointsSplit.mpr $$ HallPoints
+    icombine HmiddleRegion HtailRegion as HmiddleAndTail
+    icombine HprefixRegion HmiddleAndTail as HallRegions
+    ihave HallRegions := hregionSplit.mpr $$ HallRegions
+    isplitl [HallRegions]
+    · iassumption
+    · iassumption
+
+theorem mutSlice_recombine {GF : BundledGFunctors}
+    [ByteRegionGS GF] [ByteContentsGS GF] {α : Type}
+    (codec : Codec α) (pool : Region) (handle : Handle) (slice : SliceHandle)
+    (hvalid : Valid codec handle) (hslice : SliceValid handle slice)
+    (prefixValues middleValues suffixValues : List α)
+    (hprefix : prefixValues.length = slice.begin)
+    (hmiddle : middleValues.length = slice.end - slice.begin)
+    (_hlength : prefixValues.length + middleValues.length + suffixValues.length =
+      handle.len) :
+    MutSliceOwns (GF := GF) codec pool handle slice middleValues ∗
+        MutSliceRest codec pool handle slice prefixValues suffixValues ⊢
+      Owns codec pool handle (prefixValues ++ middleValues ++ suffixValues) := by
+  have hbegin : slice.begin ≤ slice.end := hslice.1
+  have hfit := sliceRegion_fits hvalid hslice
+  let first := slice.begin * codec.size
+  let middle := (slice.end - slice.begin) * codec.size
+  let last := handle.block.bytes - (first + middle)
+  have htotal : handle.block.bytes = first + middle + last := by
+    dsimp [first, middle, last]
+    omega
+  have hendBytes : first + middle = slice.end * codec.size := by
+    dsimp [first, middle]
+    rw [← Nat.add_mul, Nat.add_sub_of_le hbegin]
+  have hlast : last = handle.block.bytes - slice.end * codec.size := by
+    simp [last, hendBytes]
+  have hprefixLength : (encodeValues codec prefixValues).length = first := by
+    rw [encodeValues_length, hprefix]
+  have hmiddleLength : (encodeValues codec middleValues).length = middle := by
+    rw [encodeValues_length, hmiddle]
+  have hregionSplit :
+      OwnsBytes (PROP := IProp GF) (handle.block.region pool) ⊣⊢
+        OwnsBytes (slicePrefixRegion codec pool handle slice) ∗
+          (OwnsBytes (sliceRegion codec pool handle slice) ∗
+            OwnsBytes (sliceTailRegion codec pool handle slice)) := by
+    simpa [slicePrefixRegion, sliceRegion, sliceTailRegion, first, middle,
+      hendBytes, hlast, Nat.add_sub_of_le hbegin, Nat.add_mul,
+      Nat.add_assoc] using
+      (ownsBytes_split3 (PROP := IProp GF) (handle.block.region pool)
+        first middle last (by simpa [Block.region] using htotal))
+  have hpointsJoin :
+      PointsToBytes (G := (inferInstance : ByteContentsGS GF))
+          (handle.block.region pool).base (encodeValues codec prefixValues) ∗
+        (PointsToBytes (sliceRegion codec pool handle slice).base
+            (encodeValues codec middleValues) ∗
+          PointsToBytes ((handle.block.region pool).base +
+              slice.end * codec.size) (encodeValues codec suffixValues)) ⊢
+      PointsToBytes (handle.block.region pool).base
+        (encodeValues codec (prefixValues ++ middleValues ++ suffixValues)) := by
+    have hsplit := (pointsToBytes_append (G :=
+      (inferInstance : ByteContentsGS GF)) (handle.block.region pool).base
+      (encodeValues codec prefixValues)
+      (encodeValues codec middleValues ++ encodeValues codec suffixValues)).trans
+      (sep_congr_right (pointsToBytes_append
+        ((handle.block.region pool).base +
+          (encodeValues codec prefixValues).length)
+        (encodeValues codec middleValues) (encodeValues codec suffixValues)))
+    rw [encodeValues_append, encodeValues_append]
+    simpa [sliceRegion, hprefixLength, hmiddleLength, first, middle,
+      hendBytes, Nat.add_assoc] using hsplit.mpr
+  unfold MutSliceOwns MutSliceRest Owns
+  iintro ⟨Hslice, Hrest⟩
+  icases Hslice with ⟨HmiddleRegion, HmiddlePoints⟩
+  icases Hrest with ⟨Hregions, Hpoints⟩
+  icases Hregions with ⟨HprefixRegion, HtailRegion⟩
+  icases Hpoints with ⟨HprefixPoints, HsuffixPoints⟩
+  icombine HmiddlePoints HsuffixPoints as HmiddleAndSuffix
+  icombine HprefixPoints HmiddleAndSuffix as HallPoints
+  ihave HallPoints := hpointsJoin $$ HallPoints
+  icombine HmiddleRegion HtailRegion as HmiddleAndTail
+  icombine HprefixRegion HmiddleAndTail as HallRegions
+  ihave HallRegions := hregionSplit.mpr $$ HallRegions
+  isplitl [HallRegions]
+  · iassumption
+  · iassumption
+
+theorem mutSlice_store {GF : BundledGFunctors}
+    [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
+    (codec : Codec α) {pool : Region} {handle : Handle} {slice : SliceHandle}
+    (oldValues newValues : List α) (hlength : oldValues.length = newValues.length)
+    (contents : ContentsMap) (mem : Memory) (hrep : ContentsRep contents mem) :
+    contentsInterp (G := G) contents ∗
+        MutSliceOwns codec pool handle slice oldValues ==∗
+      (contentsInterp
+          (insertBytes contents (sliceRegion codec pool handle slice).base
+            (encodeValues codec newValues)) ∗
+        MutSliceOwns codec pool handle slice newValues) ∗
+        ⌜∃ next, WriteSteps (sliceRegion codec pool handle slice).base
+          (encodeValues codec newValues) mem next⌝ := by
+  have hencodedLength : (encodeValues codec oldValues).length =
+      (encodeValues codec newValues).length := by
+    simp [encodeValues_length, hlength]
+  unfold MutSliceOwns
+  iintro ⟨Hcontents, Hslice⟩
+  icases Hslice with ⟨Hregion, HoldPoints⟩
+  icombine Hcontents HoldPoints as Hinitialized
+  ihave ⟨Hinitialized, %hagreement⟩ := pointsToBytes_agreement contents
+    (sliceRegion codec pool handle slice).base (encodeValues codec oldValues)
+      $$ Hinitialized
+  have hwrite : ∃ next, WriteSteps
+      (sliceRegion codec pool handle slice).base
+      (encodeValues codec newValues) mem next := by
+    apply writeSteps_exists
+    intro i hi
+    have hiOld : i < (encodeValues codec oldValues).length := by
+      rw [hencodedLength]
+      exact hi
+    let oldByte := (encodeValues codec oldValues)[i]
+    have hget : (encodeValues codec oldValues)[i]? = some oldByte :=
+      List.getElem?_eq_getElem hiOld
+    have hmem := hrep ((sliceRegion codec pool handle slice).base + i) oldByte
+      (hagreement i oldByte hget)
+    unfold Memory.mapped
+    simp [hmem]
+  imod pointsToBytes_update contents
+    (sliceRegion codec pool handle slice).base (encodeValues codec oldValues)
+    (encodeValues codec newValues) hencodedLength $$ Hinitialized with
+      ⟨Hcontents, HnewPoints⟩
+  imodintro
+  isplitl [Hcontents Hregion HnewPoints]
+  · isplitl [Hcontents]
+    · iassumption
+    · isplitl [Hregion]
+      · iassumption
+      · iassumption
+  · ipureintro
+    exact hwrite
+
 theorem owns_empty {GF : BundledGFunctors}
     [ByteRegionGS GF] [ByteContentsGS GF] {α : Type}
     (codec : Codec α) (pool : Region) (handle : Handle) :

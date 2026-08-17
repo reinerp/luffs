@@ -676,6 +676,30 @@ fn tlsf_box_new_u64(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &
     Some(offset)
 }
 
+// refines Luffs.Runtime.Containers.boxNewU128Arrays
+fn tlsf_box_new_u128(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], value: u128) -> Option<usize> {
+    let offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, 16)?;
+    let end: usize = offset.checked_add(16)?;
+    if end > pool.len() { return None; }
+    pool[offset] = value as u8;
+    pool[offset + 1] = (value >> 8) as u8;
+    pool[offset + 2] = (value >> 16) as u8;
+    pool[offset + 3] = (value >> 24) as u8;
+    pool[offset + 4] = (value >> 32) as u8;
+    pool[offset + 5] = (value >> 40) as u8;
+    pool[offset + 6] = (value >> 48) as u8;
+    pool[offset + 7] = (value >> 56) as u8;
+    pool[offset + 8] = (value >> 64) as u8;
+    pool[offset + 9] = (value >> 72) as u8;
+    pool[offset + 10] = (value >> 80) as u8;
+    pool[offset + 11] = (value >> 88) as u8;
+    pool[offset + 12] = (value >> 96) as u8;
+    pool[offset + 13] = (value >> 104) as u8;
+    pool[offset + 14] = (value >> 112) as u8;
+    pool[offset + 15] = (value >> 120) as u8;
+    Some(offset)
+}
+
 // refines Luffs.Runtime.Containers.boxLoadU8
 fn tlsf_box_load_u8(pool: &[u8; 4096], offset: usize) -> Option<u8> {
     if offset >= pool.len() { return None; }

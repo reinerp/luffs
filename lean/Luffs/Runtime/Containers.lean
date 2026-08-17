@@ -433,6 +433,14 @@ def boxNewU64Arrays (storage : List Byte) (offsets sizes : List Nat)
   boxNewArrays Scalar.u64 storage offsets sizes isFree prevFree count second
     first heads next previous value
 
+def boxNewU128Arrays (storage : List Byte) (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (value : BitVec 128) :
+    Option BoxNewU8ArraysResult :=
+  boxNewArrays Scalar.u128 storage offsets sizes isFree prevFree count second
+    first heads next previous value
+
 set_option maxHeartbeats 1200000 in
 theorem boxNewU16Arrays_owns {GF : Iris.BundledGFunctors}
     [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]

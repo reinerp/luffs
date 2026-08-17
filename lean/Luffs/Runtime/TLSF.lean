@@ -376,4 +376,60 @@ theorem remove_front_complete {state : Metadata} {bin block : Nat}
     · dsimp [nextState]
       simp [hblockPrevious]
 
+theorem remove_second_complete {state : Metadata} {bin head block : Nat}
+    {rest : List Nat} (hrep : RepresentsBin state bin (head :: block :: rest)) :
+    ∃ nextState, remove state bin block = some nextState ∧
+      nextState.heads = state.heads ∧
+      nextState.next[head]? = some (rest.head?.getD state.next.length) ∧
+      nextState.next[block]? = some state.next.length ∧
+      nextState.previous[block]? = some state.previous.length ∧
+      (rest.head?.getD state.next.length < state.previous.length →
+        nextState.previous[rest.head?.getD state.next.length]? = some head) := by
+  rcases hrep with ⟨hbin, hlens, hbinHead, hlinked, hnodup⟩
+  simp only [linked] at hlinked
+  rcases hlinked with ⟨hheadNext, hheadPrevious, hheadPrev, hheadNxt,
+    hblockLinked⟩
+  rcases hblockLinked with ⟨hblockNext, hblockPrevious, hblockPrev,
+    hblockNxt, htail⟩
+  have hpredecessor : state.previous[block]?.getD state.next.length = head := by
+    simp [hblockPrev]
+  have hsuccessor : state.next[block]?.getD state.next.length =
+      rest.head?.getD state.next.length := by
+    simp [hblockNxt]
+  have hheadBlock : head ≠ block := by
+    intro heq
+    exact (List.nodup_cons.mp hnodup).1 (by simp [heq])
+  unfold remove
+  simp only [Nat.not_le.mpr hbin, Nat.not_le.mpr hblockNext,
+    Nat.not_le.mpr hblockPrevious, if_false, hpredecessor,
+    Nat.not_le.mpr hheadNext, hheadNext, hsuccessor, if_true]
+  by_cases hsuccessorIn : rest.head?.getD state.next.length < state.previous.length
+  · simp only [hsuccessorIn, if_true]
+    refine ⟨_, rfl, rfl, ?_, ?_, ?_, ?_⟩
+    · rw [List.getElem?_set_ne (Ne.symm hheadBlock),
+        List.getElem?_set_self hheadNext]
+    · simp [hblockNext]
+    · simp [hblockPrevious]
+    · intro
+      by_cases hsuccessorBlock : rest.head?.getD state.next.length = block
+      · exfalso
+        cases rest with
+        | nil => simp at hsuccessorBlock; omega
+        | cons successor tail =>
+          simp only [List.head?_cons, Option.getD_some] at hsuccessorBlock
+          apply (List.nodup_cons.mp (List.nodup_cons.mp hnodup).2).1
+          simp [hsuccessorBlock]
+      · change (((state.previous.set (rest.head?.getD state.next.length) head).set
+            block state.previous.length)[rest.head?.getD state.next.length]?) = some head
+        rw [List.getElem?_set_ne (Ne.symm hsuccessorBlock),
+          List.getElem?_set_self hsuccessorIn]
+  · simp only [hsuccessorIn, if_false]
+    refine ⟨_, rfl, rfl, ?_, ?_, ?_, ?_⟩
+    · rw [List.getElem?_set_ne (Ne.symm hheadBlock),
+        List.getElem?_set_self hheadNext]
+    · simp [hblockNext]
+    · simp [hblockPrevious]
+    · intro hin
+      exact hin.elim
+
 end Luffs.Runtime.TLSF

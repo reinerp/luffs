@@ -177,7 +177,10 @@ all metadata-array lengths, and leaves the removed node's links at the two
 array-length sentinels. Head removal is now proved complete under
 `RepresentsBin`: every represented `block :: rest` produces a next state that
 represents exactly `rest`, preserves its entire linked tail, and detaches
-`block`. Arbitrary interior-node bypass and erasure remain.
+`block`. Removal of the node immediately after the head is also proved
+complete: the head table is unchanged, the head bypasses the removed node, the
+successor's back-link is repaired when present, and the removed node is
+detached. Framing this local rewrite under an arbitrary prefix remains.
 
 The first target is sequential TLSF with fixed-size pools obtained from `mmap`.
 Growing pools, `realloc`, aligned allocation beyond the base alignment, and

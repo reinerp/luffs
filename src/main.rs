@@ -27,6 +27,7 @@ struct Module {
     proofs: Vec<Proof>,
     accesses: Vec<Access>,
     scalar_models: Vec<ScalarModel>,
+    array_models: Vec<ArrayModel>,
 }
 
 #[derive(Debug)]
@@ -35,6 +36,18 @@ struct ScalarModel {
     params: Vec<String>,
     guards: Vec<String>,
     lets: Vec<(String, String)>,
+    result: String,
+    refines: Option<String>,
+}
+
+#[derive(Debug)]
+struct ArrayModel {
+    name: String,
+    array: String,
+    params: Vec<(String, String)>,
+    guards: Vec<String>,
+    lets: Vec<(String, String)>,
+    assignment: (String, String),
     result: String,
     refines: Option<String>,
 }
@@ -274,6 +287,7 @@ fn parse(source: &str) -> Result<Module, String> {
         proofs,
         accesses,
         scalar_models: parse_scalar_models(source),
+        array_models: parse_array_models(source),
     })
 }
 
@@ -377,6 +391,142 @@ fn parse_scalar_models(source: &str) -> Vec<ScalarModel> {
                     params: model.params,
                     guards: model.guards,
                     lets: model.lets,
+                    result,
+                    refines: model.refines,
+                });
+            }
+        }
+    }
+    models
+}
+
+fn model_expr(expr: &str, array: &str) -> String {
+    to_lean_expr(expr).replace(&format!("{array}_len"), &format!("{array}.length"))
+}
+
+fn parse_array_models(source: &str) -> Vec<ArrayModel> {
+    #[derive(Default)]
+    struct Pending {
+        name: String,
+        array: String,
+        params: Vec<(String, String)>,
+        guards: Vec<String>,
+        lets: Vec<(String, String)>,
+        assignment: Option<(String, String)>,
+        result: Option<String>,
+        refines: Option<String>,
+        depth: usize,
+        eligible: bool,
+    }
+
+    let mut models = Vec::new();
+    let mut pending: Option<Pending> = None;
+    let mut next_refinement = None;
+    for raw in source.lines() {
+        let trimmed = raw.trim();
+        if pending.is_none()
+            && let Some(target) = trimmed.strip_prefix("// refines ")
+        {
+            next_refinement = Some(target.trim().to_owned());
+            continue;
+        }
+        if pending.is_none() && trimmed.starts_with("fn ") {
+            let Some(open) = trimmed.find('(') else {
+                continue;
+            };
+            let Some(close) = trimmed.rfind(')') else {
+                continue;
+            };
+            if !trimmed[close + 1..].contains("-> Option<usize>") {
+                next_refinement = None;
+                continue;
+            }
+            let name = trimmed[3..open].trim().to_owned();
+            let mut array = None;
+            let mut params = Vec::new();
+            let mut eligible = true;
+            for param in trimmed[open + 1..close].split(',') {
+                let Some((name, ty)) = param.split_once(':') else {
+                    eligible = false;
+                    break;
+                };
+                let name = name.trim().to_owned();
+                match ty.trim() {
+                    "&mut [u8]" => {
+                        if array.replace(name.clone()).is_some() {
+                            eligible = false;
+                        }
+                        params.push((name, "List (Fin 256)".to_owned()));
+                    }
+                    "usize" => params.push((name, "Nat".to_owned())),
+                    "u8" => params.push((name, "Fin 256".to_owned())),
+                    _ => eligible = false,
+                }
+            }
+            let Some(array) = array else {
+                next_refinement = None;
+                continue;
+            };
+            pending = Some(Pending {
+                name,
+                array,
+                params,
+                refines: next_refinement.take(),
+                depth: 1,
+                eligible,
+                ..Pending::default()
+            });
+            continue;
+        }
+
+        let Some(model) = pending.as_mut() else {
+            continue;
+        };
+        if trimmed.starts_with("//") || trimmed.is_empty() {
+            continue;
+        }
+        if let Some(condition) = control_condition(trimmed, "if")
+            && trimmed.contains("{ return None; }")
+        {
+            model.guards.push(model_expr(condition, &model.array));
+        } else if let Some((name, expression)) = usize_let(trimmed) {
+            model
+                .lets
+                .push((lean_ident(name), model_expr(expression, &model.array)));
+        } else if let Some(statement) = trimmed.strip_suffix(';')
+            && let Some((left, right)) = statement.split_once(" = ")
+            && left.starts_with(&format!("{}[", model.array))
+            && left.ends_with(']')
+        {
+            let index = &left[model.array.len() + 1..left.len() - 1];
+            model.assignment = Some((
+                model_expr(index, &model.array),
+                model_expr(right, &model.array),
+            ));
+        } else if let Some(result) = trimmed
+            .strip_prefix("Some(")
+            .and_then(|rest| rest.strip_suffix(')'))
+        {
+            model.result = Some(model_expr(result, &model.array));
+        } else if trimmed != "}" {
+            model.eligible = false;
+        }
+
+        let opens = raw.bytes().filter(|byte| *byte == b'{').count();
+        let closes = raw.bytes().filter(|byte| *byte == b'}').count();
+        model.depth = model.depth.saturating_add(opens).saturating_sub(closes);
+        if model.depth == 0 {
+            let model = pending.take().expect("pending model exists");
+            if model.eligible
+                && let (Some(assignment), Some(result)) = (model.assignment, model.result)
+            {
+                models.push(ArrayModel {
+                    name: model.name,
+                    array: model.array,
+                    params: model.params,
+                    guards: model.guards,
+                    lets: model.lets,
+                    assignment,
                     result,
                     refines: model.refines,
                 });
@@ -663,6 +813,10 @@ fn lean(module: &Module) -> String {
         .scalar_models
         .iter()
         .any(|model| model.refines.is_some())
+        || module
+            .array_models
+            .iter()
+            .any(|model| model.refines.is_some())
     {
         out.push_str("import Luffs.Runtime.Containers\n");
     }
@@ -721,6 +875,66 @@ fn lean(module: &Module) -> String {
             out.push_str("_model, ");
             out.push_str(target);
             out.push_str(", Nat.pos_iff_ne_zero]\n\n");
+        }
+    }
+    for model in &module.array_models {
+        out.push_str("def ");
+        out.push_str(&model.name);
+        out.push_str("_model");
+        for (name, ty) in &model.params {
+            out.push_str(" (");
+            out.push_str(name);
+            out.push_str(" : ");
+            out.push_str(ty);
+            out.push(')');
+        }
+        out.push_str(" : Option (List (Fin 256) × Nat) :=\n  ");
+        for guard in &model.guards {
+            out.push_str("if ");
+            out.push_str(guard);
+            out.push_str(" then none else\n  ");
+        }
+        for (name, expression) in &model.lets {
+            out.push_str("let ");
+            out.push_str(name);
+            out.push_str(" := ");
+            out.push_str(expression);
+            out.push_str("\n  ");
+        }
+        out.push_str("let ");
+        out.push_str(&model.array);
+        out.push_str(" := ");
+        out.push_str(&model.array);
+        out.push_str(".set ");
+        out.push_str(&model.assignment.0);
+        out.push(' ');
+        out.push_str(&model.assignment.1);
+        out.push_str("\n  some (");
+        out.push_str(&model.array);
+        out.push_str(", ");
+        out.push_str(&model.result);
+        out.push_str(")\n\n");
+        if let Some(target) = &model.refines {
+            out.push_str("theorem ");
+            out.push_str(&model.name);
+            out.push_str("_refines : ");
+            out.push_str(&model.name);
+            out.push_str("_model = ");
+            out.push_str(target);
+            out.push_str(" := by\n  funext ");
+            out.push_str(
+                &model
+                    .params
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            );
+            out.push_str("\n  simp [");
+            out.push_str(&model.name);
+            out.push_str("_model, ");
+            out.push_str(target);
+            out.push_str("]\n\n");
         }
     }
     out.push_str("end LuffsGenerated\n");
@@ -935,6 +1149,23 @@ mod tests {
         assert!(generated.contains("import Luffs.Runtime.Containers"));
         assert!(generated.contains(
             "theorem vec_len_after_pop_refines : vec_len_after_pop_model = Luffs.Runtime.Containers.vecLenAfterPop"
+        ));
+    }
+
+    #[test]
+    fn emits_mutable_byte_array_semantics_and_refinement() {
+        let m = parse(
+            "// refines Luffs.Runtime.Containers.vecPushU8\nfn vec_push_u8(storage: &mut [u8], len: usize, capacity: usize, value: u8) -> Option<usize> {\nif len >= capacity { return None; }\nif capacity > storage.len() { return None; }\nstorage[len] = value;\nlet next_len: usize = len + 1;\nSome(next_len)\n}",
+        )
+        .unwrap();
+        assert_eq!(m.array_models.len(), 1);
+        let generated = lean(&m);
+        assert!(generated.contains(
+            "def vec_push_u8_model (storage : List (Fin 256)) (len : Nat) (capacity : Nat) (value : Fin 256)"
+        ));
+        assert!(generated.contains("let storage := storage.set len value"));
+        assert!(generated.contains(
+            "theorem vec_push_u8_refines : vec_push_u8_model = Luffs.Runtime.Containers.vecPushU8"
         ));
     }
 }

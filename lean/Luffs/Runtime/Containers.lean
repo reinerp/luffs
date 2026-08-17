@@ -20,9 +20,9 @@ def boxStoreU8 (storage : List Byte) (begin : Nat) (value : Byte) :
 
 def vecPushU8 (storage : List Byte) (len capacity : Nat) (value : Byte) :
     Option (List Byte × Nat) :=
-  if len < capacity ∧ capacity ≤ storage.length then
-    some (storage.set len value, len + 1)
-  else none
+  if len ≥ capacity then none
+  else if capacity > storage.length then none
+  else some (storage.set len value, len + 1)
 
 def vecLastU8 (storage : List Byte) (len : Nat) : Option Byte :=
   if 0 < len ∧ len ≤ storage.length then storage[len - 1]? else none
@@ -71,13 +71,17 @@ theorem vecPushU8_result {storage next : List Byte} {len capacity nextLen : Nat}
       next.length = storage.length := by
   unfold vecPushU8 at hpush
   split at hpush
-  next hbounds =>
-    simp only [Option.some.injEq, Prod.mk.injEq] at hpush
-    rcases hpush with ⟨hnext, hlen⟩
-    subst next
-    subst nextLen
-    exact ⟨hbounds.1, hbounds.2, rfl, rfl, List.length_set⟩
   next => contradiction
+  next hlen =>
+    split at hpush
+    next => contradiction
+    next hcapacity =>
+      simp only [Option.some.injEq, Prod.mk.injEq] at hpush
+      rcases hpush with ⟨hnext, hnextLen⟩
+      subst next
+      subst nextLen
+      exact ⟨Nat.lt_of_not_ge hlen, Nat.le_of_not_gt hcapacity,
+        rfl, rfl, List.length_set⟩
 
 theorem vecPushU8_refines_handle {storage next : List Byte}
     {handle : Luffs.Containers.Vec.Handle} {nextLen : Nat} {value : Byte}

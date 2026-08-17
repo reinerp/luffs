@@ -18,11 +18,13 @@ fn box_store_u8(storage: &mut [u8], begin: usize, value: u8) -> Option<()> {
     Some(())
 }
 
+// refines Luffs.Runtime.Containers.vecPushU8
 fn vec_push_u8(storage: &mut [u8], len: usize, capacity: usize, value: u8) -> Option<usize> {
     if len >= capacity { return None; }
     if capacity > storage.len() { return None; }
     storage[len] = value;
-    len.checked_add(1)
+    let next_len: usize = len + 1;
+    Some(next_len)
 }
 
 fn vec_last_u8(storage: &[u8], len: usize) -> Option<u8> {

@@ -242,7 +242,11 @@ Lean semantics for its straight-line scalar `Option<usize>` subset directly
 from the function body. `vec_len_after_pop` carries a `refines` declaration,
 and Lean checks extensional equality between that generated definition and the
 verified runtime model; source/model drift therefore fails `luffs check`.
-Array mutation, loops, and checked-arithmetic semantics are the next translation
-cases.
+The same translation now covers one mutable byte slice, scalar parameters, one
+proved array update, and an `Option<usize>` result. `vec_push_u8` is translated
+from its two early-return guards and mutation into executable Lean semantics,
+then checked extensionally against `vecPushU8`; its result theorem connects that
+model to the abstract verified Vec handle transition. Multiple mutations,
+loops, and general checked-arithmetic semantics are the next translation cases.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.

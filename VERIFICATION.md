@@ -558,6 +558,11 @@ concurrency are later extensions and are not prerequisites for `Box` and
   an empty `Vec.Owns codec` Iris capability. The existing `u8` runtime model is
   proved equal to this generic specialization, and its end-to-end theorem now
   delegates to the generic proof.
+  Generic executable push now checks capacity, multiplication, base addition,
+  and end-of-element arithmetic in the 64-bit domain before performing the
+  codec-wide store. Its storage write is proved to occur exactly after the
+  initialized encoding prefix, its length result refines abstract `Vec.push`,
+  and its Iris theorem appends exactly one encoded value to `Vec.Owns codec`.
   Generated Vec-construction semantics now calls the generated TLSF allocator
   model with the verified byte-capacity request rather than directly aliasing
   the hand-written Vec constructor transformer. The specialized source checker

@@ -749,6 +749,115 @@ theorem vecNewArrays_refines_vec
       Luffs.Containers.Vec.encodeValues, PointsToBytes] using
         howns.trans (Iris.BI.sep_congr_left Iris.BI.sep_emp.symm)
 
+structure VecPushResult where
+  storage : List Byte
+  nextLen : Nat
+deriving DecidableEq, Repr
+
+/-- Codec-generic Vec push boundary, including every 64-bit arithmetic check
+needed to form the element's byte address. -/
+def vecPush {α : Type} (codec : Codec α) (storage : List Byte)
+    (offset len capacity : Nat) (value : α) : Option VecPushResult :=
+  if capacity > Luffs.Runtime.TLSF.usizeMax ∨ len ≥ capacity then none
+  else if len > Luffs.Runtime.TLSF.usizeMax / codec.size then none
+  else
+    let byteOffset := len * codec.size
+    if offset > Luffs.Runtime.TLSF.usizeMax - byteOffset then none
+    else
+      let address := offset + byteOffset
+      if address > Luffs.Runtime.TLSF.usizeMax - codec.size then none
+      else match boxStore codec storage address value with
+        | none => none
+        | some nextStorage => some ⟨nextStorage, len + 1⟩
+
+theorem vecPush_result {α : Type} {codec : Codec α} {storage : List Byte}
+    {offset len capacity : Nat} {value : α} {result : VecPushResult}
+    (hsuccess : vecPush codec storage offset len capacity value = some result) :
+    capacity ≤ Luffs.Runtime.TLSF.usizeMax ∧ len < capacity ∧
+      len ≤ Luffs.Runtime.TLSF.usizeMax / codec.size ∧
+      offset ≤ Luffs.Runtime.TLSF.usizeMax - len * codec.size ∧
+      offset + len * codec.size ≤
+        Luffs.Runtime.TLSF.usizeMax - codec.size ∧
+      offset + len * codec.size + codec.size ≤ storage.length ∧
+      result.storage = writeBytes storage (offset + len * codec.size)
+        (codec.encode value) ∧ result.nextLen = len + 1 := by
+  unfold vecPush at hsuccess
+  split at hsuccess
+  next => contradiction
+  next hcapacity =>
+    split at hsuccess
+    next => contradiction
+    next hmul =>
+      dsimp only at hsuccess
+      split at hsuccess
+      next => contradiction
+      next hoffset =>
+        split at hsuccess
+        next => contradiction
+        next haddress =>
+          cases hstore : boxStore codec storage (offset + len * codec.size) value with
+          | none => simp [hstore] at hsuccess
+          | some nextStorage =>
+              simp [hstore] at hsuccess
+              subst result
+              obtain ⟨hstorageBound, hstorage⟩ := boxStore_result hstore
+              exact ⟨Nat.le_of_not_gt (fun h => hcapacity (Or.inl h)),
+                Nat.lt_of_not_ge (fun h => hcapacity (Or.inr h)),
+                Nat.le_of_not_gt hmul, Nat.le_of_not_gt hoffset,
+                Nat.le_of_not_gt haddress, hstorageBound, hstorage, rfl⟩
+
+theorem vecPush_refines_handle {α : Type} {codec : Codec α}
+    {storage : List Byte} {handle : Luffs.Containers.Vec.Handle} {value : α}
+    {result : VecPushResult}
+    (hsuccess : vecPush codec storage handle.block.offset handle.len
+      handle.capacity value = some result) :
+    Luffs.Containers.Vec.push handle =
+      some { handle with len := result.nextLen } := by
+  have hresult := vecPush_result hsuccess
+  simp [Luffs.Containers.Vec.push, hresult.2.1, hresult.2.2.2.2.2.2.2]
+
+theorem vecPush_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {α : Type} (codec : Codec α) {pool : Region}
+    {storage : List Byte} {handle : Luffs.Containers.Vec.Handle}
+    {values : List α} {value : α} {result : VecPushResult}
+    (hlen : values.length = handle.len)
+    (hsuccess : vecPush codec storage handle.block.offset handle.len
+      handle.capacity value = some result) :
+    ∃ next,
+      Luffs.Containers.Vec.push handle = some next ∧
+      result.nextLen = next.len ∧
+      result.storage = writeBytes storage
+        (handle.block.offset +
+          (Luffs.Containers.Vec.encodeValues codec values).length)
+        (codec.encode value) ∧
+      ∀ contents : ContentsMap,
+        CanInsertBytes contents
+          ((handle.block.region pool).base +
+            (Luffs.Containers.Vec.encodeValues codec values).length)
+          (codec.encode value) →
+        contentsInterp (G := G) contents ∗
+            Luffs.Containers.Vec.Owns codec pool handle values ==∗
+          contentsInterp
+              (insertBytes contents
+                ((handle.block.region pool).base +
+                  (Luffs.Containers.Vec.encodeValues codec values).length)
+                (codec.encode value)) ∗
+            Luffs.Containers.Vec.Owns codec pool next (values ++ [value]) := by
+  let next := { handle with len := result.nextLen }
+  have hpush : Luffs.Containers.Vec.push handle = some next :=
+    vecPush_refines_handle hsuccess
+  have hresult := vecPush_result hsuccess
+  have hstorage : result.storage = writeBytes storage
+      (handle.block.offset +
+        (Luffs.Containers.Vec.encodeValues codec values).length)
+      (codec.encode value) := by
+    rw [Luffs.Containers.Vec.encodeValues_length, hlen]
+    exact hresult.2.2.2.2.2.2.1
+  refine ⟨next, hpush, rfl, hstorage, ?_⟩
+  intro contents hfresh
+  exact Luffs.Containers.Vec.push_owns codec value contents hpush hfresh
+
 def vecNewU8Arrays (offsets sizes : List Nat)
     (isFree prevFree : List (Fin 256)) (count : Nat)
     (second : List (BitVec 32)) (first : BitVec 64)

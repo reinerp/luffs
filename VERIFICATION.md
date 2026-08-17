@@ -228,9 +228,14 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   refinement theorem. It carries validity, both bitmap levels, every intrusive
   chain, and cross-bin offset disjointness through all three operations;
   insertion itself now has a separate proof that fresh offsets preserve that
-  disjointness invariant. The remaining coalescing obligation is to identify
-  the runtime-classified blocks with the abstract adjacent pair and combine
-  this bin theorem with physical compaction as one allocator transition.
+  disjointness invariant. The complete coalescing theorem now identifies the
+  runtime-classified blocks with the abstract adjacent pair, derives global
+  freshness of the merged offset from the two removals, and combines the bin
+  theorem with physical compaction. Given allocator validity, the pool size
+  bound, and `canCoalesce`, successful Luffs execution constructs and refines
+  the abstract `coalescePair` successor. Together with the Iris-Lean
+  `OwnsFree` equivalence, the same transition preserves metadata invariants
+  and recombines the adjacent byte capabilities without loss or duplication.
   Pointer-to-offset validation belongs at the mmap-backed pool boundary.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 

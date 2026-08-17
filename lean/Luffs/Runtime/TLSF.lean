@@ -3485,6 +3485,52 @@ theorem removeOffset_preserves_offsets_disjoint
         simpa [Bins.replaceChain_other state replacement hrightCls] using hright
       exact hdisjoint hne offset hleftOld hrightOld
 
+theorem removeOffset_absent_everywhere
+    {state : Bins.State} {cls : SizeClass} {block : Nat}
+    {removed : Block} {replacement : List Block}
+    (hvalid : Bins.Valid state) (hdisjoint : BinsOffsetsDisjoint state)
+    (hremove : FreeList.removeOffset (state.chains cls) block =
+      some (removed, replacement)) :
+    ∀ query, block ∉
+      ((state.replaceChain cls replacement).chains query).map Block.offset := by
+  have horigin := FreeList.removeOffset_removed_origin (hvalid.1 cls) hremove
+  obtain ⟨old, holdMem, holdOffset, _⟩ := horigin
+  intro query
+  by_cases hquery : query = cls
+  · subst query
+    simpa [Bins.State.replaceChain, Bins.State.fromChains,
+      Bins.Chains.replace] using
+      (FreeList.removeOffset_absent (hvalid.1 cls) hremove)
+  · intro hmem
+    have hqueryMem : block ∈ (state.chains query).map Block.offset := by
+      simpa [Bins.replaceChain_other state replacement hquery] using hmem
+    have hselectedMem : block ∈ (state.chains cls).map Block.offset := by
+      rw [← holdOffset]
+      exact List.mem_map_of_mem holdMem
+    exact hdisjoint (Ne.symm hquery) block hselectedMem hqueryMem
+
+theorem removeOffset_preserves_global_absence
+    {state : Bins.State} {cls : SizeClass} {removedOffset absent : Nat}
+    {removed : Block} {replacement : List Block}
+    (habsent : ∀ query, absent ∉
+      (state.chains query).map Block.offset)
+    (hremove : FreeList.removeOffset (state.chains cls) removedOffset =
+      some (removed, replacement)) :
+    ∀ query, absent ∉
+      ((state.replaceChain cls replacement).chains query).map Block.offset := by
+  have hoffsets := FreeList.removeOffset_offsets hremove
+  intro query
+  by_cases hquery : query = cls
+  · subst query
+    intro hmem
+    have hreplacement : absent ∈ replacement.map Block.offset := by
+      simpa [Bins.State.replaceChain, Bins.State.fromChains,
+        Bins.Chains.replace] using hmem
+    rw [hoffsets] at hreplacement
+    exact habsent cls (List.mem_of_mem_erase hreplacement)
+  · simpa [Bins.replaceChain_other state replacement hquery] using
+      habsent query
+
 /-- End-to-end refinement of arbitrary concrete class removal to the abstract
 TLSF operation, including validity, intrusive bins, disjointness, and both
 bitmap cache levels. -/
@@ -4094,6 +4140,32 @@ theorem canonical_representsPhysicalArrays (blocks : List Block) :
   · simpa only [prevFreeFlags, List.length_map] using
       (List.take_length (l := prevFreeFlags blocks))
 
+theorem representsPhysicalArrays_get_size
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count i : Nat} {blocks : List Block} {block : Block}
+    (hrep : RepresentsPhysicalArrays offsets sizes isFree prevFree count blocks)
+    (hget : blocks[i]? = some block) : sizes[i]? = some block.bytes := by
+  have hi : i < count := by
+    rw [hrep.1]
+    exact (List.getElem?_eq_some_iff.mp hget).1
+  have hsizes := congrArg (fun values : List Nat => values[i]?)
+    hrep.2.2.2.2.2.2.1
+  rw [List.getElem?_take_of_lt hi] at hsizes
+  simpa [blockSizes, hget] using hsizes
+
+theorem representsPhysicalArrays_get_offset
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count i : Nat} {blocks : List Block} {block : Block}
+    (hrep : RepresentsPhysicalArrays offsets sizes isFree prevFree count blocks)
+    (hget : blocks[i]? = some block) : offsets[i]? = some block.offset := by
+  have hi : i < count := by
+    rw [hrep.1]
+    exact (List.getElem?_eq_some_iff.mp hget).1
+  have hoffsets := congrArg (fun values : List Nat => values[i]?)
+    hrep.2.2.2.2.2.1
+  rw [List.getElem?_take_of_lt hi] at hoffsets
+  simpa [blockOffsets, hget] using hoffsets
+
 structure DeallocateUncoalescedResult where
   isFree : List (Fin 256)
   prevFree : List (Fin 256)
@@ -4496,6 +4568,207 @@ theorem coalesceClassArrays_refines_physical_append
     exact Option.some.inj (hphysical.symm.trans hexpected)
   subst expected
   simpa [hoffsets, hsizes, hfree, hprevFree, hcount] using hrep
+
+set_option maxHeartbeats 400000 in
+/-- The complete concrete coalescing transaction refines the corresponding
+abstract allocator transition, including physical headers and all bin caches. -/
+theorem coalesceClassArrays_refines_allocator_append
+    (pre : List Block) (leftBlock rightBlock : Block) (rest : List Block)
+    (hcan : canCoalesce leftBlock rightBlock)
+    {state abstractNext : Bins.State}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {result : CoalesceClassResult}
+    (hvalid : Bins.Valid state)
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hpair : Dealloc.coalescePair
+      { physical := pre ++ leftBlock :: rightBlock :: rest, bins := state }
+      pre.length = some
+        { physical := coalesceAt (pre ++ leftBlock :: rightBlock :: rest)
+            pre.length,
+          bins := abstractNext })
+    (hsuccess : coalesceClassArrays
+      (blockOffsets (pre ++ leftBlock :: rightBlock :: rest))
+      (blockSizes (pre ++ leftBlock :: rightBlock :: rest))
+      (freeFlags (pre ++ leftBlock :: rightBlock :: rest))
+      (prevFreeFlags (pre ++ leftBlock :: rightBlock :: rest))
+      second first heads next previous
+      (pre ++ leftBlock :: rightBlock :: rest).length pre.length = some result) :
+    RepresentsPhysicalArrays result.offsets result.sizes result.isFree
+        result.prevFree result.count
+        (coalesceAt (pre ++ leftBlock :: rightBlock :: rest) pre.length) ∧
+      Bins.Valid abstractNext ∧
+      RepresentsBins (Metadata.mk result.heads result.next result.previous)
+        abstractNext ∧
+      BinsOffsetsDisjoint abstractNext ∧
+      RepresentsSecondBitmap result.second abstractNext ∧
+      FirstBitmapRep result.first result.second := by
+  have hphysical := coalesceClassArrays_refines_physical_append pre leftBlock
+    rightBlock rest hcan hsuccess
+  obtain ⟨left, right, leftClass, rightClass, removedLeft, afterLeft,
+      removedRight, afterRight, mergedClass, hleft, hright, _,
+      hleftClass, hrightClass, hremoveLeftAbstract, hremoveRightAbstract,
+      hmergedClass, _, hfinalBins⟩ := Dealloc.coalescePair_result hpair
+  have hleftEq : left = leftBlock := by
+    have : (pre ++ leftBlock :: rightBlock :: rest)[pre.length]? =
+        some leftBlock := by simp
+    exact Option.some.inj (hleft.symm.trans this)
+  have hrightEq : right = rightBlock := by
+    have : (pre ++ leftBlock :: rightBlock :: rest)[pre.length + 1]? =
+        some rightBlock := by simp
+    exact Option.some.inj (hright.symm.trans this)
+  subst left
+  subst right
+  obtain ⟨leftOffset, rightOffset, leftSize, rightSize, leftBin, rightBin,
+      withoutLeft, withoutRight, physical, mergedSize, mergedBin, inserted,
+      hleftOffset, hrightOffset, hleftSize, hrightSize, hleftBin,
+      hrightBin, hremoveLeft, hremoveRight, hphysicalStep, hmergedSize,
+      hmergedBin, hinsert, hoffsets, hsizes, hisFree, hprevFree, hcount,
+      hsecondResult, hfirstResult, hheads, hnext, hprevious⟩ :=
+    coalesceClassArrays_result hsuccess
+  have hleftOffsetEq : leftOffset = leftBlock.offset := by
+    have h := hleftOffset
+    simp [blockOffsets] at h
+    exact h.symm
+  have hrightOffsetEq : rightOffset = rightBlock.offset := by
+    have h := hrightOffset
+    simp [blockOffsets] at h
+    exact h.symm
+  have hleftSizeEq : leftSize = leftBlock.bytes := by
+    have h := hleftSize
+    simp [blockSizes] at h
+    exact h.symm
+  have hrightSizeEq : rightSize = rightBlock.bytes := by
+    have h := hrightSize
+    simp [blockSizes] at h
+    exact h.symm
+  subst leftOffset
+  subst rightOffset
+  subst leftSize
+  subst rightSize
+  obtain ⟨leftRuntimeClass, hleftRuntimeClass, hleftEncoded⟩ :=
+    classifySizeBin_refines_block hleftBin
+  have hleftClassEq : leftRuntimeClass = leftClass :=
+    Option.some.inj (hleftRuntimeClass.symm.trans hleftClass)
+  subst leftRuntimeClass
+  obtain ⟨rightRuntimeClass, hrightRuntimeClass, hrightEncoded⟩ :=
+    classifySizeBin_refines_block hrightBin
+  have hrightClassEq : rightRuntimeClass = rightClass :=
+    Option.some.inj (hrightRuntimeClass.symm.trans hrightClass)
+  subst rightRuntimeClass
+  have hphysicalRep := coalescePhysicalArrays_refines_append pre leftBlock
+    rightBlock rest hcan
+  obtain ⟨expectedPhysical, hexpectedPhysical, hphysicalArrays⟩ := hphysicalRep
+  have hphysicalEq : physical = expectedPhysical :=
+    Option.some.inj (hphysicalStep.symm.trans hexpectedPhysical)
+  subst physical
+  have hmergedGet :
+      (coalesceAt (pre ++ leftBlock :: rightBlock :: rest) pre.length)[pre.length]? =
+        some (coalesceBlocks leftBlock rightBlock) := by
+    rw [coalesceAt_append_pair]
+    simp
+  have hmergedConcrete := representsPhysicalArrays_get_size hphysicalArrays
+    hmergedGet
+  have hmergedSizeEq : mergedSize = (coalesceBlocks leftBlock rightBlock).bytes :=
+    Option.some.inj (hmergedSize.symm.trans hmergedConcrete)
+  subst mergedSize
+  obtain ⟨mergedRuntimeClass, hmergedRuntimeClass, hmergedEncoded⟩ :=
+    classifySizeBin_refines_block hmergedBin
+  have hmergedClassEq : mergedRuntimeClass = mergedClass :=
+    Option.some.inj (hmergedRuntimeClass.symm.trans hmergedClass)
+  subst mergedRuntimeClass
+  obtain ⟨leftReplacement, hleftRemoveList, hafterLeft⟩ :=
+    Bins.removeOffset_success hremoveLeftAbstract
+  subst afterLeft
+  obtain ⟨rightReplacement, hrightRemoveList, hafterRight⟩ :=
+    Bins.removeOffset_success hremoveRightAbstract
+  subst afterRight
+  have hleftAbsent := removeOffset_absent_everywhere hvalid hdisjoint
+    hleftRemoveList
+  have hleftStillAbsent := removeOffset_preserves_global_absence hleftAbsent
+    hrightRemoveList
+  have hmergedFresh : ∀ query,
+      (coalesceBlocks leftBlock rightBlock).offset ∉
+        (((state.replaceChain leftClass leftReplacement).replaceChain
+          rightClass rightReplacement).chains query).map Block.offset := by
+    simpa [coalesceBlocks] using hleftStillAbsent
+  have hbelongs : Bins.Belongs mergedClass
+      (coalesceBlocks leftBlock rightBlock) :=
+    Bins.classifyBlock?_result hmergedClass
+  have hsteps := removeRemoveInsert_refines
+    (merged := coalesceBlocks leftBlock rightBlock)
+    hvalid hsecond hfirst hbins
+    hdisjoint hleftEncoded hrightEncoded hmergedEncoded rfl
+    hremoveLeftAbstract hremoveRightAbstract hbelongs hmergedFresh
+    hremoveLeft hremoveRight hinsert
+  have hfinalBins' : abstractNext =
+      ((state.replaceChain leftClass leftReplacement).replaceChain
+        rightClass rightReplacement).insert mergedClass
+          (coalesceBlocks leftBlock rightBlock) := by
+    simpa using hfinalBins
+  dsimp only at hsteps
+  rw [← hfinalBins'] at hsteps
+  simpa [hoffsets, hsizes, hisFree, hprevFree, hcount, hsecondResult,
+    hfirstResult, hheads, hnext, hprevious] using
+    And.intro hphysical hsteps
+
+theorem coalesceClassArrays_complete_refinement
+    (pool : Luffs.Memory.Region) (pre : List Block)
+    (leftBlock rightBlock : Block) (rest : List Block)
+    (hcan : canCoalesce leftBlock rightBlock)
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    {state : Bins.State}
+    (hallocValid : Alloc.Valid pool
+      { physical := pre ++ leftBlock :: rightBlock :: rest, bins := state })
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {result : CoalesceClassResult}
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hsuccess : coalesceClassArrays
+      (blockOffsets (pre ++ leftBlock :: rightBlock :: rest))
+      (blockSizes (pre ++ leftBlock :: rightBlock :: rest))
+      (freeFlags (pre ++ leftBlock :: rightBlock :: rest))
+      (prevFreeFlags (pre ++ leftBlock :: rightBlock :: rest))
+      second first heads next previous
+      (pre ++ leftBlock :: rightBlock :: rest).length pre.length = some result) :
+    ∃ abstractNext,
+      Dealloc.coalescePair
+          { physical := pre ++ leftBlock :: rightBlock :: rest, bins := state }
+          pre.length = some abstractNext ∧
+      RepresentsPhysicalArrays result.offsets result.sizes result.isFree
+          result.prevFree result.count abstractNext.physical ∧
+      Bins.Valid abstractNext.bins ∧
+      RepresentsBins (Metadata.mk result.heads result.next result.previous)
+        abstractNext.bins ∧
+      BinsOffsetsDisjoint abstractNext.bins ∧
+      RepresentsSecondBitmap result.second abstractNext.bins ∧
+      FirstBitmapRep result.first result.second := by
+  have hleft : (pre ++ leftBlock :: rightBlock :: rest)[pre.length]? =
+      some leftBlock := by simp
+  have hright : (pre ++ leftBlock :: rightBlock :: rest)[pre.length + 1]? =
+      some rightBlock := by simp
+  obtain ⟨abstractNext, hpair⟩ := Dealloc.coalescePair_complete hallocValid
+    hpoolMax hleft hright hcan
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _,
+      hphysicalNext, _⟩ := Dealloc.coalescePair_result hpair
+  cases abstractNext with
+  | mk abstractPhysical abstractBins =>
+      change abstractPhysical = coalesceAt
+        (pre ++ leftBlock :: rightBlock :: rest) pre.length at hphysicalNext
+      subst abstractPhysical
+      have hrefine := coalesceClassArrays_refines_allocator_append pre leftBlock
+        rightBlock rest hcan (hvalid := hallocValid.2.1) hsecond hfirst hbins
+        hdisjoint hpair hsuccess
+      let final : Alloc.State := {
+        physical := coalesceAt (pre ++ leftBlock :: rightBlock :: rest) pre.length
+        bins := abstractBins }
+      refine ⟨final, ?_, ?_⟩
+      · simpa [final] using hpair
+      · simpa [final] using hrefine
 
 theorem coalesceClassArrays_ownsFree_append
     {PROP : Type} [Iris.BI PROP] [Luffs.Memory.ByteRegionLogic PROP]

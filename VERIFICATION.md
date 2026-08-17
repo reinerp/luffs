@@ -627,5 +627,12 @@ alias semantics. This removes the one-store restriction that blocked
   little-endian writes, while `vecPushU16_refines_generic` connects each
   successful execution to the codec-generic `vecPush Scalar.u16` transition
   used by the Iris ownership theorem.
+  Indexed `vec_get_u16` now performs the matching checked element-address
+  calculation and little-endian decode. Its generated model refines
+  `vecGetU16`, `vecGetU16_eq_generic` identifies it with codec-generic
+  `vecGet Scalar.u16`, and `vecGetU16_owns` supplies the framed Iris read trace
+  while retaining ownership. Pop is representation-independent and already
+  quantified over every codec; `vecDropU16Arrays_owns` explicitly specializes
+  the generic allocator-backed exactly-once drop theorem to `Scalar.u16`.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.

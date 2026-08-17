@@ -3939,6 +3939,19 @@ mod tests {
     }
 
     #[test]
+    fn lowers_checked_u16_vec_indexing() {
+        let m = parse(
+            "fn get_u16(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<u16> {\nif index >= len { return None; }\nif index > usize::MAX / 2 { return None; }\nif offset > usize::MAX - index * 2 { return None; }\nif offset + index * 2 > usize::MAX - 2 { return None; }\nif offset + index * 2 + 1 >= storage.len() { return None; }\nSome(u16::from_le_bytes([storage[offset + index * 2], storage[offset + index * 2 + 1]]))\n}",
+        )
+        .unwrap();
+        assert_eq!(m.read_models.len(), 1);
+        assert_eq!(m.read_models[0].guards.len(), 5);
+        let generated = lean(&m);
+        assert!(generated.contains("storage[offset + index * 2]?"));
+        assert!(generated.contains("storage[offset + index * 2 + 1]?"));
+    }
+
+    #[test]
     fn emits_unit_returning_array_state_semantics() {
         let m = parse(
             "// refines Luffs.Runtime.Containers.boxStoreU8\nfn store(storage: &mut [u8], begin: usize, value: u8) -> Option<()> {\nif begin >= storage.len() { return None; }\nstorage[begin] = value;\nSome(())\n}",

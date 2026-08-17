@@ -1307,6 +1307,44 @@ theorem vecDropU8Arrays_owns
   exact vecDropArrays_owns Scalar.u8 hvalid hpoolMax hcountMax hsecond hfirst
     hbins hdisjoint hphysical hsuccess
 
+theorem vecDropU16Arrays_owns
+    {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
+    [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {blocks : List Block} {state : Bins.State}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {offset len capacity : Nat}
+    {result : Luffs.Runtime.TLSF.CoalesceClassResult}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hcountMax : count ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins
+      { heads, next, previous } state)
+    (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
+    (hsuccess : boxDropU8Arrays
+      offsets sizes isFree prevFree count second first
+      heads next previous offset = some result) :
+    ∃ (handle : Luffs.Containers.Vec.Handle) (abstractNext : Alloc.State),
+      handle.block.offset = offset ∧ handle.len = len ∧
+      handle.capacity = capacity ∧
+      Luffs.Containers.Vec.drop pool
+          { physical := blocks, bins := state } handle = some abstractNext ∧
+      ∀ (values : List (BitVec 16)) (contents : ContentsMap),
+        values.length = len →
+        contentsInterp (G := G) contents ∗
+            (Luffs.Containers.Vec.Owns Scalar.u16 pool handle values ∗
+              Ownership.OwnsFree pool blocks) ==∗
+          contentsInterp
+              (deleteBytes contents (handle.block.region pool).base
+                (Luffs.Containers.Vec.encodeValues Scalar.u16 values)) ∗
+            Ownership.OwnsFree pool abstractNext.physical := by
+  exact vecDropArrays_owns Scalar.u16 hvalid hpoolMax hcountMax hsecond hfirst
+    hbins hdisjoint hphysical hsuccess
+
 theorem vecDropPointerU8Arrays_owns
     {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
     [G : Luffs.Memory.ByteContentsGS GF]
@@ -1982,6 +2020,79 @@ def vecGetU8 (storage : List Byte) (len index : Nat) : Option Byte :=
   if index ≥ len then none
   else if len > storage.length then none
   else storage[index]?
+
+def vecGetU16 (storage : List Byte) (offset len index : Nat) :
+    Option (BitVec 16) :=
+  if index ≥ len then none
+  else if index > Luffs.Runtime.TLSF.usizeMax / 2 then none
+  else if offset > Luffs.Runtime.TLSF.usizeMax - index * 2 then none
+  else if offset + index * 2 > Luffs.Runtime.TLSF.usizeMax - 2 then none
+  else
+    let address := offset + index * 2
+    if address + 1 ≥ storage.length then none
+    else do
+      let low ← storage[address]?
+      let high ← storage[address + 1]?
+      Scalar.decode16 [low, high]
+
+theorem vecGetU16_eq_generic (storage : List Byte) (offset len index : Nat)
+    (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax) :
+    vecGetU16 storage offset len index =
+      vecGet Scalar.u16 storage offset len index := by
+  by_cases hindex : index ≥ len
+  · simp [vecGetU16, vecGet, hindex]
+  · by_cases hmul : index > Luffs.Runtime.TLSF.usizeMax / 2
+    · simp [vecGetU16, vecGet, Scalar.u16, hindex, hmul]
+    · by_cases hoffset : offset > Luffs.Runtime.TLSF.usizeMax - index * 2
+      · simp [vecGetU16, vecGet, Scalar.u16, hindex, hmul, hoffset]
+      · by_cases haddress : offset + index * 2 >
+          Luffs.Runtime.TLSF.usizeMax - 2
+        · simp [vecGetU16, vecGet, Scalar.u16, hindex, hmul, hoffset, haddress]
+        · simp only [vecGetU16, hindex, ↓reduceIte, hmul, hoffset, haddress,
+            vecGet, Scalar.u16, ↓reduceIte]
+          have htwo : 2 ≤ Luffs.Runtime.TLSF.usizeMax := by
+            decide
+          have hmax : offset + index * 2 ≠ Luffs.Runtime.TLSF.usizeMax := by
+            omega
+          calc
+            (if offset + index * 2 + 1 ≥ storage.length then none
+              else do
+                let low ← storage[offset + index * 2]?
+                let high ← storage[offset + index * 2 + 1]?
+                Scalar.decode16 [low, high]) =
+                boxLoadU16 storage (offset + index * 2) := by
+                  simp [boxLoadU16, hmax]
+            _ = boxLoad Scalar.u16 storage (offset + index * 2) :=
+              boxLoadU16_eq_generic storage (offset + index * 2) hstorageMax
+
+theorem vecGetU16_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {storage : List Byte}
+    {handle : Luffs.Containers.Vec.Handle}
+    {values : List (BitVec 16)} {index : Nat} {value expected : BitVec 16}
+    (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hlen : values.length = handle.len)
+    (hsuccess : vecGetU16 storage handle.block.offset handle.len index =
+      some value)
+    (hvalues : values[index]? = some expected)
+    (hencoded :
+      (storage.drop (handle.block.offset + index * Scalar.u16.size)).take
+          Scalar.u16.size = Scalar.u16.encode expected)
+    {contents : ContentsMap} {mem : Memory} (hrep : ContentsRep contents mem) :
+    value = expected ∧
+      (contentsInterp (G := G) contents ∗
+          Luffs.Containers.Vec.Owns Scalar.u16 pool handle values ⊢
+        (contentsInterp contents ∗
+          Luffs.Containers.Vec.Owns Scalar.u16 pool handle values) ∗
+          ⌜ReadSteps ((handle.block.region pool).base + index * Scalar.u16.size)
+              (Scalar.u16.encode expected) mem ∧
+            Scalar.u16.decode (Scalar.u16.encode expected) = some expected⌝) := by
+  have hgeneric : vecGet Scalar.u16 storage handle.block.offset handle.len index =
+      some value := by
+    rw [← vecGetU16_eq_generic storage handle.block.offset handle.len index
+      hstorageMax]
+    exact hsuccess
+  exact vecGet_owns Scalar.u16 hlen hgeneric hvalues hencoded hrep
 
 def vecSliceU8 (storage : List Byte) (len begin end_ : Nat) :
     Option (List Byte) :=

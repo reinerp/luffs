@@ -15,6 +15,18 @@ def usizeMax : Nat := 2 ^ 64 - 1
 def encodeSizeClass (cls : SizeClass) : Nat :=
   cls.fl.val * secondLevelCount + cls.sl.val
 
+theorem encodeSizeClass_div (cls : SizeClass) :
+    encodeSizeClass cls / secondLevelCount = cls.fl.val := by
+  have hsl := cls.sl.isLt
+  simp only [encodeSizeClass, secondLevelCount] at hsl ⊢
+  omega
+
+theorem encodeSizeClass_mod (cls : SizeClass) :
+    encodeSizeClass cls % secondLevelCount = cls.sl.val := by
+  have hsl := cls.sl.isLt
+  simp only [encodeSizeClass, secondLevelCount] at hsl ⊢
+  omega
+
 /-- The 64-bit executable mapping-down classifier used by free-list insertion.
 The source computes this with `leading_zeros`, shifts, and checked arithmetic;
 its source-shape refinement declaration targets this proof-oriented form. -/
@@ -4995,6 +5007,31 @@ def finishAllocateArrays (removed : ClassCandidateResult)
       removed.heads, removed.next, removed.previous,
       physical.allocatedOffset, physical.allocatedBytes⟩
 
+theorem finishAllocateArrays_physical
+    {removed : ClassCandidateResult} {physical : AllocatePhysicalResult}
+    {split : Prop} [Decidable split] {remainderBin remainderOffset : Nat}
+    {result : AllocateArraysResult}
+    (hfinish : finishAllocateArrays removed physical split remainderBin
+      remainderOffset = some result) :
+    result.offsets = physical.offsets ∧ result.sizes = physical.sizes ∧
+      result.isFree = physical.isFree ∧
+      result.prevFree = physical.prevFree ∧ result.count = physical.count ∧
+      result.allocatedOffset = physical.allocatedOffset ∧
+      result.allocatedBytes = physical.allocatedBytes := by
+  unfold finishAllocateArrays at hfinish
+  by_cases hsplit : split
+  · simp only [hsplit, if_true] at hfinish
+    cases hinsert : insertClassArrays removed.second removed.first removed.heads
+        removed.next removed.previous remainderBin remainderOffset with
+    | none => simp [hinsert] at hfinish
+    | some inserted =>
+      simp [hinsert] at hfinish
+      subst result
+      simp
+  · simp [hsplit] at hfinish
+    subst result
+    simp
+
 /-- Exact pure state transformer for the public `tlsf_allocate` lowering.
 Every check before `removeClassArrays` is a preflight check, so `none` leaves
 all caller-owned arrays unchanged. -/
@@ -5141,6 +5178,109 @@ theorem allocateArrays_result
                     selectedSize, remainderBin, removed, physical, rfl,
                     hfind, hhead, hblock, hsize, htake, hphysical, ?_⟩
                   simpa [remainderBin, hsplit] using hsuccess
+
+set_option maxHeartbeats 1000000 in
+/-- A successful concrete public allocation witnesses the corresponding
+abstract TLSF allocation and therefore transfers exactly the returned Iris
+byte capability to the caller. This theorem deliberately states the ownership
+law before the separate post-state metadata representation theorem. -/
+theorem allocateArrays_ownsFree
+    {PROP : Type} [Iris.BI PROP] [Luffs.Memory.ByteRegionLogic PROP]
+    {pool : Luffs.Memory.Region} {blocks : List Block} {state : Bins.State}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {request : Nat}
+    {result : AllocateArraysResult}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hsuccess : allocateArrays (blockOffsets blocks) (blockSizes blocks)
+      (freeFlags blocks) (prevFreeFlags blocks) blocks.length second first
+      heads next previous request = some result) :
+    ∃ (hrequest : 0 < request)
+        (hkeyMax : requestKey request < 2 ^ firstLevelCount)
+        (abstractResult : Alloc.Result),
+      Alloc.allocate { physical := blocks, bins := state } request hrequest
+          hkeyMax = some abstractResult ∧
+      result.allocatedOffset = abstractResult.allocated.offset ∧
+      result.allocatedBytes = abstractResult.allocated.bytes ∧
+      (Luffs.Allocator.TLSF.Ownership.OwnsFree (PROP := PROP) pool blocks ⊣⊢
+        Luffs.Memory.OwnsBytes (abstractResult.allocated.region pool) ∗
+          Luffs.Allocator.TLSF.Ownership.OwnsFree pool
+            abstractResult.state.physical) := by
+  obtain ⟨startBin, foundBin, selectedOffset, block, selectedSize,
+      remainderBin, removedArrays, physicalArrays, hclass, hfindClass,
+      hhead, hscan, _hsize, htake, hphysical, hfinish⟩ :=
+    allocateArrays_result hsuccess
+  obtain ⟨hrequest, hkeyMax, hstartBin, _⟩ :=
+    classifyRequestBin_result hclass
+  let start := searchSizeClass request hrequest hkeyMax
+  have htake' : takeCandidateClassArrays second first heads next previous
+      start.fl.val start.sl.val = some removedArrays := by
+    simpa [start, hstartBin, encodeSizeClass_div, encodeSizeClass_mod] using htake
+  obtain ⟨removedClass, removed, rest, habstractTake, hremovedOffset,
+      _hremovedBins, _hremovedSecond, _hremovedFirst⟩ :=
+    takeCandidateClassArrays_refines_takeCandidate start hsecond hfirst
+      hvalid.2.1 hbins hdisjoint htake'
+  have htakeResult := takeCandidateClassArrays_result htake
+  have hbinEq : removedArrays.bin = foundBin := by
+    rw [hfindClass] at htakeResult
+    exact Option.some.inj htakeResult.1.symm
+  have harrayBlock : removedArrays.block = selectedOffset := by
+    rw [htakeResult.2.2.2.1, hbinEq, hhead]
+    simp
+  have hselectedRemoved : selectedOffset = removed.offset := by
+    rw [← harrayBlock, hremovedOffset]
+  obtain ⟨actual, hactual, hactualRemoved, _, _, _, _⟩ :=
+    takeCandidate_suitable hvalid request hrequest hkeyMax habstractTake
+  have hscanRemoved : findOffsetIndex (blockOffsets blocks) blocks.length
+      removed.offset = some block := by
+    simpa [hselectedRemoved] using hscan
+  have hscanEq := findOffsetIndex_refines_findPhysicalIndex hvalid.1 hactual
+    hactualRemoved
+  rw [hscanEq] at hscanRemoved
+  obtain ⟨selected, hselected, _hselectedRemoved⟩ :=
+    findPhysicalIndex_sound hscanRemoved
+  obtain ⟨allocated, nextPhysical, hchosen, hnextPhysical,
+      hphysicalOffset, hphysicalBytes⟩ :=
+    allocatePhysicalArrays_refines (canonical_representsPhysicalArrays blocks)
+      hselected hvalid.1.2.2.1 hphysical
+  let nextBins := state.replaceChain removedClass rest
+  let prepared : Alloc.Prepared := {
+    detached := removed
+    physicalIndex := block
+    bins := nextBins }
+  have hprepare : Alloc.prepare { physical := blocks, bins := state } request
+      hrequest hkeyMax = some prepared := by
+    simp [Alloc.prepare, start, habstractTake, hscanRemoved, prepared, nextBins]
+  let core : Alloc.CoreResult := {
+    allocated := allocated
+    physical := nextPhysical
+    bins := nextBins
+    freeRemainder := allocationRemainder blocks block request }
+  have hcore : Alloc.allocateCore { physical := blocks, bins := state } request
+      hrequest hkeyMax = some core := by
+    simp [Alloc.allocateCore, hprepare, hchosen, core, prepared]
+  have haligned : alignment ∣ request :=
+    (allocatePhysicalArrays_result hphysical).1
+  obtain ⟨abstractNext, habstractFinish⟩ :=
+    Alloc.finishCore_complete hvalid haligned hcore
+  let abstractResult : Alloc.Result := {
+    allocated := allocated
+    state := abstractNext }
+  have habstract : Alloc.allocate { physical := blocks, bins := state } request
+      hrequest hkeyMax = some abstractResult := by
+    simp [Alloc.allocate, hcore, habstractFinish, abstractResult, core]
+  have hresultPhysical := finishAllocateArrays_physical hfinish
+  have hresultOffset : result.allocatedOffset = allocated.offset := by
+    rw [hresultPhysical.2.2.2.2.2.1, hphysicalOffset]
+  have hresultBytes : result.allocatedBytes = allocated.bytes := by
+    rw [hresultPhysical.2.2.2.2.2.2, hphysicalBytes]
+  refine ⟨hrequest, hkeyMax, abstractResult, habstract, ?_, ?_, ?_⟩
+  · simpa [abstractResult] using hresultOffset
+  · simpa [abstractResult] using hresultBytes
+  · exact Luffs.Allocator.TLSF.Ownership.allocate_ownsFree pool hvalid habstract
 
 /-- Exact fixed-array effect of `tlsf_coalesce_physical`. The active right
 header is deleted by left-compacting the suffix; the final array slot is spare

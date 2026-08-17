@@ -159,8 +159,12 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   allocation, and conditional remainder insertion. Its offset scan is proved
   equivalent to abstract physical lookup under pool well-formedness, and every
   successful transaction is decomposed into checked candidate, physical, and
-  finishing-stage witnesses. Composing those witnesses with the abstract
-  public allocator and Iris ownership transfer remains.
+  finishing-stage witnesses. Those witnesses are now composed into an actual
+  abstract `Alloc.allocate` execution with identical returned offset and byte
+  count. Consequently Iris-Lean proves that the concrete public call transfers
+  exactly the allocated byte capability to its caller. Proving that every
+  concrete post-state metadata array represents the same abstract result
+  remains.
 - [ ] Prove `dealloc`: consuming exactly a live allocation restores it to the
   allocator without leaks, overlap, or double-free.
   The executable deallocation transition now requires the exact returned

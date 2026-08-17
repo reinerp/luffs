@@ -1991,7 +1991,7 @@ fn parse_tlsf_allocate_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
 
 fn parse_tlsf_box_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
     let lines = source.lines().collect::<Vec<_>>();
-    let specifications = [
+    let mut specifications = vec![
         (
             "tlsf_box_new_u8",
             vec![
@@ -2069,6 +2069,36 @@ fn parse_tlsf_box_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
             ],
         ),
     ];
+    specifications.extend([
+        (
+            "tlsf_box_new_i8",
+            vec!["tlsf_box_new_u8(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, value as u8)"],
+        ),
+        (
+            "tlsf_box_new_i16",
+            vec!["tlsf_box_new_u16(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, value as u16)"],
+        ),
+        (
+            "tlsf_box_new_i32",
+            vec!["tlsf_box_new_u32(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, value as u32)"],
+        ),
+        (
+            "tlsf_box_new_i64",
+            vec!["tlsf_box_new_u64(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, value as u64)"],
+        ),
+        (
+            "tlsf_box_new_i128",
+            vec!["tlsf_box_new_u128(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, value as u128)"],
+        ),
+        (
+            "tlsf_box_new_usize",
+            vec!["tlsf_box_new_u64(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, value as u64)"],
+        ),
+        (
+            "tlsf_box_new_isize",
+            vec!["tlsf_box_new_u64(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, value as u64)"],
+        ),
+    ]);
     let mut models = Vec::new();
     for (name, required) in specifications {
         let Some(index) = lines
@@ -3706,10 +3736,17 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
     }
     for model in &module.tlsf_box_new_models {
         if model.name != "tlsf_box_new_u8" {
-            let width = model
+            let scalar = model
                 .name
-                .strip_prefix("tlsf_box_new_u")
+                .strip_prefix("tlsf_box_new_")
                 .expect("scalar Box constructor name");
+            let width = match scalar {
+                "usize" | "isize" => "64",
+                _ => scalar
+                    .strip_prefix('u')
+                    .or_else(|| scalar.strip_prefix('i'))
+                    .expect("fixed-width scalar Box constructor name"),
+            };
             out.push_str(&format!(
                 "def {}_model (storage : List (Fin 256)) (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (value : BitVec {}) : Option Luffs.Runtime.Containers.BoxNewU8ArraysResult :=\n  {} storage offsets sizes is_free prev_free count second first heads next previous value\n\n",
                 model.name, width, model.refines
@@ -3940,6 +3977,13 @@ fn check(source: &Path, module: &Module) -> Result<(), String> {
     run_tool(command, "Lean")
 }
 
+fn generated_rust_has_main(module: &Module) -> bool {
+    module
+        .rust
+        .lines()
+        .any(|line| line.trim_start().starts_with("fn main("))
+}
+
 fn build(source: &Path, output: Option<&Path>, module: &Module) -> Result<(), String> {
     check(source, module)?;
     let (rs, _) = paths(source);
@@ -3947,18 +3991,25 @@ fn build(source: &Path, output: Option<&Path>, module: &Module) -> Result<(), St
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("build/program"));
     let mut command = Command::new("rustc");
-    command
-        .arg("--edition=2024")
-        .arg("-O")
-        .arg(rs)
-        .arg("-o")
-        .arg(binary);
+    command.arg("--edition=2024").arg("-O");
+    if !generated_rust_has_main(module) {
+        command.arg("--crate-type=lib");
+    }
+    command.arg(rs).arg("-o").arg(binary);
     run_tool(command, "rustc")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn function_only_modules_build_as_libraries() {
+        let library = parse("fn identity(value: u8) -> u8 {\nvalue\n}").unwrap();
+        assert!(!generated_rust_has_main(&library));
+        let executable = parse("fn main() {\n}\n").unwrap();
+        assert!(generated_rust_has_main(&executable));
+    }
 
     #[test]
     fn bare_index_gets_an_omega_obligation() {
@@ -4176,6 +4227,18 @@ mod tests {
             "theorem tlsf_box_new_u128_refines : tlsf_box_new_u128_model = Luffs.Runtime.Containers.boxNewU128Arrays"
         ));
         assert!(generated.contains(
+            "theorem tlsf_box_new_i8_refines : tlsf_box_new_i8_model = Luffs.Runtime.Containers.boxNewI8Arrays"
+        ));
+        assert!(generated.contains(
+            "theorem tlsf_box_new_i128_refines : tlsf_box_new_i128_model = Luffs.Runtime.Containers.boxNewI128Arrays"
+        ));
+        assert!(generated.contains(
+            "theorem tlsf_box_new_usize_refines : tlsf_box_new_usize_model = Luffs.Runtime.Containers.boxNewUsizeArrays"
+        ));
+        assert!(generated.contains(
+            "theorem tlsf_box_new_isize_refines : tlsf_box_new_isize_model = Luffs.Runtime.Containers.boxNewIsizeArrays"
+        ));
+        assert!(generated.contains(
             "let allocated ← tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous 8"
         ));
         assert!(generated.contains(
@@ -4331,6 +4394,21 @@ mod tests {
                 .tlsf_box_new_models
                 .iter()
                 .any(|model| model.name == "tlsf_box_new_u128")
+        );
+    }
+
+    #[test]
+    fn tlsf_box_signed_refinement_rejects_wrong_unsigned_width() {
+        let source = include_str!("../stdlib/tlsf.luffs").replace(
+            "block_count, value as u128)\n}",
+            "block_count, value as u64)\n}",
+        );
+        let module = parse(&source).unwrap();
+        assert!(
+            !module
+                .tlsf_box_new_models
+                .iter()
+                .any(|model| model.name == "tlsf_box_new_i128")
         );
     }
 

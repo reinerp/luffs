@@ -639,9 +639,9 @@ concurrency are later extensions and are not prerequisites for `Box` and
   `Box.requestBytes codec.size`, bounds-checks the complete encoding, writes all
   encoded bytes, and is proved to refine generic `Box.allocate`. Its Iris law
   converts the raw allocation capability into `Box.Owns codec ... value` while
-  retaining exactly the allocator's remaining free ownership. Scalar-specific
-  Luffs monomorphization and target-width parameterization remain before this
-  item is complete. The current `u8` constructor is now proved equal to the
+  retaining exactly the allocator's remaining free ownership. Target-width
+  parameterization beyond the declared 64-bit x86-64/AArch64 target remains
+  before this item is complete. The current `u8` constructor is now proved equal to the
   generic constructor specialized with `Scalar.u8`, including equivalence of
   its one-byte bounds check and `List.set` update to the generic range write.
   The first non-byte allocator-backed monomorphization is checked as well:
@@ -657,6 +657,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   initialized ownership as well; u64 and u128 source-shape regressions reject
   deleting their most significant bytes. The u128 constructor also requests
   the correct 16-byte TLSF size class rather than the 8-byte minimum class.
+  Allocator-backed constructors now cover the complete scalar surface:
+  `i8/i16/i32/i64/i128` reuse the corresponding proved unsigned byte-writing
+  path through representation-preserving casts, while `usize/isize` reuse the
+  64-bit path on the declared native target. Generated Lean models refine
+  codec-specific generic constructor wrappers, and a mutation regression
+  rejects changing the `i128` wrapper to the wrong unsigned width.
   Codec-generic executable load/store semantics now checks the whole encoded
   range; successful loads expose the exact decoded byte slice, and an exact
   codec encoding decodes to the original value. The existing `u8` store model
@@ -862,3 +868,6 @@ alias semantics. This removes the one-store restriction that blocked
   stored blocks and its final raw tail, with a regression requiring every
   access to have a generated proof. A hermetic clean-checkout gate and coded
   zch blocks remain before this item is complete.
+  The `build` driver now detects function-only Luffs modules and invokes
+  `rustc --crate-type=lib`, so the complete generated TLSF/Box/Vec module is
+  type-checked as Rust rather than failing merely because it has no `main`.

@@ -700,6 +700,45 @@ fn tlsf_box_new_u128(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: 
     Some(offset)
 }
 
+// Signed scalars have the same two's-complement object representation as the
+// corresponding unsigned width, so these typed constructors reuse the proved
+// unsigned byte-writing path.
+// refines Luffs.Runtime.Containers.boxNewI8Arrays
+fn tlsf_box_new_i8(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], value: i8) -> Option<usize> {
+    tlsf_box_new_u8(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, value as u8)
+}
+
+// refines Luffs.Runtime.Containers.boxNewI16Arrays
+fn tlsf_box_new_i16(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], value: i16) -> Option<usize> {
+    tlsf_box_new_u16(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, value as u16)
+}
+
+// refines Luffs.Runtime.Containers.boxNewI32Arrays
+fn tlsf_box_new_i32(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], value: i32) -> Option<usize> {
+    tlsf_box_new_u32(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, value as u32)
+}
+
+// refines Luffs.Runtime.Containers.boxNewI64Arrays
+fn tlsf_box_new_i64(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], value: i64) -> Option<usize> {
+    tlsf_box_new_u64(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, value as u64)
+}
+
+// refines Luffs.Runtime.Containers.boxNewI128Arrays
+fn tlsf_box_new_i128(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], value: i128) -> Option<usize> {
+    tlsf_box_new_u128(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, value as u128)
+}
+
+// Native integers are fixed at 64 bits for the initial x86-64/AArch64 target.
+// refines Luffs.Runtime.Containers.boxNewUsizeArrays
+fn tlsf_box_new_usize(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], value: usize) -> Option<usize> {
+    tlsf_box_new_u64(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, value as u64)
+}
+
+// refines Luffs.Runtime.Containers.boxNewIsizeArrays
+fn tlsf_box_new_isize(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], value: isize) -> Option<usize> {
+    tlsf_box_new_u64(pool, offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, value as u64)
+}
+
 // refines Luffs.Runtime.Containers.boxLoadU8
 fn tlsf_box_load_u8(pool: &[u8; 4096], offset: usize) -> Option<u8> {
     if offset >= pool.len() { return None; }

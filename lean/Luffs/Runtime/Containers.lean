@@ -441,6 +441,62 @@ def boxNewU128Arrays (storage : List Byte) (offsets sizes : List Nat)
   boxNewArrays Scalar.u128 storage offsets sizes isFree prevFree count second
     first heads next previous value
 
+def boxNewI8Arrays (storage : List Byte) (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (value : BitVec 8) :
+    Option BoxNewU8ArraysResult :=
+  boxNewArrays Scalar.i8 storage offsets sizes isFree prevFree count second
+    first heads next previous value
+
+def boxNewI16Arrays (storage : List Byte) (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (value : BitVec 16) :
+    Option BoxNewU8ArraysResult :=
+  boxNewArrays Scalar.i16 storage offsets sizes isFree prevFree count second
+    first heads next previous value
+
+def boxNewI32Arrays (storage : List Byte) (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (value : BitVec 32) :
+    Option BoxNewU8ArraysResult :=
+  boxNewArrays Scalar.i32 storage offsets sizes isFree prevFree count second
+    first heads next previous value
+
+def boxNewI64Arrays (storage : List Byte) (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (value : BitVec 64) :
+    Option BoxNewU8ArraysResult :=
+  boxNewArrays Scalar.i64 storage offsets sizes isFree prevFree count second
+    first heads next previous value
+
+def boxNewI128Arrays (storage : List Byte) (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (value : BitVec 128) :
+    Option BoxNewU8ArraysResult :=
+  boxNewArrays Scalar.i128 storage offsets sizes isFree prevFree count second
+    first heads next previous value
+
+def boxNewUsizeArrays (storage : List Byte) (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (value : BitVec 64) :
+    Option BoxNewU8ArraysResult :=
+  boxNewArrays Scalar.usize storage offsets sizes isFree prevFree count second
+    first heads next previous value
+
+def boxNewIsizeArrays (storage : List Byte) (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (value : BitVec 64) :
+    Option BoxNewU8ArraysResult :=
+  boxNewArrays Scalar.isize storage offsets sizes isFree prevFree count second
+    first heads next previous value
+
 set_option maxHeartbeats 1200000 in
 theorem boxNewU16Arrays_owns {GF : Iris.BundledGFunctors}
     [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]

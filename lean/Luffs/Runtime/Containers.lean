@@ -2890,6 +2890,85 @@ theorem vecNewPushU16Arrays_owns
       · iassumption
       · iassumption
 
+set_option maxHeartbeats 1200000 in
+/-- End-to-end first push for an allocator-backed `Vec<u32>`. The concrete
+four-byte Luffs store is connected to the generic allocation and ownership
+laws, so no untyped allocation capability is exposed between the operations. -/
+theorem vecNewPushU32Arrays_owns
+    {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
+    [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {blocks : List Block} {state : Bins.State}
+    {storage nextStorage : List Byte}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {heads next previous : List Nat} {capacity nextLen : Nat}
+    {value : BitVec 32} {allocated : Luffs.Runtime.TLSF.AllocateArraysResult}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins { heads, next, previous } state)
+    (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
+    (hnew : vecNewU32Arrays offsets sizes isFree prevFree count second first
+      heads next previous capacity = some allocated)
+    (hpush : vecPushU32 storage allocated.allocatedOffset 0 capacity value =
+      some (nextStorage, nextLen)) :
+    ∃ (hcapacity : 0 < capacity)
+        (hkeyMax : requestKey
+          (Luffs.Containers.Vec.allocationBytes Scalar.u32 capacity) <
+            2 ^ firstLevelCount)
+        (vecResult : Luffs.Containers.Vec.AllocResult)
+        (nextHandle : Luffs.Containers.Vec.Handle),
+      Luffs.Containers.Vec.allocate Scalar.u32 capacity hcapacity
+          { physical := blocks, bins := state } hkeyMax = some vecResult ∧
+      allocated.allocatedOffset = vecResult.handle.block.offset ∧
+      Luffs.Containers.Vec.push vecResult.handle = some nextHandle ∧
+      nextLen = nextHandle.len ∧
+      nextStorage = writeBytes storage vecResult.handle.block.offset
+        (Scalar.u32.encode value) ∧
+      ∀ contents : ContentsMap,
+        CanInsertBytes contents (vecResult.handle.block.region pool).base
+          (Scalar.u32.encode value) →
+        contentsInterp (G := G) contents ∗ Ownership.OwnsFree pool blocks ==∗
+          contentsInterp
+              (insertBytes contents (vecResult.handle.block.region pool).base
+                (Scalar.u32.encode value)) ∗
+            (Luffs.Containers.Vec.Owns Scalar.u32 pool nextHandle [value] ∗
+              Ownership.OwnsFree pool vecResult.state.physical) := by
+  obtain ⟨hcapacity, hkeyMax, vecResult, halloc, hoffset, _, hlen, hcap,
+      howns⟩ := vecNewArrays_refines_vec (GF := GF) (codec := Scalar.u32)
+    hvalid hsecond hfirst hbins hdisjoint hphysical hnew
+  have hcapacityMax : capacity ≤ Luffs.Runtime.TLSF.usizeMax := by
+    obtain ⟨_, hmul, _, _⟩ := vecNewArrays_result hnew
+    simpa [Scalar.u32] using Nat.le_trans hmul
+      (Nat.div_le_self Luffs.Runtime.TLSF.usizeMax 4)
+  have hpush' : vecPushU32 storage vecResult.handle.block.offset
+      vecResult.handle.len vecResult.handle.capacity value =
+      some (nextStorage, nextLen) := by
+    simpa [hoffset, hlen, hcap] using hpush
+  have hcapacityMax' : vecResult.handle.capacity ≤
+      Luffs.Runtime.TLSF.usizeMax := by simpa [hcap] using hcapacityMax
+  obtain ⟨nextHandle, habstractPush, hnextLen, hstorage, hpushOwns⟩ :=
+    vecPushU32_owns (GF := GF) (pool := pool) hcapacityMax' (values := [])
+      hlen.symm hpush'
+  simp only [Luffs.Containers.Vec.encodeValues, List.flatMap_nil,
+    List.length_nil, Nat.add_zero, List.nil_append] at hpushOwns
+  refine ⟨hcapacity, hkeyMax, vecResult, nextHandle, halloc, hoffset,
+    habstractPush, hnextLen, ?_, ?_⟩
+  · simpa [Luffs.Containers.Vec.encodeValues] using hstorage
+  · intro contents hfresh
+    iintro ⟨Hcontents, Hallocator⟩
+    ihave ⟨Hvec, Hallocator⟩ := howns.mp $$ Hallocator
+    icombine Hcontents Hvec as Hpush
+    imod hpushOwns contents hfresh $$ Hpush with ⟨Hcontents, Hvec⟩
+    imodintro
+    isplitl [Hcontents]
+    · iassumption
+    · isplitl [Hvec]
+      · iassumption
+      · iassumption
+
 def vecLastU8 (storage : List Byte) (len : Nat) : Option Byte :=
   if len = 0 then none
   else if len > storage.length then none

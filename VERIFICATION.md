@@ -877,7 +877,12 @@ alias semantics. This removes the one-store restriction that blocked
   concrete runtime transformers, and are then proved equal to the generic
   `Scalar.u32` operations. Consequently `vecPushU32_owns` transfers ownership
   to a Vec with the appended value, while `vecGetU32_owns` retains ownership
-  and exposes the justified four-byte Iris read trace.
+  and exposes the justified four-byte Iris read trace. The composed
+  `vecNewPushU32Arrays_owns` theorem now starts from the concrete TLSF metadata
+  representation, allocates an empty typed Vec, performs the concrete first
+  four-byte push, and ends with `Vec.Owns Scalar.u32 ... [value]` alongside the
+  allocator's remaining free ownership. There is no intermediate theorem that
+  exposes the freshly allocated region without its linear ownership resource.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.
   All four checked-in examples are currently accepted by Lean and compile to

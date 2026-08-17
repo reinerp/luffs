@@ -2974,6 +2974,62 @@ theorem represented_free_block_link_bounds
     exact List.mem_map_of_mem Block.offset hcached
   exact linked_member_bounds (hbins cls).2.2.2.1 hoffsetMem
 
+/-- A free physical block in a completely represented allocator satisfies all
+classification and intrusive-address preflights required before coalescing. -/
+theorem represented_free_block_preflight
+    {pool : Luffs.Memory.Region} {physical : List Block} {state : Bins.State}
+    {second : List (BitVec 32)} {heads next previous : List Nat}
+    {block : Block}
+    (hvalid : Alloc.Valid pool { physical, bins := state })
+    (hsecond : RepresentsSecondBitmap second state)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hmem : block ∈ physical) (hfree : block.free = true) :
+  ∃ cls,
+      classifySizeBin block.bytes = some (encodeSizeClass cls) ∧
+      encodeSizeClass cls < heads.length ∧
+      encodeSizeClass cls / secondLevelCount < second.length ∧
+      block.offset < next.length ∧ block.offset < previous.length := by
+  obtain ⟨_, cached, hcached, hsame⟩ :=
+    hvalid.2.2.2 block hmem hfree
+  obtain ⟨hsize, hmax, _⟩ := member_belongs hvalid.2.1 hcached
+  have hblockSize : 0 < block.bytes := by
+    simpa [hsame.2.1] using hsize
+  have hblockMax : block.bytes < 2 ^ firstLevelCount := by
+    simpa [hsame.2.1] using hmax
+  let cls := sizeClass block.bytes hblockSize hblockMax
+  have hclass : classifySizeBin block.bytes = some (encodeSizeClass cls) :=
+    classifySizeBin_complete hblockSize hblockMax
+  have hindices := represented_class_indices_bounded hsecond hbins cls
+  have hlinks := represented_free_block_link_bounds hvalid hbins hmem hfree
+  exact ⟨cls, hclass, hindices.1, hindices.2, hlinks.1, hlinks.2⟩
+
+theorem represented_coalesced_block_preflight
+    {pool : Luffs.Memory.Region} {physical : List Block} {state : Bins.State}
+    {second : List (BitVec 32)} {heads next previous : List Nat}
+    {left right : Block}
+    (hvalid : Alloc.Valid pool { physical, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hsecond : RepresentsSecondBitmap second state)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hleftMem : left ∈ physical) (hrightMem : right ∈ physical)
+    (hcan : canCoalesce left right) :
+    ∃ cls,
+      classifySizeBin (left.bytes + right.bytes) =
+          some (encodeSizeClass cls) ∧
+      encodeSizeClass cls < heads.length ∧
+      encodeSizeClass cls / secondLevelCount < second.length := by
+  have hpositive : 0 < left.bytes + right.bytes := by
+    have hleftPositive := (hvalid.1.2.2.2 left hleftMem).1
+    omega
+  have hrightEnd := (hvalid.1.2.2.2 right hrightMem).2.1
+  have hmax : left.bytes + right.bytes < 2 ^ firstLevelCount := by
+    rw [hcan.2.2] at hrightEnd
+    omega
+  let cls := sizeClass (left.bytes + right.bytes) hpositive hmax
+  have hclass := classifySizeBin_complete hpositive hmax
+  have hindices := represented_class_indices_bounded hsecond hbins cls
+  exact ⟨cls, hclass, hindices.1, hindices.2⟩
+
 /-- End-to-end bitmap refinement for arbitrary class removal.  The abstract
 free-list operation itself supplies the singleton/non-singleton fact consumed
 by the lowered predecessor/successor test. -/

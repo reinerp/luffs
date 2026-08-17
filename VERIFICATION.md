@@ -374,6 +374,10 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   are bounded by the concrete head and second-level arrays; and physical/bin
   agreement plus intrusive-chain representation proves every free block's
   byte offset is bounded by both link arrays.
+  These facts are now packaged into valid-allocator preflight theorems for
+  each free neighbor and their merged block. The merged-size proof derives its
+  positivity and supported-size bound from physical pool coverage and exact
+  adjacency, then supplies the executable class and concrete metadata bounds.
 - [x] Prove the bounded-step property of bin lookup and local list updates.
   The exact lowered flat-bitmap cost model counts inspected 64-bit words and
   is bounded by the input word count, hence at most four probes for the fixed

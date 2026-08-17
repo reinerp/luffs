@@ -394,6 +394,13 @@ theorem remove_second_complete {state : Metadata} {bin head block : Nat}
     {rest : List Nat} (hrep : RepresentsBin state bin (head :: block :: rest)) :
     ∃ nextState, remove state bin block = some nextState ∧
       nextState.heads = state.heads ∧
+      nextState.next =
+        (state.next.set head (rest.head?.getD state.next.length)).set
+          block state.next.length ∧
+      nextState.previous =
+        (if rest.head?.getD state.next.length < state.previous.length then
+          state.previous.set (rest.head?.getD state.next.length) head
+        else state.previous).set block state.previous.length ∧
       nextState.next[head]? = some (rest.head?.getD state.next.length) ∧
       nextState.next[block]? = some state.next.length ∧
       nextState.previous[block]? = some state.previous.length ∧
@@ -419,7 +426,7 @@ theorem remove_second_complete {state : Metadata} {bin head block : Nat}
     Nat.not_le.mpr hheadNext, hheadNext, hsuccessor, if_true]
   by_cases hsuccessorIn : rest.head?.getD state.next.length < state.previous.length
   · simp only [hsuccessorIn, if_true]
-    refine ⟨_, rfl, rfl, ?_, ?_, ?_, ?_⟩
+    refine ⟨_, rfl, rfl, rfl, rfl, ?_, ?_, ?_, ?_⟩
     · rw [List.getElem?_set_ne (Ne.symm hheadBlock),
         List.getElem?_set_self hheadNext]
     · simp [hblockNext]
@@ -438,7 +445,7 @@ theorem remove_second_complete {state : Metadata} {bin head block : Nat}
         rw [List.getElem?_set_ne (Ne.symm hsuccessorBlock),
           List.getElem?_set_self hsuccessorIn]
   · simp only [hsuccessorIn, if_false]
-    refine ⟨_, rfl, rfl, ?_, ?_, ?_, ?_⟩
+    refine ⟨_, rfl, rfl, rfl, rfl, ?_, ?_, ?_, ?_⟩
     · rw [List.getElem?_set_ne (Ne.symm hheadBlock),
         List.getElem?_set_self hheadNext]
     · simp [hblockNext]

@@ -7867,6 +7867,113 @@ theorem coalesceIfPossibleArraysOutcome_failure_preserves_frame
         previous count ∧ (frame ∗ (emp : PROP) ⊣⊢ frame) := by
   exact ⟨coalesceIfPossibleArraysOutcome_failure_eq_input hfailure, sep_emp⟩
 
+set_option maxHeartbeats 1000000 in
+/-- A conditionally coalescing call on a completely represented valid
+allocator cannot fail. Ineligible pairs return the identity state; eligible
+pairs satisfy every concrete preflight and enter the proved-total commit. -/
+theorem coalesceIfPossibleArraysOutcome_ne_failure_of_valid
+    {pool : Luffs.Memory.Region} {blocks : List Block} {state : Bins.State}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {count left : Nat}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hphysical : RepresentsPhysicalArrays offsets sizes isFree prevFree count blocks)
+    (hsecond : RepresentsSecondBitmap second state)
+    (hbins : RepresentsBins { heads, next, previous } state) :
+    ∀ failed, coalesceIfPossibleArraysOutcome offsets sizes isFree prevFree
+      second first heads next previous count left ≠ .failure failed := by
+  intro failed
+  let input := allocatorArrays offsets sizes isFree prevFree second first heads
+    next previous count
+  have hcapacity : ¬(count > offsets.length ∨ count > sizes.length ∨
+      count > isFree.length ∨ count > prevFree.length) := by
+    omega
+  by_cases hmax : left = usizeMax
+  · simp [coalesceIfPossibleArraysOutcome, input, hcapacity, hmax]
+  let right := left + 1
+  by_cases hrightBound : right ≥ count
+  · simp [coalesceIfPossibleArraysOutcome, input, hcapacity, hmax, right,
+      hrightBound]
+  by_cases hleftFreeFlag : isFree[left]? = some 0
+  · simp [coalesceIfPossibleArraysOutcome, input, hcapacity, hmax, right,
+      hrightBound, hleftFreeFlag]
+  by_cases hrightFreeFlag : isFree[right]? = some 0
+  · simp [coalesceIfPossibleArraysOutcome, input, hcapacity, hmax, right,
+      hrightBound, hleftFreeFlag, hrightFreeFlag]
+  have hleftBound : left < blocks.length := by
+    rw [← hphysical.1]
+    omega
+  have hrightBlocksBound : right < blocks.length := by
+    rw [← hphysical.1]
+    omega
+  let leftBlock := blocks[left]
+  let rightBlock := blocks[right]
+  have hleftGet : blocks[left]? = some leftBlock :=
+    List.getElem?_eq_some_iff.mpr ⟨hleftBound, rfl⟩
+  have hrightGet : blocks[right]? = some rightBlock :=
+    List.getElem?_eq_some_iff.mpr ⟨hrightBlocksBound, rfl⟩
+  have hleftOffset := representsPhysicalArrays_get_offset hphysical hleftGet
+  have hleftSize := representsPhysicalArrays_get_size hphysical hleftGet
+  have hrightOffset := representsPhysicalArrays_get_offset hphysical hrightGet
+  have hrightSize := representsPhysicalArrays_get_size hphysical hrightGet
+  have hleftFlag := representsPhysicalArrays_get_free hphysical hleftGet
+  have hrightFlag := representsPhysicalArrays_get_free hphysical hrightGet
+  have hleftFree : leftBlock.free = true := by
+    by_cases hfree : leftBlock.free
+    · exact hfree
+    · simp [hfree] at hleftFlag
+      exact (hleftFreeFlag hleftFlag).elim
+  have hrightFree : rightBlock.free = true := by
+    by_cases hfree : rightBlock.free
+    · exact hfree
+    · simp [hfree] at hrightFlag
+      exact (hrightFreeFlag hrightFlag).elim
+  by_cases hadjacent : leftBlock.offset + leftBlock.bytes ≠ rightBlock.offset
+  · simp [coalesceIfPossibleArraysOutcome, input, hcapacity, hmax, right,
+      hrightBound, hleftFreeFlag, hrightFreeFlag, hleftOffset, hleftSize,
+      hrightOffset, hrightSize, hadjacent]
+  have hcan : canCoalesce leftBlock rightBlock :=
+    ⟨hleftFree, hrightFree, Classical.byContradiction (fun h => hadjacent h)⟩
+  have hleftMem : leftBlock ∈ blocks :=
+    List.mem_iff_getElem?.2 ⟨left, hleftGet⟩
+  have hrightMem : rightBlock ∈ blocks :=
+    List.mem_iff_getElem?.2 ⟨right, hrightGet⟩
+  obtain ⟨leftClass, hleftClass, hleftBin, hleftFl, hleftNext,
+      hleftPrevious⟩ := represented_free_block_preflight hvalid hsecond hbins
+        hleftMem hleftFree
+  obtain ⟨rightClass, hrightClass, hrightBin, hrightFl, hrightNext,
+      hrightPrevious⟩ := represented_free_block_preflight hvalid hsecond hbins
+        hrightMem hrightFree
+  obtain ⟨mergedClass, hmergedClass, hmergedBin, hmergedFl⟩ :=
+    represented_coalesced_block_preflight hvalid hpoolMax hsecond hbins
+      hleftMem hrightMem hcan
+  have hphysicalTotal : coalescePhysicalArrays offsets sizes isFree prevFree
+      count left ≠ none := by
+    apply coalescePhysicalArrays_ne_none_of_preflight
+    · exact hphysical.2.1
+    · exact hphysical.2.2.1
+    · exact hphysical.2.2.2.1
+    · exact hphysical.2.2.2.2.1
+    · simpa [right] using Nat.lt_of_not_ge hrightBound
+    · exact hleftFreeFlag
+    · simpa [right] using hrightFreeFlag
+    · exact hleftOffset
+    · exact hleftSize
+    · simpa [right] using hrightOffset
+    · simpa [right] using hrightSize
+    · simpa only using Classical.byContradiction (fun h => hadjacent h)
+  have hcommit := commitCoalesceClassOutcome_ne_failure_of_preflight
+    (input := input) (failed := failed) hleftBin hrightBin hmergedBin hleftFl
+      hrightFl hmergedFl hleftNext hleftPrevious hrightNext hrightPrevious
+      hphysicalTotal
+  apply hcommit
+  simpa [coalesceIfPossibleArraysOutcome, input, hcapacity, hmax, right,
+    hrightBound, hleftFreeFlag, hrightFreeFlag, hleftOffset, hleftSize,
+    hrightOffset, hrightSize, hadjacent, hleftClass, hrightClass,
+    hmergedClass, hleftBin, hrightBin, hmergedBin, hleftFl, hrightFl,
+    hmergedFl, hleftNext, hleftPrevious, hrightNext, hrightPrevious]
+
 /-- The full class transaction carries the already-proved physical refinement:
 bin unlink/relink operations cannot change the physical active prefix. -/
 theorem coalesceClassArrays_refines_physical_append

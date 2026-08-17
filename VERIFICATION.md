@@ -378,6 +378,11 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   each free neighbor and their merged block. The merged-size proof derives its
   positivity and supported-size bound from physical pool coverage and exact
   adjacency, then supplies the executable class and concrete metadata bounds.
+  These invariant-level facts are now assembled through the exact source
+  control flow. Capacity, absent-neighbor, allocated-neighbor, lookup, and
+  non-adjacency branches are proved successful identity or ruled out; every
+  eligible pair enters the total commit. Thus conditional coalescing on any
+  completely represented valid allocator is proved incapable of failure.
 - [x] Prove the bounded-step property of bin lookup and local list updates.
   The exact lowered flat-bitmap cost model counts inspected 64-bit words and
   is bounded by the input word count, hence at most four probes for the fixed

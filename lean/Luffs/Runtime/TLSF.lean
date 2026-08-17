@@ -2486,12 +2486,25 @@ theorem removeClassArrays_result
               exact ⟨Nat.lt_of_not_ge hbin, Nat.lt_of_not_ge hfl,
                 Nat.lt_of_not_ge hnext, Nat.lt_of_not_ge hprevious,
                 hmetadata, by simp [hsuccessor]⟩
+
             next hsuccessor =>
               simp only [Option.some.injEq] at hremove
               subst result
               exact ⟨Nat.lt_of_not_ge hbin, Nat.lt_of_not_ge hfl,
                 Nat.lt_of_not_ge hnext, Nat.lt_of_not_ge hprevious,
                 hmetadata, by simp [hsuccessor]⟩
+
+/-- Bounds preflighted by public allocation make remainder insertion total.
+No property of the old head is required: insertion conditionally repairs its
+back-link only when that sentinel-or-offset is representable. -/
+theorem insertClassArrays_ne_none_of_preflight
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {bin block : Nat}
+    (hbin : bin < heads.length) (hfl : bin / 32 < second.length)
+    (hnext : block < next.length) (hprevious : block < previous.length) :
+    insertClassArrays second first heads next previous bin block ≠ none := by
+  simp [insertClassArrays, insert, Nat.not_le.mpr hbin,
+    Nat.not_le.mpr hfl, Nat.not_le.mpr hnext, Nat.not_le.mpr hprevious]
 
 structure ClassCandidateResult where
   block : Nat
@@ -5187,6 +5200,44 @@ theorem allocatePhysicalArrays_result
           hsuitable.1, hsuitable.2.1, rfl,
           Or.inr ⟨hwhole, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩
 
+/-- The public allocator's preflight facts make the physical mutation
+infallible. This is the first post-removal call, so this theorem is required
+for transactional failure rather than merely for successful refinement. -/
+theorem allocatePhysicalArrays_ne_none_of_preflight
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count block request selectedOffset selectedSize : Nat}
+    (haligned : request % alignment = 0) (hcount : 0 < count)
+    (hoffsets : count ≤ offsets.length) (hsizes : count ≤ sizes.length)
+    (hfreeLength : count ≤ isFree.length)
+    (hprevLength : count ≤ prevFree.length) (hblock : block < count)
+    (hoffset : offsets[block]? = some selectedOffset)
+    (hsize : sizes[block]? = some selectedSize)
+    (hfree : isFree[block]? ≠ some 0) (hrequest : 0 < request)
+    (hsuitable : request ≤ selectedSize)
+    (hcapacity : minimumBlockBytes ≤ selectedSize - request →
+      count < offsets.length ∧ count < sizes.length ∧
+        count < isFree.length ∧ count < prevFree.length) :
+    allocatePhysicalArrays offsets sizes isFree prevFree count block request ≠
+      none := by
+  intro hnone
+  have hguard : ¬(request % alignment ≠ 0 ∨ count = 0 ∨
+      count > offsets.length ∨ count > sizes.length ∨
+      count > isFree.length ∨ count > prevFree.length ∨ block ≥ count) := by
+    omega
+  have haccept : ¬(isFree[block]? = some 0 ∨ selectedSize < request ∨
+      request = 0) := by
+    intro hreject
+    rcases hreject with hzero | hsmall | hzero
+    · exact hfree hzero
+    · omega
+    · omega
+  by_cases hsplit : minimumBlockBytes ≤ selectedSize - request
+  · have hcap := hcapacity hsplit
+    simp [allocatePhysicalArrays, hguard, hoffset, hsize, haccept, hsplit,
+      hcap] at hnone
+  · simp [allocatePhysicalArrays, hguard, hoffset, hsize, haccept, hsplit]
+      at hnone
+
 set_option maxHeartbeats 600000 in
 theorem allocatePhysicalArrays_refines
     {blocks : List Block} {block request : Nat} {selected : Block}
@@ -5471,6 +5522,47 @@ structure AllocateArraysResult where
   allocatedBytes : Nat
 deriving DecidableEq, Repr
 
+/-- The concrete metadata visible at an allocation call boundary. Unlike the
+`Option` reference transformer below, this state is retained on failure so a
+transactionality theorem can distinguish preflight rejection from a failure
+after free-list or physical metadata has already been mutated. -/
+structure AllocateMachineState where
+  offsets : List Nat
+  sizes : List Nat
+  isFree : List (Fin 256)
+  prevFree : List (Fin 256)
+  count : Nat
+  second : List (BitVec 32)
+  first : BitVec 64
+  heads : List Nat
+  next : List Nat
+  previous : List Nat
+deriving DecidableEq, Repr
+
+inductive AllocateOutcome where
+  | failure (state : AllocateMachineState)
+  | success (result : AllocateArraysResult)
+deriving DecidableEq, Repr
+
+def allocateInputState (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) : AllocateMachineState :=
+  ⟨offsets, sizes, isFree, prevFree, count, second, first, heads, next,
+    previous⟩
+
+def allocateStateAfterRemove (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count : Nat)
+    (removed : ClassCandidateResult) : AllocateMachineState :=
+  ⟨offsets, sizes, isFree, prevFree, count, removed.second, removed.first,
+    removed.heads, removed.next, removed.previous⟩
+
+def allocateStateAfterPhysical (physical : AllocatePhysicalResult)
+    (removed : ClassCandidateResult) : AllocateMachineState :=
+  ⟨physical.offsets, physical.sizes, physical.isFree, physical.prevFree,
+    physical.count, removed.second, removed.first, removed.heads, removed.next,
+    removed.previous⟩
+
 def finishAllocateArrays (removed : ClassCandidateResult)
     (physical : AllocatePhysicalResult) (split : Prop) [Decidable split]
     (remainderBin remainderOffset : Nat) : Option AllocateArraysResult := do
@@ -5564,15 +5656,94 @@ def allocateArrays (offsets sizes : List Nat)
   let remainderSize := selectedSize - request
   let split := minimumBlockBytes ≤ remainderSize
   let remainderOffset := selectedOffset + request
+  if split ∧ (count ≥ offsets.length ∨ count ≥ sizes.length ∨
+      count ≥ isFree.length ∨ count ≥ prevFree.length) then none
   if split ∧ (remainderOffset ≥ 2 ^ 64 ∨ remainderOffset ≥ next.length ∨
       remainderOffset ≥ previous.length) then none
   let remainderBin ← if split then classifySizeBin remainderSize else some 0
-  if split ∧ remainderBin ≥ heads.length then none
+  if split ∧ (remainderBin ≥ heads.length ∨
+      remainderBin / secondLevelCount ≥ second.length) then none
   let removed ← takeCandidateClassArrays second first heads next previous
     (startBin / secondLevelCount) (startBin % secondLevelCount)
   let physical ← allocatePhysicalArrays offsets sizes isFree prevFree count
     block request
   finishAllocateArrays removed physical split remainderBin remainderOffset
+
+/-- Stateful execution model for the public allocation call. Preflight
+failures return the input state. Failures of a call after candidate removal
+retain the already-mutated metadata, exactly exposing the obligations needed
+to justify the source comment that allocation failure is transactional. -/
+def allocateArraysOutcome (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (request : Nat) : AllocateOutcome :=
+  let input := allocateInputState offsets sizes isFree prevFree count second
+    first heads next previous
+  if request = 0 ∨ request % alignment ≠ 0 then .failure input
+  else match classifyRequestBin request with
+  | none => .failure input
+  | some startBin =>
+    match findNonemptyClassLowered second first
+        (startBin / secondLevelCount) (startBin % secondLevelCount) with
+    | none => .failure input
+    | some foundBin =>
+      if foundBin ≥ heads.length then .failure input
+      else match heads[foundBin]? with
+      | none => .failure input
+      | some selectedOffset =>
+        if selectedOffset ≥ next.length ∨ selectedOffset ≥ previous.length ∨
+            count = 0 ∨ count > offsets.length ∨ count > sizes.length ∨
+            count > isFree.length ∨ count > prevFree.length then .failure input
+        else match findOffsetIndex offsets count selectedOffset with
+        | none => .failure input
+        | some block =>
+          match sizes[block]? with
+          | none => .failure input
+          | some selectedSize =>
+            if isFree[block]? = some 0 ∨ selectedSize < request then
+              .failure input
+            else
+              let remainderSize := selectedSize - request
+              let split := minimumBlockBytes ≤ remainderSize
+              let remainderOffset := selectedOffset + request
+              if split ∧ (count ≥ offsets.length ∨ count ≥ sizes.length ∨
+                  count ≥ isFree.length ∨ count ≥ prevFree.length) then
+                .failure input
+              else if split ∧ (remainderOffset ≥ 2 ^ 64 ∨
+                  remainderOffset ≥ next.length ∨
+                  remainderOffset ≥ previous.length) then .failure input
+              else match if split then classifySizeBin remainderSize else some 0 with
+              | none => .failure input
+              | some remainderBin =>
+                if split ∧ (remainderBin ≥ heads.length ∨
+                    remainderBin / secondLevelCount ≥ second.length) then
+                  .failure input
+                else match takeCandidateClassArrays second first heads next previous
+                    (startBin / secondLevelCount) (startBin % secondLevelCount) with
+                | none => .failure input
+                | some removed =>
+                  match allocatePhysicalArrays offsets sizes isFree prevFree count
+                      block request with
+                  | none => .failure (allocateStateAfterRemove offsets sizes isFree
+                      prevFree count removed)
+                  | some physical =>
+                    if split then
+                      match insertClassArrays removed.second removed.first
+                          removed.heads removed.next removed.previous remainderBin
+                          remainderOffset with
+                      | none => .failure (allocateStateAfterPhysical physical removed)
+                      | some inserted => .success
+                          ⟨physical.offsets, physical.sizes, physical.isFree,
+                            physical.prevFree, physical.count, inserted.second,
+                            inserted.first, inserted.heads, inserted.next,
+                            inserted.previous, physical.allocatedOffset,
+                            physical.allocatedBytes⟩
+                    else .success
+                      ⟨physical.offsets, physical.sizes, physical.isFree,
+                        physical.prevFree, physical.count, removed.second,
+                        removed.first, removed.heads, removed.next,
+                        removed.previous, physical.allocatedOffset,
+                        physical.allocatedBytes⟩
 
 theorem allocateArrays_result
     {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
@@ -5655,7 +5826,9 @@ theorem allocateArrays_result
                 simp only [hrembin, Option.bind_some] at hsuccess
                 by_cases hrembound : remainderBin ≥ heads.length
                 · simp [hrembound] at hsuccess
-                simp only [hrembound, if_false] at hsuccess
+                by_cases hremfl : remainderBin / secondLevelCount ≥ second.length
+                · simp [hrembound, hremfl] at hsuccess
+                simp only [hrembound, hremfl, or_self, if_false] at hsuccess
                 cases htake : takeCandidateClassArrays second first heads next
                     previous (startBin / secondLevelCount)
                       (startBin % secondLevelCount) with
@@ -5671,7 +5844,13 @@ theorem allocateArrays_result
                       selectedSize, remainderBin, removed, physical, rfl,
                       hfind, hhead, hblock, hsize, by simpa [hsplit] using hrembin,
                       htake, hphysical, ?_⟩
-                    simpa [hsplit] using hsuccess
+                    have hfinal :
+                        (count < offsets.length ∧ count < sizes.length ∧
+                          count < isFree.length ∧ count < prevFree.length) ∧
+                        finishAllocateArrays removed physical True remainderBin
+                          (selectedOffset + request) = some result := by
+                      simpa [hsplit] using hsuccess
+                    simpa [hsplit] using hfinal.2
             · simp only [hsplit, if_false, Option.bind_some] at hsuccess
               let remainderBin := 0
               have hrembound : ¬(split ∧ remainderBin ≥ heads.length) := by

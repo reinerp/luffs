@@ -195,8 +195,14 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   hoists every fallible condition of candidate removal, physical splitting,
   and remainder insertion before candidate removal performs the first write;
   the source-shape refinement gate rejects omission of these transactional
-  capacity and link-address checks. The corresponding operational failure
-  theorem at the external allocator API remains.
+  capacity and link-address checks. The Lean array transformer now includes
+  the same split-capacity and remainder first-level-index preflight checks;
+  previously it could hide post-removal failures that the Luffs body had
+  correctly ruled out. A stateful execution model retains concrete metadata
+  on failure and distinguishes the input, post-removal, and post-physical
+  states. Physical mutation and remainder insertion are separately proved
+  infallible from their preflight facts. Composing these with transactional
+  candidate removal into the operational failure theorem remains.
 - [ ] Prove `dealloc`: consuming exactly a live allocation restores it to the
   allocator without leaks, overlap, or double-free.
   The executable deallocation transition now requires the exact returned

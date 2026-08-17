@@ -770,6 +770,10 @@ concurrency are later extensions and are not prerequisites for `Box` and
   `vecNewArrays` codec specialization, so `vecNewArrays_refines_vec` supplies
   the empty exclusive typed Vec capability. A u128 mutation regression rejects
   using an eight-byte element width.
+  Exact-shape recognizers are now lexically bounded to the function they
+  certify. A missing statement can no longer be accidentally satisfied by a
+  matching line in a later TLSF or Vec function; a dedicated regression removes
+  the u32 request assignment while leaving later constructors intact.
   Generic executable push now checks capacity, multiplication, base addition,
   and end-of-element arithmetic in the 64-bit domain before performing the
   codec-wide store. Its storage write is proved to occur exactly after the

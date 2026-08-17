@@ -1353,6 +1353,23 @@ fn parse_tlsf_find_nonempty_bin_models(source: &str) -> Vec<TlsfFindNonemptyBinM
     }
 }
 
+fn lexical_function_body<'a>(lines: &[&'a str], header: usize) -> Vec<&'a str> {
+    let mut depth = lines[header].matches('{').count();
+    depth = depth.saturating_sub(lines[header].matches('}').count());
+    let mut body = Vec::new();
+    for line in &lines[header + 1..] {
+        let opens = line.matches('{').count();
+        let closes = line.matches('}').count();
+        let next_depth = depth.saturating_add(opens).saturating_sub(closes);
+        if next_depth == 0 {
+            break;
+        }
+        body.push(line.trim());
+        depth = next_depth;
+    }
+    body
+}
+
 fn parse_tlsf_take_candidate_models(source: &str) -> Vec<TlsfTakeCandidateModel> {
     let lines = source.lines().collect::<Vec<_>>();
     let Some(index) = lines
@@ -1368,10 +1385,7 @@ fn parse_tlsf_take_candidate_models(source: &str) -> Vec<TlsfTakeCandidateModel>
     else {
         return Vec::new();
     };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
+    let body = lexical_function_body(&lines, index);
     let required = [
         "let bin: usize = tlsf_find_nonempty_bin(nonempty, start_bin)?;",
         "if bin >= heads.len() { return None; }",
@@ -1422,10 +1436,7 @@ fn parse_tlsf_find_nonempty_class_models(source: &str) -> Vec<TlsfFindNonemptyCl
     else {
         return Vec::new();
     };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
+    let body = lexical_function_body(&lines, index);
     let required = [
         "if start_fl >= second_nonempty.len() { return None; }",
         "if start_sl >= 32 { return None; }",
@@ -1477,10 +1488,7 @@ fn parse_tlsf_take_candidate_class_models(source: &str) -> Vec<TlsfTakeCandidate
     else {
         return Vec::new();
     };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
+    let body = lexical_function_body(&lines, index);
     let required = [
         "let bin: usize = tlsf_find_nonempty_class(second_nonempty, first_nonempty, start_fl, start_sl)?;",
         "if bin >= heads.len() { return None; }",
@@ -1536,10 +1544,7 @@ fn parse_tlsf_mark_free_models(source: &str) -> Vec<TlsfMarkFreeModel> {
     else {
         return Vec::new();
     };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
+    let body = lexical_function_body(&lines, index);
     let required = [
         "if block >= offsets.len() { return None; }",
         "if block >= sizes.len() { return None; }",
@@ -1588,10 +1593,7 @@ fn parse_tlsf_classify_size_models(source: &str) -> Vec<TlsfClassifySizeModel> {
     else {
         return Vec::new();
     };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
+    let body = lexical_function_body(&lines, index);
     let required = [
         "if size == 0 { return None; }",
         "if size <= 256 {",
@@ -1644,10 +1646,7 @@ fn parse_tlsf_classify_request_models(source: &str) -> Vec<TlsfClassifySizeModel
     else {
         return Vec::new();
     };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
+    let body = lexical_function_body(&lines, index);
     let required = [
         "if request == 0 { return None; }",
         "if request <= 256 {",
@@ -1699,10 +1698,7 @@ fn parse_tlsf_insert_class_models(source: &str) -> Vec<TlsfInsertClassModel> {
     else {
         return Vec::new();
     };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
+    let body = lexical_function_body(&lines, index);
     let required = [
         "if bin >= heads.len() { return None; }",
         "let fl: usize = bin >> 5;",
@@ -1751,10 +1747,7 @@ fn parse_tlsf_remove_class_models(source: &str) -> Vec<TlsfInsertClassModel> {
     else {
         return Vec::new();
     };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
+    let body = lexical_function_body(&lines, index);
     let required = [
         "if bin >= heads.len() { return None; }",
         "let fl: usize = bin >> 5;",
@@ -1810,10 +1803,7 @@ fn parse_tlsf_initialize_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> 
     else {
         return Vec::new();
     };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
+    let body = lexical_function_body(&lines, index);
     let required = [
         "if offsets.len() == 0 { return None; }",
         "if sizes.len() != offsets.len() { return None; }",
@@ -1874,10 +1864,7 @@ fn parse_tlsf_allocate_physical_models(source: &str) -> Vec<TlsfCoalescePhysical
     else {
         return Vec::new();
     };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
+    let body = lexical_function_body(&lines, index);
     let required = [
         "if request == 0 { return None; }",
         "if request & 7 != 0 { return None; }",
@@ -1941,10 +1928,7 @@ fn parse_tlsf_allocate_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
     else {
         return Vec::new();
     };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
+    let body = lexical_function_body(&lines, index);
     let required = [
         "if request == 0 { return None; }",
         "if request & 7 != 0 { return None; }",
@@ -2114,10 +2098,7 @@ fn parse_tlsf_box_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
         else {
             continue;
         };
-        let body = lines[index + 1..]
-            .iter()
-            .map(|line| line.trim())
-            .collect::<Vec<_>>();
+        let body = lexical_function_body(&lines, index);
         let mut position = 0;
         if required.iter().all(|expected| {
             body[position..]
@@ -2152,10 +2133,7 @@ fn parse_tlsf_box_drop_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
     else {
         return Vec::new();
     };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
+    let body = lexical_function_body(&lines, index);
     let required = [
         "let count: usize = block_count[0];",
         "while block < count {",
@@ -2216,10 +2194,7 @@ fn parse_tlsf_box_drop_ptr_models(source: &str) -> Vec<TlsfCoalescePhysicalModel
         else {
             continue;
         };
-        let body = lines[index + 1..]
-            .iter()
-            .map(|line| line.trim())
-            .collect::<Vec<_>>();
+        let body = lexical_function_body(&lines, index);
         let mut position = 0;
         if required.iter().all(|expected| {
             if let Some(offset) = body[position..].iter().position(|line| line == expected) {
@@ -2308,10 +2283,7 @@ fn parse_tlsf_vec_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
         else {
             continue;
         };
-        let body = lines[index + 1..]
-            .iter()
-            .map(|line| line.trim())
-            .collect::<Vec<_>>();
+        let body = lexical_function_body(&lines, index);
         let mut position = 0;
         if required.iter().all(|expected| {
             if let Some(offset) = body[position..].iter().position(|line| line == expected) {
@@ -2362,10 +2334,7 @@ fn parse_tlsf_vec_push_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
     else {
         return Vec::new();
     };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
+    let body = lexical_function_body(&lines, index);
     let required = [
         "if len >= capacity { return None; }",
         "let index: usize = offset.checked_add(len)?;",
@@ -2407,10 +2376,7 @@ fn parse_tlsf_vec_get_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
     else {
         return Vec::new();
     };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
+    let body = lexical_function_body(&lines, index);
     let required = [
         "if index >= len { return None; }",
         "let address: usize = offset.checked_add(index)?;",
@@ -2450,10 +2416,7 @@ fn parse_tlsf_vec_drop_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
     else {
         return Vec::new();
     };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
+    let body = lexical_function_body(&lines, index);
     let required = [
         "tlsf_box_drop_u8(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, offset)",
     ];
@@ -2499,10 +2462,7 @@ fn parse_tlsf_vec_grow_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
         else {
             continue;
         };
-        let body = lines[index + 1..]
-            .iter()
-            .map(|line| line.trim())
-            .collect::<Vec<_>>();
+        let body = lexical_function_body(&lines, index);
         let mut required = vec![
             "if len > old_capacity { return None; }".to_owned(),
             "if new_capacity <= old_capacity { return None; }".to_owned(),
@@ -2553,10 +2513,7 @@ fn parse_tlsf_deallocate_uncoalesced_models(source: &str) -> Vec<TlsfDeallocateU
     else {
         return Vec::new();
     };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
+    let body = lexical_function_body(&lines, index);
     let required = [
         "if block_count > offsets.len() { return None; }",
         "if block_count > sizes.len() { return None; }",
@@ -2605,10 +2562,7 @@ fn parse_tlsf_coalesce_physical_models(source: &str) -> Vec<TlsfCoalescePhysical
     else {
         return Vec::new();
     };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
+    let body = lexical_function_body(&lines, index);
     let required = [
         "if block_count > offsets.len() { return None; }",
         "if left == usize::MAX { return None; }",
@@ -2658,10 +2612,7 @@ fn parse_tlsf_coalesce_class_models(source: &str) -> Vec<TlsfCoalescePhysicalMod
     else {
         return Vec::new();
     };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
+    let body = lexical_function_body(&lines, index);
     let required = [
         "if block_count > offsets.len() { return None; }",
         "if left == usize::MAX { return None; }",
@@ -2723,10 +2674,7 @@ fn parse_tlsf_coalesce_if_possible_models(source: &str) -> Vec<TlsfCoalescePhysi
     else {
         return Vec::new();
     };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
+    let body = lexical_function_body(&lines, index);
     let required = [
         "if block_count > offsets.len() { return None; }",
         "if block_count > prev_free.len() { return None; }",
@@ -2772,10 +2720,7 @@ fn parse_tlsf_deallocate_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> 
     else {
         return Vec::new();
     };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
+    let body = lexical_function_body(&lines, index);
     let required = [
         "tlsf_deallocate_uncoalesced(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, block, returned_offset, returned_bytes)?;",
         "let after_right: usize = tlsf_coalesce_if_possible(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, block)?;",
@@ -4541,6 +4486,21 @@ mod tests {
                 .tlsf_vec_new_models
                 .iter()
                 .any(|model| model.name == "tlsf_vec_new_u128")
+        );
+    }
+
+    #[test]
+    fn tlsf_shape_recognition_does_not_leak_across_function_boundaries() {
+        let source = include_str!("../stdlib/tlsf.luffs").replace(
+            "let bytes: usize = capacity.checked_mul(4)?;\n    let rounded: usize = bytes.checked_add(7)?;\n    let request: usize = rounded & !7;",
+            "let bytes: usize = capacity.checked_mul(4)?;\n    let rounded: usize = bytes.checked_add(7)?;\n    let omitted_request: usize = rounded & !7;",
+        );
+        let module = parse(&source).unwrap();
+        assert!(
+            !module
+                .tlsf_vec_new_models
+                .iter()
+                .any(|model| model.name == "tlsf_vec_new_u32")
         );
     }
 

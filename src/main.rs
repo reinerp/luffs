@@ -29,6 +29,7 @@ struct Module {
     scalar_models: Vec<ScalarModel>,
     array_models: Vec<ArrayModel>,
     read_models: Vec<ReadModel>,
+    copy_models: Vec<CopyModel>,
 }
 
 #[derive(Debug)]
@@ -62,6 +63,16 @@ struct ReadModel {
     lets: Vec<(String, String)>,
     result: String,
     result_type: String,
+    refines: Option<String>,
+}
+
+#[derive(Debug)]
+struct CopyModel {
+    name: String,
+    source: String,
+    destination: String,
+    len: String,
+    guards: Vec<String>,
     refines: Option<String>,
 }
 
@@ -302,6 +313,7 @@ fn parse(source: &str) -> Result<Module, String> {
         scalar_models: parse_scalar_models(source),
         array_models: parse_array_models(source),
         read_models: parse_read_models(source),
+        copy_models: parse_copy_models(source),
     })
 }
 
@@ -705,6 +717,128 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
     models
 }
 
+fn parse_copy_models(source: &str) -> Vec<CopyModel> {
+    #[derive(Default)]
+    struct Pending {
+        name: String,
+        source: String,
+        destination: String,
+        len: String,
+        guards: Vec<String>,
+        saw_source_slice: bool,
+        saw_destination_slice: bool,
+        saw_copy: bool,
+        saw_result: bool,
+        refines: Option<String>,
+        depth: usize,
+        eligible: bool,
+    }
+
+    let mut models = Vec::new();
+    let mut pending: Option<Pending> = None;
+    let mut next_refinement = None;
+    for raw in source.lines() {
+        let trimmed = raw.trim();
+        if pending.is_none()
+            && let Some(target) = trimmed.strip_prefix("// refines ")
+        {
+            next_refinement = Some(target.trim().to_owned());
+            continue;
+        }
+        if pending.is_none() && trimmed.starts_with("fn ") {
+            let Some(open) = trimmed.find('(') else {
+                continue;
+            };
+            let Some(close) = trimmed[open + 1..].find(')').map(|n| open + 1 + n) else {
+                continue;
+            };
+            if !trimmed[close + 1..].contains("-> Option<()>") {
+                next_refinement = None;
+                continue;
+            }
+            let params = trimmed[open + 1..close]
+                .split(',')
+                .filter_map(|param| param.split_once(':'))
+                .map(|(name, ty)| (name.trim(), ty.trim()))
+                .collect::<Vec<_>>();
+            let source = params.iter().find(|(_, ty)| *ty == "&[u8]");
+            let destination = params.iter().find(|(_, ty)| *ty == "&mut [u8]");
+            let len = params.iter().find(|(_, ty)| *ty == "usize");
+            let (Some(source), Some(destination), Some(len)) = (source, destination, len) else {
+                next_refinement = None;
+                continue;
+            };
+            pending = Some(Pending {
+                name: trimmed[3..open].trim().to_owned(),
+                source: source.0.to_owned(),
+                destination: destination.0.to_owned(),
+                len: lean_ident(len.0),
+                refines: next_refinement.take(),
+                depth: 1,
+                eligible: params.len() == 3,
+                ..Pending::default()
+            });
+            continue;
+        }
+
+        let Some(model) = pending.as_mut() else {
+            continue;
+        };
+        if trimmed.starts_with("//") || trimmed.is_empty() {
+            continue;
+        }
+        if let Some(condition) = control_condition(trimmed, "if")
+            && trimmed.contains("{ return None; }")
+        {
+            let expression = to_lean_expr(condition)
+                .replace(
+                    &format!("{}_len", model.source),
+                    &format!("{}.length", model.source),
+                )
+                .replace(
+                    &format!("{}_len", model.destination),
+                    &format!("{}.length", model.destination),
+                );
+            model.guards.push(expression);
+        } else if trimmed.starts_with("let from: &[u8] = ") {
+            model.saw_source_slice =
+                trimmed.contains(&format!("{}[0..<{}]", model.source, model.len));
+        } else if trimmed.starts_with("let to: &mut [u8] = ") {
+            model.saw_destination_slice =
+                trimmed.contains(&format!("{}[0..<{}]", model.destination, model.len));
+        } else if trimmed == "to.copy_from_slice(from);" {
+            model.saw_copy = true;
+        } else if trimmed == "Some(())" {
+            model.saw_result = true;
+        } else if trimmed != "}" {
+            model.eligible = false;
+        }
+
+        let opens = raw.bytes().filter(|byte| *byte == b'{').count();
+        let closes = raw.bytes().filter(|byte| *byte == b'}').count();
+        model.depth = model.depth.saturating_add(opens).saturating_sub(closes);
+        if model.depth == 0 {
+            let model = pending.take().expect("pending model exists");
+            if model.eligible
+                && model.saw_source_slice
+                && model.saw_destination_slice
+                && model.saw_copy
+                && model.saw_result
+            {
+                models.push(CopyModel {
+                    name: model.name,
+                    source: model.source,
+                    destination: model.destination,
+                    len: model.len,
+                    guards: model.guards,
+                    refines: model.refines,
+                });
+            }
+        }
+    }
+    models
+}
+
 fn logical_lines(source: &str) -> Result<Vec<(usize, String)>, String> {
     let lines: Vec<&str> = source.lines().collect();
     let mut result = Vec::new();
@@ -990,6 +1124,10 @@ fn lean(module: &Module) -> String {
             .read_models
             .iter()
             .any(|model| model.refines.is_some())
+        || module
+            .copy_models
+            .iter()
+            .any(|model| model.refines.is_some())
     {
         out.push_str("import Luffs.Runtime.Containers\n");
     }
@@ -1147,6 +1285,32 @@ fn lean(module: &Module) -> String {
                     .collect::<Vec<_>>()
                     .join(" "),
                 format!("{}_model", model.name),
+                target
+            ));
+        }
+    }
+    for model in &module.copy_models {
+        out.push_str(&format!(
+            "def {}_model ({} : List (Fin 256)) ({} : List (Fin 256)) ({} : Nat) : Option (List (Fin 256)) :=\n  ",
+            model.name, model.source, model.destination, model.len
+        ));
+        for guard in &model.guards {
+            out.push_str(&format!("if {guard} then none else\n  "));
+        }
+        out.push_str(&format!(
+            "some ({}.take {} ++ {}.drop {})\n\n",
+            model.source, model.len, model.destination, model.len
+        ));
+        if let Some(target) = &model.refines {
+            out.push_str(&format!(
+                "theorem {}_refines : {}_model = {} := by\n  funext {} {} {}\n  simp [{}_model, {}]\n\n",
+                model.name,
+                model.name,
+                target,
+                model.source,
+                model.destination,
+                model.len,
+                model.name,
                 target
             ));
         }
@@ -1425,5 +1589,19 @@ mod tests {
         let generated = lean(&m);
         assert!(generated.contains("(end_ : Nat) : Option (List (Fin 256))"));
         assert!(generated.contains("some ((storage.drop begin).take (end_ - begin))"));
+    }
+
+    #[test]
+    fn emits_copy_from_slice_state_semantics() {
+        let m = parse(
+            "// refines Luffs.Runtime.Containers.vecCopyGrowU8\nfn copy(source: &[u8], destination: &mut [u8], len: usize) -> Option<()> {\nif len > source.len() { return None; }\nif len > destination.len() { return None; }\nlet from: &[u8] = source[0..<len];\nlet to: &mut [u8] = destination[0..<len];\nto.copy_from_slice(from);\nSome(())\n}",
+        )
+        .unwrap();
+        assert_eq!(m.copy_models.len(), 1);
+        let generated = lean(&m);
+        assert!(generated.contains("some (source.take len ++ destination.drop len)"));
+        assert!(generated.contains(
+            "theorem copy_refines : copy_model = Luffs.Runtime.Containers.vecCopyGrowU8"
+        ));
     }
 }

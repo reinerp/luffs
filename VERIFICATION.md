@@ -251,6 +251,10 @@ bodies; successful Vec reads are proved inside the logical length and backing
 storage. Shared and mutable begin/end slice functions now also generate their
 exact logical sublist semantics and refine `vecSliceU8`; the generic Iris Vec
 theorems separately transfer shared or exclusive ownership for that range.
+Growth copying now has source-derived two-buffer semantics as well: the first
+`len` destination bytes become the source prefix while the destination suffix
+is unchanged. Lean checks this generated transition against `vecCopyGrowU8`,
+whose result theorem proves both bounds and destination-length preservation.
 `vec_push_u8` is translated
 from its two early-return guards and mutation into executable Lean semantics,
 then checked extensionally against `vecPushU8`; its result theorem connects that

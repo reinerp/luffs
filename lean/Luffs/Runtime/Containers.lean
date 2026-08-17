@@ -46,9 +46,9 @@ def vecSliceU8 (storage : List Byte) (len begin end_ : Nat) :
 
 def vecCopyGrowU8 (source destination : List Byte) (len : Nat) :
     Option (List Byte) :=
-  if len ≤ source.length ∧ len ≤ destination.length then
-    some (source.take len ++ destination.drop len)
-  else none
+  if len > source.length then none
+  else if len > destination.length then none
+  else some (source.take len ++ destination.drop len)
 
 theorem boxLoadU8_result {storage : List Byte} {begin : Nat} {value : Byte}
     (hload : boxLoadU8 storage begin = some value) :
@@ -157,13 +157,18 @@ theorem vecCopyGrowU8_result {source destination next : List Byte} {len : Nat}
       next.length = destination.length := by
   unfold vecCopyGrowU8 at hcopy
   split at hcopy
-  next hbounds =>
-    simp only [Option.some.injEq] at hcopy
-    subst next
-    refine ⟨hbounds.1, hbounds.2, rfl, ?_⟩
-    rw [List.length_append, List.length_take, List.length_drop,
-      Nat.min_eq_left hbounds.1]
-    omega
   next => contradiction
+  next hsource =>
+    split at hcopy
+    next => contradiction
+    next hdestination =>
+      simp only [Option.some.injEq] at hcopy
+      subst next
+      have hsource' := Nat.le_of_not_gt hsource
+      have hdestination' := Nat.le_of_not_gt hdestination
+      refine ⟨hsource', hdestination', rfl, ?_⟩
+      rw [List.length_append, List.length_take, List.length_drop,
+        Nat.min_eq_left hsource']
+      omega
 
 end Luffs.Runtime.Containers

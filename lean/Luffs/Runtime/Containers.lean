@@ -191,6 +191,44 @@ theorem boxNewArrays_owns {GF : Iris.BundledGFunctors}
     · iassumption
     · iassumption
 
+def boxStore {α : Type} (codec : Codec α) (storage : List Byte)
+    (offset : Nat) (value : α) : Option (List Byte) :=
+  if offset + codec.size > storage.length then none
+  else some (writeBytes storage offset (codec.encode value))
+
+theorem boxStore_result {α : Type} {codec : Codec α} {storage : List Byte}
+    {offset : Nat} {value : α} {result : List Byte}
+    (hsuccess : boxStore codec storage offset value = some result) :
+    offset + codec.size ≤ storage.length ∧
+      result = writeBytes storage offset (codec.encode value) := by
+  unfold boxStore at hsuccess
+  split at hsuccess
+  next => contradiction
+  next hbound =>
+    exact ⟨Nat.le_of_not_gt hbound, Option.some.inj hsuccess |>.symm⟩
+
+def boxLoad {α : Type} (codec : Codec α) (storage : List Byte)
+    (offset : Nat) : Option α :=
+  if offset + codec.size > storage.length then none
+  else codec.decode ((storage.drop offset).take codec.size)
+
+theorem boxLoad_result {α : Type} {codec : Codec α} {storage : List Byte}
+    {offset : Nat} {value : α}
+    (hsuccess : boxLoad codec storage offset = some value) :
+    offset + codec.size ≤ storage.length ∧
+      codec.decode ((storage.drop offset).take codec.size) = some value := by
+  unfold boxLoad at hsuccess
+  split at hsuccess
+  next => contradiction
+  next hbound => exact ⟨Nat.le_of_not_gt hbound, hsuccess⟩
+
+theorem boxLoad_of_encoded {α : Type} (codec : Codec α)
+    (storage : List Byte) (offset : Nat) (value : α)
+    (hbound : offset + codec.size ≤ storage.length)
+    (hencoded : (storage.drop offset).take codec.size = codec.encode value) :
+    boxLoad codec storage offset = some value := by
+  simp [boxLoad, Nat.not_lt_of_ge hbound, hencoded, codec.decode_encode]
+
 /-- Exact state transformer for allocator-backed `tlsf_box_new_u8`. The
 allocator transition precedes initialization of the returned pool byte. -/
 def boxNewU8Arrays (storage : List Byte) (offsets sizes : List Nat)
@@ -1434,6 +1472,26 @@ def boxLoadU8 (storage : List Byte) (begin : Nat) : Option Byte :=
 def boxStoreU8 (storage : List Byte) (begin : Nat) (value : Byte) :
     Option (List Byte) :=
   if begin ≥ storage.length then none else some (storage.set begin value)
+
+theorem boxStoreU8_eq_generic (storage : List Byte) (begin : Nat)
+    (value : Byte) :
+    boxStoreU8 storage begin value =
+      boxStore Scalar.u8 storage begin (Scalar.bv8OfByte value) := by
+  by_cases hbound : begin ≥ storage.length
+  · have hgeneric : begin + Scalar.u8.size > storage.length := by
+      simp only [Scalar.u8]
+      omega
+    simp [boxStoreU8, boxStore, hbound, hgeneric]
+  · have hlt : begin < storage.length := Nat.lt_of_not_ge hbound
+    have hgeneric : ¬begin + Scalar.u8.size > storage.length := by
+      simp only [Scalar.u8]
+      omega
+    have hwrite := writeBytes_singleton_eq_set storage begin value hlt
+    simp [boxStoreU8, boxStore, hbound, hgeneric, writeBytes, Scalar.u8,
+      Scalar.encode8, Scalar.bv8OfByte, Scalar.byteOfBV8]
+    exact ⟨by omega, by
+      simpa only [List.cons_append, List.nil_append, List.append_assoc] using
+        hwrite.symm⟩
 
 def vecPushU8 (storage : List Byte) (len capacity : Nat) (value : Byte) :
     Option (List Byte × Nat) :=

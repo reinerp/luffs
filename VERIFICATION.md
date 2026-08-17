@@ -481,6 +481,10 @@ concurrency are later extensions and are not prerequisites for `Box` and
   item is complete. The current `u8` constructor is now proved equal to the
   generic constructor specialized with `Scalar.u8`, including equivalence of
   its one-byte bounds check and `List.set` update to the generic range write.
+  Codec-generic executable load/store semantics now checks the whole encoded
+  range; successful loads expose the exact decoded byte slice, and an exact
+  codec encoding decodes to the original value. The existing `u8` store model
+  is proved equal to the generic `Scalar.u8` store specialization.
 - [ ] `Vec<T>`: invariant `len <= capacity`, initialized prefix ownership,
   spare-capacity ownership, checked layout arithmetic, growth without loss or
   double-drop, `push`, `pop`, indexing, shared/mutable slices, and drop.

@@ -40,8 +40,13 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   unchanged/written memory postconditions. Compiler-generated control flow
   still needs to compose these primitive WPs before this end-to-end item can
   be checked off.
-- [ ] Derive shared borrows from fractional ownership and mutable borrows from
+- [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
+  Byte-region GhostMap fragments are fractional: shared borrows can recursively
+  split, while a mutable borrow is the full fraction. Ending a child lifetime
+  rejoins its two halves and restores full mutable ownership. Full ownership is
+  proved incompatible with every overlapping nonzero shared fraction, and
+  fractional ownership entails load safety and the primitive load WP.
 
 ## TLSF
 

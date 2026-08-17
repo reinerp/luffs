@@ -261,6 +261,18 @@ theorem owned_load_safe {GF : BundledGFunctors} [G : ByteRegionGS GF]
   ipureintro
   exact (load_safe_iff mem p).2 ((hrep p).1 hlookup)
 
+/-- Fractional ownership suffices for reads. Unlike `owned_store_safe`, this
+rule applies to arbitrarily nested shared reborrows. -/
+theorem shared_load_safe {GF : BundledGFunctors} [G : ByteRegionGS GF]
+    {allocated : ByteMap Unit} {mem : Memory} {r : Region} {p : Addr}
+    (q : Qp) (hrep : MemoryRep allocated mem) (hp : r.contains p) :
+    byteHeapInterp (G := G) allocated ∗ SharedBorrow q r ⊢
+      ⌜(Prim.load p).safe mem⌝ := by
+  iintro H
+  ihave %hlookup := byteHeapInterp_lookup_frac (G := G) q hp $$ H
+  ipureintro
+  exact (load_safe_iff mem p).2 ((hrep p).1 hlookup)
+
 /-- Adequacy for stores follows from the same exclusive region capability. -/
 theorem owned_store_safe {GF : BundledGFunctors} [G : ByteRegionGS GF]
     {allocated : ByteMap Unit} {mem : Memory} {r : Region} {p : Addr}
@@ -404,6 +416,25 @@ theorem owned_load_wp {GF : BundledGFunctors} [G : ByteRegionGS GF]
       Program.wp (Program.single (.load p)) mem (fun final => final = mem) := by
   iintro H
   ihave %hsafe := owned_load_safe (G := G) hrep hp $$ H
+  unfold Program.wp
+  ipureintro
+  refine ⟨(Program.single_safe_iff (.load p) mem).2 hsafe, ?_⟩
+  intro final hexec
+  cases hexec with
+  | call hstep hdone =>
+      cases hstep
+      cases hdone
+      rfl
+
+/-- Shared-borrow WP rule. Fractional ownership is preserved by the premise,
+so siblings may read concurrently and later recombine to restore `&mut`. -/
+theorem shared_load_wp {GF : BundledGFunctors} [G : ByteRegionGS GF]
+    {allocated : ByteMap Unit} {mem : Memory} {r : Region} {p : Addr}
+    (q : Qp) (hrep : MemoryRep allocated mem) (hp : r.contains p) :
+    byteHeapInterp (G := G) allocated ∗ SharedBorrow q r ⊢
+      Program.wp (Program.single (.load p)) mem (fun final => final = mem) := by
+  iintro H
+  ihave %hsafe := shared_load_safe (G := G) q hrep hp $$ H
   unfold Program.wp
   ipureintro
   refine ⟨(Program.single_safe_iff (.load p) mem).2 hsafe, ?_⟩

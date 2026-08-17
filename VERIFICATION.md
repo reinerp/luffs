@@ -251,7 +251,16 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   only regroup that ownership. This proof also found and fixed an abstract
   zero-index mismatch: like the Luffs implementation, the specification now
   skips the nonexistent left-neighbor pass instead of repeating index zero.
-  Pointer-to-offset validation belongs at the mmap-backed pool boundary.
+  Luffs now also initializes a freshly mapped pool: it clears every fixed
+  header, intrusive-link, and bitmap slot, constructs one free header spanning
+  the pool, classifies it, and inserts it into the two-level bin index. A
+  source-shape regression rejects incomplete clearing. Lean proves the result
+  represents the singleton physical layout and valid bin state, establishes
+  the complete allocator invariant for a positive aligned supported-size
+  `mmap` region, and uses Iris-Lean to identify ownership of that initial free
+  block with the exclusive byte capability returned by `mmap`.
+  Pointer-to-offset validation for the public pointer API still belongs at the
+  mmap-backed pool boundary.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.
 
 The first concrete `stdlib/tlsf.luffs` runtime layer now implements bounded

@@ -40,6 +40,7 @@ struct Module {
     tlsf_mark_free_models: Vec<TlsfMarkFreeModel>,
     tlsf_classify_size_models: Vec<TlsfClassifySizeModel>,
     tlsf_insert_class_models: Vec<TlsfInsertClassModel>,
+    tlsf_initialize_models: Vec<TlsfCoalescePhysicalModel>,
     tlsf_remove_class_models: Vec<TlsfInsertClassModel>,
     tlsf_deallocate_uncoalesced_models: Vec<TlsfDeallocateUncoalescedModel>,
     tlsf_coalesce_physical_models: Vec<TlsfCoalescePhysicalModel>,
@@ -406,6 +407,7 @@ fn parse(source: &str) -> Result<Module, String> {
         tlsf_mark_free_models: parse_tlsf_mark_free_models(source),
         tlsf_classify_size_models: parse_tlsf_classify_size_models(source),
         tlsf_insert_class_models: parse_tlsf_insert_class_models(source),
+        tlsf_initialize_models: parse_tlsf_initialize_models(source),
         tlsf_remove_class_models: parse_tlsf_remove_class_models(source),
         tlsf_deallocate_uncoalesced_models: parse_tlsf_deallocate_uncoalesced_models(source),
         tlsf_coalesce_physical_models: parse_tlsf_coalesce_physical_models(source),
@@ -1554,6 +1556,69 @@ fn parse_tlsf_remove_class_models(source: &str) -> Vec<TlsfInsertClassModel> {
     }
 }
 
+fn parse_tlsf_initialize_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
+    let lines = source.lines().collect::<Vec<_>>();
+    let Some(index) = lines
+        .iter()
+        .position(|line| line.trim().starts_with("fn tlsf_initialize("))
+    else {
+        return Vec::new();
+    };
+    let Some(target) = index
+        .checked_sub(1)
+        .and_then(|i| lines.get(i))
+        .and_then(|line| line.trim().strip_prefix("// refines "))
+    else {
+        return Vec::new();
+    };
+    let body = lines[index + 1..]
+        .iter()
+        .map(|line| line.trim())
+        .collect::<Vec<_>>();
+    let required = [
+        "if offsets.len() == 0 { return None; }",
+        "if sizes.len() != offsets.len() { return None; }",
+        "if is_free.len() != offsets.len() { return None; }",
+        "if prev_free.len() != offsets.len() { return None; }",
+        "if next.len() != offsets.len() { return None; }",
+        "if previous.len() != offsets.len() { return None; }",
+        "if first_nonempty.len() == 0 { return None; }",
+        "let bin: usize = tlsf_classify_size(pool_bytes)?;",
+        "while cursor < offsets.len() {",
+        "offsets[cursor] = 0;",
+        "sizes[cursor] = 0;",
+        "is_free[cursor] = 0;",
+        "prev_free[cursor] = 0;",
+        "next[cursor] = sentinel;",
+        "previous[cursor] = sentinel;",
+        "while word < second_nonempty.len() {",
+        "second_nonempty[word] = 0;",
+        "first_nonempty[0] = 0;",
+        "while class_index < heads.len() {",
+        "heads[class_index] = sentinel;",
+        "sizes[0] = pool_bytes;",
+        "is_free[0] = 1;",
+        "tlsf_insert_class(second_nonempty, first_nonempty, heads, next, previous, bin, 0)?;",
+        "Some(1)",
+    ];
+    let mut position = 0;
+    if required.iter().all(|expected| {
+        if let Some(offset) = body[position..].iter().position(|line| line == expected) {
+            position += offset + 1;
+            true
+        } else {
+            false
+        }
+    }) {
+        vec![TlsfCoalescePhysicalModel {
+            name: "tlsf_initialize".to_owned(),
+            refines: target.trim().to_owned(),
+        }]
+    } else {
+        Vec::new()
+    }
+}
+
 fn parse_tlsf_deallocate_uncoalesced_models(source: &str) -> Vec<TlsfDeallocateUncoalescedModel> {
     let lines = source.lines().collect::<Vec<_>>();
     let Some(index) = lines
@@ -2481,6 +2546,16 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
             model.name, model.name, model.refines
         ));
     }
+    for model in &module.tlsf_initialize_models {
+        out.push_str(&format!(
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (pool_bytes : Nat) : Option Luffs.Runtime.TLSF.InitializeArraysResult :=\n  {} offsets sizes is_free prev_free second first heads next previous pool_bytes\n\n",
+            model.name, model.refines
+        ));
+        out.push_str(&format!(
+            "theorem {}_refines : {}_model = {} := by rfl\n\n",
+            model.name, model.name, model.refines
+        ));
+    }
     for model in &module.tlsf_deallocate_uncoalesced_models {
         out.push_str(&format!(
             "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (count block returned_offset returned_bytes : Nat) : Option Luffs.Runtime.TLSF.DeallocateUncoalescedResult :=\n  {} offsets sizes is_free prev_free second first heads next previous count block returned_offset returned_bytes\n\n",
@@ -2727,6 +2802,7 @@ mod tests {
         assert_eq!(m.tlsf_mark_free_models.len(), 1);
         assert_eq!(m.tlsf_classify_size_models.len(), 1);
         assert_eq!(m.tlsf_insert_class_models.len(), 1);
+        assert_eq!(m.tlsf_initialize_models.len(), 1);
         assert_eq!(m.tlsf_remove_class_models.len(), 1);
         assert_eq!(m.tlsf_deallocate_uncoalesced_models.len(), 1);
         assert_eq!(m.tlsf_coalesce_physical_models.len(), 1);
@@ -2763,6 +2839,9 @@ mod tests {
             "theorem tlsf_insert_class_refines : tlsf_insert_class_model = Luffs.Runtime.TLSF.insertClassArrays"
         ));
         assert!(generated.contains(
+            "theorem tlsf_initialize_refines : tlsf_initialize_model = Luffs.Runtime.TLSF.initializeArrays"
+        ));
+        assert!(generated.contains(
             "theorem tlsf_remove_class_refines : tlsf_remove_class_model = Luffs.Runtime.TLSF.removeClassArrays"
         ));
         assert!(generated.contains(
@@ -2788,6 +2867,14 @@ mod tests {
             .replace("let left: usize = block - 1;", "let left: usize = block;");
         let m = parse(&source).unwrap();
         assert!(m.tlsf_deallocate_models.is_empty());
+    }
+
+    #[test]
+    fn tlsf_initializer_refinement_rejects_uncleared_sizes() {
+        let source = include_str!("../stdlib/tlsf.luffs")
+            .replace("sizes[cursor] = 0;", "sizes[cursor] = pool_bytes;");
+        let m = parse(&source).unwrap();
+        assert!(m.tlsf_initialize_models.is_empty());
     }
 
     #[test]

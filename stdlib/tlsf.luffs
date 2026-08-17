@@ -65,6 +65,53 @@ fn tlsf_insert_class(second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64;
     Some(())
 }
 
+// Initialize all fixed metadata for one freshly mmap-backed pool. The mmap
+// itself is the trusted platform boundary; this function constructs and bins
+// the allocator's single initial free block.
+// refines Luffs.Runtime.TLSF.initializeArrays
+fn tlsf_initialize(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], pool_bytes: usize) -> Option<usize> {
+    if offsets.len() == 0 { return None; }
+    if sizes.len() != offsets.len() { return None; }
+    if is_free.len() != offsets.len() { return None; }
+    if prev_free.len() != offsets.len() { return None; }
+    if next.len() != offsets.len() { return None; }
+    if previous.len() != offsets.len() { return None; }
+    if first_nonempty.len() == 0 { return None; }
+    let bin: usize = tlsf_classify_size(pool_bytes)?;
+    let sentinel: usize = next.len();
+
+    let mut cursor: usize = 0;
+    while cursor < offsets.len() {
+        offsets[cursor] = 0;
+        sizes[cursor] = 0;
+        is_free[cursor] = 0;
+        prev_free[cursor] = 0;
+        next[cursor] = sentinel;
+        previous[cursor] = sentinel;
+        cursor = cursor + 1;
+    }
+
+    let mut word: usize = 0;
+    while word < second_nonempty.len() {
+        second_nonempty[word] = 0;
+        word = word + 1;
+    }
+    first_nonempty[0] = 0;
+
+    let mut class_index: usize = 0;
+    while class_index < heads.len() {
+        heads[class_index] = sentinel;
+        class_index = class_index + 1;
+    }
+
+    offsets[0] = 0;
+    sizes[0] = pool_bytes;
+    is_free[0] = 1;
+    prev_free[0] = 0;
+    tlsf_insert_class(second_nonempty, first_nonempty, heads, next, previous, bin, 0)?;
+    Some(1)
+}
+
 // refines Luffs.Runtime.TLSF.removeArrays
 fn tlsf_remove(heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], bin: usize, block: usize) -> Option<()> {
     if bin >= heads.len() { return None; }

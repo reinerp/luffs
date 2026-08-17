@@ -4666,7 +4666,299 @@ def coalesceClassArrays (offsets sizes : List Nat)
     isFree := physical.isFree, prevFree := physical.prevFree,
     count := physical.count, second := inserted.second, first := inserted.first,
     heads := inserted.heads, next := inserted.next,
-    previous := inserted.previous }
+      previous := inserted.previous }
+
+structure InitializeArraysResult where
+  offsets : List Nat
+  sizes : List Nat
+  isFree : List (Fin 256)
+  prevFree : List (Fin 256)
+  count : Nat
+  second : List (BitVec 32)
+  first : BitVec 64
+  heads : List Nat
+  next : List Nat
+  previous : List Nat
+deriving DecidableEq, Repr
+
+/-- Exact pure state transformer for `tlsf_initialize`. All fixed-capacity
+metadata is reset before the single mmap-backed free block is inserted. -/
+def initializeArrays (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (second : List (BitVec 32))
+    (first : BitVec 64) (heads next previous : List Nat)
+    (poolBytes : Nat) : Option InitializeArraysResult := do
+  if offsets.length = 0 ∨ sizes.length ≠ offsets.length ∨
+      isFree.length ≠ offsets.length ∨ prevFree.length ≠ offsets.length ∨
+      next.length ≠ offsets.length ∨ previous.length ≠ offsets.length then none
+  else
+    let bin ← classifySizeBin poolBytes
+    let sentinel := next.length
+    let clearedOffsets := List.replicate offsets.length 0
+    let clearedSizes := (List.replicate sizes.length 0).set 0 poolBytes
+    let clearedFree := (List.replicate isFree.length (0 : Fin 256)).set 0 1
+    let clearedPrevFree := List.replicate prevFree.length (0 : Fin 256)
+    let clearedSecond := List.replicate second.length (0 : BitVec 32)
+    let clearedHeads := List.replicate heads.length sentinel
+    let clearedNext := List.replicate next.length sentinel
+    let clearedPrevious := List.replicate previous.length sentinel
+    let inserted ← insertClassArrays clearedSecond 0 clearedHeads clearedNext
+      clearedPrevious bin 0
+    pure {
+      offsets := clearedOffsets
+      sizes := clearedSizes
+      isFree := clearedFree
+      prevFree := clearedPrevFree
+      count := 1
+      second := inserted.second
+      first := inserted.first
+      heads := inserted.heads
+      next := inserted.next
+      previous := inserted.previous }
+
+def emptyBins : Bins.State :=
+  Bins.State.fromChains fun _ => []
+
+def initialBlock (poolBytes : Nat) : Block := {
+  offset := 0
+  bytes := poolBytes
+  free := true
+  prevFree := false
+  prevFreeLink := none
+  nextFreeLink := none }
+
+theorem emptyBins_valid : Bins.Valid emptyBins := by
+  apply Bins.fromChains_valid
+  constructor
+  · intro cls
+    exact ⟨by simp [FreeList.linkedFrom], by simp⟩
+  · simp [Bins.Belongs]
+
+theorem emptyBins_offsets_disjoint : BinsOffsetsDisjoint emptyBins := by
+  simp [BinsOffsetsDisjoint, emptyBins, Bins.State.fromChains]
+
+theorem clearedSecond_represents_emptyBins :
+    RepresentsSecondBitmap (List.replicate firstLevelCount (0 : BitVec 32))
+      emptyBins := by
+  constructor
+  · simp
+  · intro cls
+    have hword : (List.replicate firstLevelCount (0 : BitVec 32))[cls.fl.val]? =
+        some 0 := List.getElem?_replicate_of_lt cls.fl.isLt
+    have hbit := classBits_get hword cls.sl.isLt
+    simpa [secondLevelCount, emptyBins, Bins.State.fromChains] using hbit
+
+theorem clearedFirst_represents_clearedSecond :
+    FirstBitmapRep 0
+      (List.replicate firstLevelCount (0 : BitVec 32)) := by
+  simp [FirstBitmapRep, firstLevelCount, wordBits, secondNonzeroBits]
+
+set_option maxRecDepth 10000 in
+theorem clearedMetadata_represents_emptyBins :
+    RepresentsBins {
+      heads := List.replicate 2048 4096
+      next := List.replicate 4096 4096
+      previous := List.replicate 4096 4096 } emptyBins := by
+  intro cls
+  have hbin : cls.fl.val * secondLevelCount + cls.sl.val < 2048 := by
+    have := cls.fl.isLt
+    have := cls.sl.isLt
+    simp only [firstLevelCount, secondLevelCount] at *
+    omega
+  change RepresentsBin {
+    heads := List.replicate 2048 4096
+    next := List.replicate 4096 4096
+    previous := List.replicate 4096 4096 }
+    (cls.fl.val * secondLevelCount + cls.sl.val) []
+  refine ⟨hbin, by simp only [List.length_replicate], ?_, trivial,
+    List.nodup_nil⟩
+  rw [List.getElem?_replicate_of_lt hbin]
+  rfl
+
+theorem initializeArrays_result
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {poolBytes : Nat}
+    {result : InitializeArraysResult}
+    (hsuccess : initializeArrays offsets sizes isFree prevFree second first
+      heads next previous poolBytes = some result) :
+    ∃ bin inserted,
+      classifySizeBin poolBytes = some bin ∧
+      insertClassArrays (List.replicate second.length (0 : BitVec 32)) 0
+          (List.replicate heads.length next.length)
+          (List.replicate next.length next.length)
+          (List.replicate previous.length next.length) bin 0 = some inserted ∧
+      result.offsets = List.replicate offsets.length 0 ∧
+      result.sizes = (List.replicate sizes.length 0).set 0 poolBytes ∧
+      result.isFree = (List.replicate isFree.length (0 : Fin 256)).set 0 1 ∧
+      result.prevFree = List.replicate prevFree.length (0 : Fin 256) ∧
+      result.count = 1 ∧ result.second = inserted.second ∧
+      result.first = inserted.first ∧ result.heads = inserted.heads ∧
+      result.next = inserted.next ∧ result.previous = inserted.previous := by
+  unfold initializeArrays at hsuccess
+  split at hsuccess <;> try contradiction
+  next =>
+    cases hclass : classifySizeBin poolBytes with
+    | none => simp [hclass] at hsuccess
+    | some bin =>
+        cases hinsert : insertClassArrays
+            (List.replicate second.length (0 : BitVec 32)) 0
+            (List.replicate heads.length next.length)
+            (List.replicate next.length next.length)
+            (List.replicate previous.length next.length) bin 0 with
+        | none => simp [hclass, hinsert] at hsuccess
+        | some inserted =>
+            simp [hclass, hinsert] at hsuccess
+            subst result
+            exact ⟨bin, inserted, hclass, hinsert, rfl, rfl, rfl, rfl,
+              rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+set_option maxRecDepth 10000 in
+set_option maxHeartbeats 600000 in
+/-- Successful fixed-capacity initialization constructs the valid abstract
+allocator containing exactly the mmap-backed pool as one free block. -/
+theorem initializeArrays_refines
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {poolBytes : Nat}
+    {result : InitializeArraysResult}
+    (hoffsets : offsets.length = 4096) (hsizes : sizes.length = 4096)
+    (hisFree : isFree.length = 4096) (hprevFree : prevFree.length = 4096)
+    (hsecondLength : second.length = firstLevelCount)
+    (hheads : heads.length = 2048) (hnext : next.length = 4096)
+    (hprevious : previous.length = 4096)
+    (hpositive : 0 < poolBytes)
+    (hmax : poolBytes < 2 ^ firstLevelCount)
+    (hsuccess : initializeArrays offsets sizes isFree prevFree second first
+      heads next previous poolBytes = some result) :
+    ∃ cls,
+      Bins.classifyBlock? (initialBlock poolBytes) = some cls ∧
+      RepresentsPhysicalArrays result.offsets result.sizes result.isFree
+          result.prevFree result.count [initialBlock poolBytes] ∧
+      Bins.Valid (emptyBins.insert cls (initialBlock poolBytes)) ∧
+      RepresentsBins (Metadata.mk result.heads result.next result.previous)
+          (emptyBins.insert cls (initialBlock poolBytes)) ∧
+      BinsOffsetsDisjoint (emptyBins.insert cls (initialBlock poolBytes)) ∧
+      RepresentsSecondBitmap result.second
+          (emptyBins.insert cls (initialBlock poolBytes)) ∧
+      FirstBitmapRep result.first result.second := by
+  obtain ⟨bin, inserted, hclass, hinsert, hresultOffsets, hresultSizes,
+      hresultFree, hresultPrevFree, hresultCount, hresultSecond,
+      hresultFirst, hresultHeads, hresultNext, hresultPrevious⟩ :=
+    initializeArrays_result hsuccess
+  obtain ⟨cls, habstractClass, hencoded⟩ :=
+    classifySizeBin_refines_block (block := initialBlock poolBytes) (by
+      simpa [initialBlock] using hclass)
+  have hinsert' : insertClassArrays
+      (List.replicate firstLevelCount (0 : BitVec 32)) 0
+      (List.replicate 2048 4096) (List.replicate 4096 4096)
+      (List.replicate 4096 4096) bin 0 = some inserted := by
+    simpa [hsecondLength, hheads, hnext, hprevious] using hinsert
+  have hfresh : ∀ query,
+      (initialBlock poolBytes).offset ∉
+        (emptyBins.chains query).map Block.offset := by
+    simp [emptyBins, Bins.State.fromChains]
+  have hrefine := insertClassArrays_refines_insert
+    (inserted := initialBlock poolBytes) emptyBins_valid
+    clearedSecond_represents_emptyBins
+    clearedFirst_represents_clearedSecond
+    clearedMetadata_represents_emptyBins emptyBins_offsets_disjoint hfresh
+    (Bins.classifyBlock?_result habstractClass) (by simp [initialBlock])
+    hencoded hinsert'
+  have hphysical : RepresentsPhysicalArrays result.offsets result.sizes
+      result.isFree result.prevFree result.count [initialBlock poolBytes] := by
+    rw [hresultOffsets, hresultSizes, hresultFree, hresultPrevFree,
+      hresultCount, hoffsets, hsizes, hisFree, hprevFree]
+    simp [RepresentsPhysicalArrays, blockOffsets, blockSizes, freeFlags,
+      prevFreeFlags, initialBlock]
+  rw [hresultSecond, hresultFirst, hresultHeads, hresultNext, hresultPrevious]
+  exact ⟨cls, habstractClass, hphysical, hrefine.1, hrefine.2.1,
+    insert_preserves_offsets_disjoint emptyBins_offsets_disjoint hfresh,
+    hrefine.2.2.1, hrefine.2.2.2⟩
+
+theorem initialAllocator_valid (pool : Luffs.Memory.Region)
+    (hpositive : 0 < pool.bytes) (haligned : alignment ∣ pool.bytes)
+    {cls : SizeClass}
+    (hclass : Bins.classifyBlock? (initialBlock pool.bytes) = some cls) :
+    Alloc.Valid pool {
+      physical := [initialBlock pool.bytes]
+      bins := emptyBins.insert cls (initialBlock pool.bytes) } := by
+  have hbelongs := Bins.classifyBlock?_result hclass
+  have hfresh : (initialBlock pool.bytes).offset ∉
+      (emptyBins.chains cls).map Block.offset := by
+    simp [emptyBins, Bins.State.fromChains]
+  have hbinsValid := Bins.insert_valid emptyBins_valid cls
+    (initialBlock pool.bytes) hbelongs hfresh
+  have hwell : wellFormed pool [initialBlock pool.bytes] := by
+    simp [wellFormed, ordered, partitions, contiguousFrom, covers,
+      boundaryTags, boundaryTagsFrom, initialBlock, Block.aligned,
+      alignment, hpositive, haligned]
+  have hagreement : Bins.PhysicalAgreement [initialBlock pool.bytes]
+      (emptyBins.insert cls (initialBlock pool.bytes)) := by
+    constructor
+    · intro query cached hmem
+      by_cases hquery : query = cls
+      · subst query
+        have horigin := Bins.insert_member_origin emptyBins_valid
+          (b := initialBlock pool.bytes) (by simp [initialBlock]) hmem
+        rcases horigin with hnew | hold
+        · exact ⟨initialBlock pool.bytes, by simp, hnew⟩
+        · rcases hold with ⟨old, hold, _⟩
+          simp [emptyBins, Bins.State.fromChains] at hold
+      · have hold : cached ∈ emptyBins.chains query := by
+          rw [Bins.replaceChain_other emptyBins
+            (FreeList.insertFront (initialBlock pool.bytes)
+              (emptyBins.chains cls)) hquery] at hmem
+          exact hmem
+        simp [emptyBins, Bins.State.fromChains] at hold
+    · intro actual hmem hfree
+      simp only [List.mem_singleton] at hmem
+      subst actual
+      obtain ⟨cached, hcached, hsame⟩ :=
+        Bins.inserted_has_representation (state := emptyBins) (cls := cls)
+          (inserted := initialBlock pool.bytes) (by simp [initialBlock])
+      exact ⟨cls, cached, hcached, hsame⟩
+  exact ⟨hwell, hbinsValid, hagreement⟩
+
+theorem initializeArrays_constructs_valid_pool
+    {pool : Luffs.Memory.Region}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {result : InitializeArraysResult}
+    (hoffsets : offsets.length = 4096) (hsizes : sizes.length = 4096)
+    (hisFree : isFree.length = 4096) (hprevFree : prevFree.length = 4096)
+    (hsecondLength : second.length = firstLevelCount)
+    (hheads : heads.length = 2048) (hnext : next.length = 4096)
+    (hprevious : previous.length = 4096)
+    (hpositive : 0 < pool.bytes) (haligned : alignment ∣ pool.bytes)
+    (hmax : pool.bytes < 2 ^ firstLevelCount)
+    (hsuccess : initializeArrays offsets sizes isFree prevFree second first
+      heads next previous pool.bytes = some result) :
+    ∃ cls,
+      RepresentsPhysicalArrays result.offsets result.sizes result.isFree
+          result.prevFree result.count [initialBlock pool.bytes] ∧
+      Alloc.Valid pool {
+        physical := [initialBlock pool.bytes]
+        bins := emptyBins.insert cls (initialBlock pool.bytes) } ∧
+      RepresentsBins (Metadata.mk result.heads result.next result.previous)
+          (emptyBins.insert cls (initialBlock pool.bytes)) ∧
+      BinsOffsetsDisjoint (emptyBins.insert cls (initialBlock pool.bytes)) ∧
+      RepresentsSecondBitmap result.second
+          (emptyBins.insert cls (initialBlock pool.bytes)) ∧
+      FirstBitmapRep result.first result.second := by
+  obtain ⟨cls, hclass, hphysical, _, hbins, hdisjoint, hsecond, hfirst⟩ :=
+    initializeArrays_refines hoffsets hsizes hisFree hprevFree hsecondLength
+      hheads hnext hprevious hpositive hmax hsuccess
+  exact ⟨cls, hphysical, initialAllocator_valid pool hpositive haligned hclass,
+    hbins, hdisjoint, hsecond, hfirst⟩
+
+theorem initialAllocator_ownsMappedPool
+    {PROP : Type} [Iris.BI PROP] [Luffs.Memory.ByteRegionLogic PROP]
+    (pool : Luffs.Memory.Region) :
+    Luffs.Allocator.TLSF.Ownership.OwnsFree (PROP := PROP) pool
+        [initialBlock pool.bytes] ⊣⊢
+      Luffs.Memory.OwnsBytes pool := by
+  simp [Luffs.Allocator.TLSF.Ownership.OwnsFree, initialBlock, Block.region]
+
 
 theorem coalesceClassArrays_result
     {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}

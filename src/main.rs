@@ -1913,45 +1913,67 @@ fn parse_tlsf_allocate_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
 
 fn parse_tlsf_box_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
     let lines = source.lines().collect::<Vec<_>>();
-    let Some(index) = lines
-        .iter()
-        .position(|line| line.trim().starts_with("fn tlsf_box_new_u8("))
-    else {
-        return Vec::new();
-    };
-    let Some(target) = index
-        .checked_sub(1)
-        .and_then(|i| lines.get(i))
-        .and_then(|line| line.trim().strip_prefix("// refines "))
-    else {
-        return Vec::new();
-    };
-    let body = lines[index + 1..]
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
-    let required = [
-        "let offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, 8)?;",
-        "if offset >= pool.len() { return None; }",
-        "pool[offset] = value;",
-        "Some(offset)",
+    let specifications = [
+        (
+            "tlsf_box_new_u8",
+            vec![
+                "let offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, 8)?;",
+                "if offset >= pool.len() { return None; }",
+                "pool[offset] = value;",
+                "Some(offset)",
+            ],
+        ),
+        (
+            "tlsf_box_new_u16",
+            vec![
+                "let offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, 8)?;",
+                "if usize::MAX < 2 { return None; }",
+                "if offset > usize::MAX - 2 { return None; }",
+                "let end: usize = offset + 2;",
+                "if end > pool.len() { return None; }",
+                "pool[offset] = value as u8;",
+                "let high: usize = offset + 1;",
+                "pool[high] = (value >> 8) as u8;",
+                "Some(offset)",
+            ],
+        ),
     ];
-    let mut position = 0;
-    if required.iter().all(|expected| {
-        if let Some(offset) = body[position..].iter().position(|line| line == expected) {
-            position += offset + 1;
-            true
-        } else {
-            false
+    let mut models = Vec::new();
+    for (name, required) in specifications {
+        let Some(index) = lines
+            .iter()
+            .position(|line| line.trim().starts_with(&format!("fn {name}(")))
+        else {
+            continue;
+        };
+        let Some(target) = index
+            .checked_sub(1)
+            .and_then(|i| lines.get(i))
+            .and_then(|line| line.trim().strip_prefix("// refines "))
+        else {
+            continue;
+        };
+        let body = lines[index + 1..]
+            .iter()
+            .map(|line| line.trim())
+            .collect::<Vec<_>>();
+        let mut position = 0;
+        if required.iter().all(|expected| {
+            body[position..]
+                .iter()
+                .position(|line| line == expected)
+                .map(|offset| {
+                    position += offset + 1;
+                })
+                .is_some()
+        }) {
+            models.push(TlsfCoalescePhysicalModel {
+                name: name.to_owned(),
+                refines: target.trim().to_owned(),
+            });
         }
-    }) {
-        vec![TlsfCoalescePhysicalModel {
-            name: "tlsf_box_new_u8".to_owned(),
-            refines: target.trim().to_owned(),
-        }]
-    } else {
-        Vec::new()
     }
+    models
 }
 
 fn parse_tlsf_box_drop_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
@@ -3264,6 +3286,17 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
         ));
     }
     for model in &module.tlsf_box_new_models {
+        if model.name == "tlsf_box_new_u16" {
+            out.push_str(&format!(
+                "def {}_model (storage : List (Fin 256)) (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (value : BitVec 16) : Option Luffs.Runtime.Containers.BoxNewU8ArraysResult :=\n  {} storage offsets sizes is_free prev_free count second first heads next previous value\n\n",
+                model.name, model.refines
+            ));
+            out.push_str(&format!(
+                "theorem {}_refines : {}_model = {} := by rfl\n\n",
+                model.name, model.name, model.refines
+            ));
+            continue;
+        }
         out.push_str(&format!(
             "def {}_model (storage : List (Fin 256)) (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (value : Fin 256) : Option Luffs.Runtime.Containers.BoxNewU8ArraysResult := do\n  let allocated ← tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous 8\n  if allocated.allocatedOffset ≥ storage.length then none else\n  pure {{\n    offsets := allocated.offsets\n    sizes := allocated.sizes\n    isFree := allocated.isFree\n    prevFree := allocated.prevFree\n    count := allocated.count\n    second := allocated.second\n    first := allocated.first\n    heads := allocated.heads\n    next := allocated.next\n    previous := allocated.previous\n    allocatedOffset := allocated.allocatedOffset\n    allocatedBytes := allocated.allocatedBytes\n    storage := storage.set allocated.allocatedOffset value }}\n\n",
             model.name
@@ -3770,7 +3803,23 @@ mod tests {
     fn tlsf_box_refinement_rejects_missing_initialization_write() {
         let source = include_str!("../stdlib/tlsf.luffs").replace("pool[offset] = value;", "");
         let m = parse(&source).unwrap();
-        assert!(m.tlsf_box_new_models.is_empty());
+        assert!(
+            !m.tlsf_box_new_models
+                .iter()
+                .any(|model| model.name == "tlsf_box_new_u8")
+        );
+    }
+
+    #[test]
+    fn tlsf_box_u16_refinement_rejects_missing_high_byte() {
+        let source =
+            include_str!("../stdlib/tlsf.luffs").replace("pool[high] = (value >> 8) as u8;", "");
+        let m = parse(&source).unwrap();
+        assert!(
+            !m.tlsf_box_new_models
+                .iter()
+                .any(|model| model.name == "tlsf_box_new_u16")
+        );
     }
 
     #[test]

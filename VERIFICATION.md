@@ -600,6 +600,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   item is complete. The current `u8` constructor is now proved equal to the
   generic constructor specialized with `Scalar.u8`, including equivalence of
   its one-byte bounds check and `List.set` update to the generic range write.
+  The first non-byte allocator-backed monomorphization is checked as well:
+  `tlsf_box_new_u16` proves its two-byte range and word overflow before writing
+  the little-endian encoding. Its source-shape refinement targets the generic
+  `boxNewArrays Scalar.u16` transformer, whose Iris theorem yields exclusive
+  initialized `Box.Owns Scalar.u16` while preserving TLSF ownership. A
+  regression test rejects deleting the high-byte write.
   Codec-generic executable load/store semantics now checks the whole encoded
   range; successful loads expose the exact decoded byte slice, and an exact
   codec encoding decodes to the original value. The existing `u8` store model

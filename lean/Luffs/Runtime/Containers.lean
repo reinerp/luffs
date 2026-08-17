@@ -406,6 +406,51 @@ theorem boxNewU8Arrays_eq_generic
           simpa only [List.cons_append, List.nil_append, List.append_assoc] using
             hwrite.symm⟩
 
+/-- Exact allocator-backed `Box<u16>` semantics. Unlike the historical byte
+specialization, this is just the generic verified constructor instantiated
+with the little-endian `u16` codec. -/
+def boxNewU16Arrays (storage : List Byte) (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (value : BitVec 16) :
+    Option BoxNewU8ArraysResult :=
+  boxNewArrays Scalar.u16 storage offsets sizes isFree prevFree count second
+    first heads next previous value
+
+set_option maxHeartbeats 1200000 in
+theorem boxNewU16Arrays_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {blocks : List Block} {state : Bins.State}
+    {storage : List Byte} {second : List (BitVec 32)} {first : BitVec 64}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {heads next previous : List Nat} {value : BitVec 16}
+    {result : BoxNewU8ArraysResult}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins { heads, next, previous } state)
+    (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
+    (hsuccess : boxNewU16Arrays storage offsets sizes isFree prevFree count
+      second first heads next previous value = some result) :
+    ∃ (hkeyMax : requestKey (Luffs.Containers.Box.requestBytes Scalar.u16.size) <
+          2 ^ firstLevelCount)
+        (boxResult : Luffs.Containers.Box.Result),
+      Luffs.Containers.Box.allocate Scalar.u16
+          { physical := blocks, bins := state } hkeyMax = some boxResult ∧
+      result.allocatedOffset = boxResult.block.offset ∧
+      ∀ contents : ContentsMap,
+        CanInsertBytes contents (boxResult.block.region pool).base
+          (Scalar.u16.encode value) →
+        contentsInterp (G := G) contents ∗ Ownership.OwnsFree pool blocks ==∗
+          contentsInterp
+              (insertBytes contents (boxResult.block.region pool).base
+                (Scalar.u16.encode value)) ∗
+            (Luffs.Containers.Box.Owns Scalar.u16 pool boxResult.block value ∗
+              Ownership.OwnsFree pool boxResult.state.physical) := by
+  exact boxNewArrays_owns hvalid hsecond hfirst hbins hdisjoint hphysical hsuccess
+
 set_option maxHeartbeats 1200000 in
 /-- The allocator-backed Luffs byte Box constructor is the abstract verified
 Box allocation, followed by initialization of exactly its first payload byte.

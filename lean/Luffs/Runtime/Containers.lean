@@ -39,9 +39,10 @@ def vecGetU8 (storage : List Byte) (len index : Nat) : Option Byte :=
 
 def vecSliceU8 (storage : List Byte) (len begin end_ : Nat) :
     Option (List Byte) :=
-  if begin ≤ end_ ∧ end_ ≤ len ∧ len ≤ storage.length then
-    some ((storage.drop begin).take (end_ - begin))
-  else none
+  if begin > end_ then none
+  else if end_ > len then none
+  else if len > storage.length then none
+  else some ((storage.drop begin).take (end_ - begin))
 
 def vecCopyGrowU8 (source destination : List Byte) (len : Nat) :
     Option (List Byte) :=
@@ -137,10 +138,17 @@ theorem vecSliceU8_result {storage slice : List Byte} {len begin end_ : Nat}
       slice = (storage.drop begin).take (end_ - begin) := by
   unfold vecSliceU8 at hslice
   split at hslice
-  next hbounds =>
-    simp only [Option.some.injEq] at hslice
-    exact ⟨hbounds.1, hbounds.2.1, hbounds.2.2, hslice.symm⟩
   next => contradiction
+  next hbegin =>
+    split at hslice
+    next => contradiction
+    next hend =>
+      split at hslice
+      next => contradiction
+      next hlen =>
+        simp only [Option.some.injEq] at hslice
+        exact ⟨Nat.le_of_not_gt hbegin, Nat.le_of_not_gt hend,
+          Nat.le_of_not_gt hlen, hslice.symm⟩
 
 theorem vecCopyGrowU8_result {source destination next : List Byte} {len : Nat}
     (hcopy : vecCopyGrowU8 source destination len = some next) :

@@ -61,6 +61,7 @@ struct ReadModel {
     guards: Vec<String>,
     lets: Vec<(String, String)>,
     result: String,
+    result_type: String,
     refines: Option<String>,
 }
 
@@ -562,6 +563,13 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
 
 fn read_result_expr(expr: &str, array: &str) -> String {
     let expression = model_expr(expr, array);
+    if let Some(subscript) = expression
+        .strip_prefix(&format!("{array}["))
+        .and_then(|rest| rest.strip_suffix(']'))
+        && let Some((begin, end)) = subscript.split_once("..<")
+    {
+        return format!("some (({array}.drop {begin}).take ({end} - {begin}))");
+    }
     if expression.starts_with(&format!("{array}[")) && expression.ends_with(']') {
         format!("{expression}?")
     } else {
@@ -578,6 +586,7 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
         guards: Vec<String>,
         lets: Vec<(String, String)>,
         result: Option<String>,
+        result_type: String,
         refines: Option<String>,
         depth: usize,
         eligible: bool,
@@ -601,10 +610,17 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
             let Some(close) = trimmed[open + 1..].find(')').map(|n| open + 1 + n) else {
                 continue;
             };
-            if !trimmed[close + 1..].contains("-> Option<u8>") {
+            let return_text = &trimmed[close + 1..];
+            let result_type = if return_text.contains("-> Option<u8>") {
+                "Fin 256"
+            } else if return_text.contains("-> Option<&[u8]>")
+                || return_text.contains("-> Option<&mut [u8]>")
+            {
+                "List (Fin 256)"
+            } else {
                 next_refinement = None;
                 continue;
-            }
+            };
             let mut array = None;
             let mut params = Vec::new();
             let mut eligible = true;
@@ -613,10 +629,11 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
                     eligible = false;
                     break;
                 };
-                let name = name.trim().to_owned();
+                let source_name = name.trim().to_owned();
+                let name = lean_ident(&source_name);
                 match ty.trim() {
-                    "&[u8]" => {
-                        if array.replace(name.clone()).is_some() {
+                    "&[u8]" | "&mut [u8]" => {
+                        if array.replace(source_name).is_some() {
                             eligible = false;
                         }
                         params.push((name, "List (Fin 256)".to_owned()));
@@ -634,6 +651,7 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
                 array,
                 params,
                 refines: next_refinement.take(),
+                result_type: result_type.to_owned(),
                 depth: 1,
                 eligible,
                 ..Pending::default()
@@ -678,6 +696,7 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
                     guards: model.guards,
                     lets: model.lets,
                     result,
+                    result_type: model.result_type,
                     refines: model.refines,
                 });
             }
@@ -1104,7 +1123,9 @@ fn lean(module: &Module) -> String {
         for (name, ty) in &model.params {
             out.push_str(&format!(" ({name} : {ty})"));
         }
-        out.push_str(" : Option (Fin 256) :=\n  ");
+        out.push_str(" : Option (");
+        out.push_str(&model.result_type);
+        out.push_str(") :=\n  ");
         for guard in &model.guards {
             out.push_str(&format!("if {guard} then none else\n  "));
         }
@@ -1392,5 +1413,17 @@ mod tests {
             generated
                 .contains("theorem load_refines : load_model = Luffs.Runtime.Containers.boxLoadU8")
         );
+    }
+
+    #[test]
+    fn emits_begin_end_slice_semantics() {
+        let m = parse(
+            "// refines Luffs.Runtime.Containers.vecSliceU8\nfn slice(storage: &[u8], len: usize, begin: usize, end: usize) -> Option<&[u8]> {\nif begin > end { return None; }\nif end > len { return None; }\nif len > storage.len() { return None; }\nSome(storage[begin..<end])\n}",
+        )
+        .unwrap();
+        assert_eq!(m.read_models.len(), 1);
+        let generated = lean(&m);
+        assert!(generated.contains("(end_ : Nat) : Option (List (Fin 256))"));
+        assert!(generated.contains("some ((storage.drop begin).take (end_ - begin))"));
     }
 }

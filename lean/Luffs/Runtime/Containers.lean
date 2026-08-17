@@ -33,6 +33,28 @@ theorem writeBytes_singleton_eq_set {α : Type} (values : List α)
             List.cons_append, List.cons.injEq, true_and]
           simpa [Nat.succ_eq_add_one] using ih offset hbound
 
+theorem writeBytes_pair_eq_set {α : Type} (values : List α)
+    (offset : Nat) (first second : α)
+    (hbound : offset + 2 ≤ values.length) :
+    values.take offset ++ [first, second] ++ values.drop (offset + 2) =
+      (values.set offset first).set (offset + 1) second := by
+  induction values generalizing offset with
+  | nil => simp at hbound
+  | cons head tail ih =>
+      cases offset with
+      | zero =>
+          cases tail with
+          | nil => simp at hbound
+          | cons oldSecond rest => simp
+      | succ offset =>
+          have htail : offset + 2 ≤ tail.length := by
+            simp only [List.length_cons] at hbound
+            omega
+          simp only [List.take_succ_cons, List.drop_succ_cons, List.set,
+            List.cons_append, List.cons.injEq, true_and]
+          simpa [Nat.succ_eq_add_one, Nat.add_assoc] using
+            ih offset htail
+
 /-- Codec-generic executable state transformer for allocator-backed Box
 construction. A Luffs monomorphization supplies one of the verified scalar
 codecs and lowers the finite encoding to byte stores. -/
@@ -1702,6 +1724,42 @@ def boxLoadU8 (storage : List Byte) (begin : Nat) : Option Byte :=
 def boxStoreU8 (storage : List Byte) (begin : Nat) (value : Byte) :
     Option (List Byte) :=
   if begin ≥ storage.length then none else some (storage.set begin value)
+
+def boxStoreU16 (storage : List Byte) (begin : Nat) (value : BitVec 16) :
+    Option (List Byte) :=
+  if begin = Luffs.Runtime.TLSF.usizeMax then none
+  else
+    let second := begin + 1
+    if second ≥ storage.length then none
+    else some ((storage.set begin (Scalar.byteAt value 0)).set second
+      (Scalar.byteAt value 8))
+
+theorem boxStoreU16_eq_generic (storage : List Byte) (begin : Nat)
+    (value : BitVec 16)
+    (hstorageMax : storage.length ≤ Luffs.Runtime.TLSF.usizeMax) :
+    boxStoreU16 storage begin value = boxStore Scalar.u16 storage begin value := by
+  by_cases hmax : begin = Luffs.Runtime.TLSF.usizeMax
+  · have hgeneric : begin + Scalar.u16.size > storage.length := by
+      simp only [Scalar.u16]
+      omega
+    simp [boxStoreU16, boxStore, hmax, hgeneric]
+    omega
+  · by_cases hbound : begin + 1 ≥ storage.length
+    · have hgeneric : begin + Scalar.u16.size > storage.length := by
+        simp only [Scalar.u16]
+        omega
+      simp [boxStoreU16, boxStore, hmax, hbound, hgeneric]
+    · have hfit : begin + 2 ≤ storage.length := by omega
+      have hgeneric : ¬begin + Scalar.u16.size > storage.length := by
+        simp only [Scalar.u16]
+        omega
+      have hwrite := writeBytes_pair_eq_set storage begin
+        (Scalar.byteAt value 0) (Scalar.byteAt value 8) hfit
+      simp [boxStoreU16, boxStore, hmax, hbound, hgeneric, writeBytes,
+        Scalar.u16, Scalar.encode16]
+      exact ⟨hfit, by
+        simpa only [List.cons_append, List.nil_append, List.append_assoc] using
+          hwrite.symm⟩
 
 theorem boxStoreU8_eq_generic (storage : List Byte) (begin : Nat)
     (value : Byte) :

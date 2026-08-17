@@ -21,6 +21,15 @@ fn box_store_u8(storage: &mut [u8], begin: usize, value: u8) -> Option<()> {
     Some(())
 }
 
+// refines Luffs.Runtime.Containers.boxStoreU16
+fn box_store_u16(storage: &mut [u8], begin: usize, value: u16) -> Option<()> {
+    if begin == usize::MAX { return None; }
+    if begin + 1 >= storage.len() { return None; }
+    storage[begin] = (value & 255) as u8;
+    storage[begin + 1] = (value >> 8) as u8;
+    Some(())
+}
+
 // refines Luffs.Runtime.Containers.vecPushU8
 fn vec_push_u8(storage: &mut [u8], len: usize, capacity: usize, value: u8) -> Option<usize> {
     if len >= capacity { return None; }

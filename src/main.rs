@@ -552,7 +552,31 @@ fn parse_scalar_models(source: &str) -> Vec<ScalarModel> {
 }
 
 fn model_expr(expr: &str, array: &str) -> String {
-    to_lean_expr(expr).replace(&format!("{array}_len"), &format!("{array}.length"))
+    let scalar = scalar_byte_expr(expr).unwrap_or_else(|| to_lean_expr(expr));
+    scalar
+        .replace(&format!("{array}_len"), &format!("{array}.length"))
+        .replace("usize_max", "Luffs.Runtime.TLSF.usizeMax")
+}
+
+fn scalar_byte_expr(expr: &str) -> Option<String> {
+    let cast = expr.trim().strip_suffix(" as u8")?.trim();
+    let inner = cast.strip_prefix('(')?.strip_suffix(')')?.trim();
+    if let Some((value, mask)) = inner.split_once(" & ")
+        && mask.trim() == "255"
+    {
+        return Some(format!(
+            "(Luffs.Memory.Scalar.byteAt {} 0)",
+            lean_ident(value.trim())
+        ));
+    }
+    if let Some((value, shift)) = inner.split_once(" >> ") {
+        return Some(format!(
+            "(Luffs.Memory.Scalar.byteAt {} {})",
+            lean_ident(value.trim()),
+            shift.trim()
+        ));
+    }
+    None
 }
 
 fn parse_array_models(source: &str) -> Vec<ArrayModel> {
@@ -617,6 +641,7 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
                     }
                     "usize" => params.push((name, "Nat".to_owned())),
                     "u8" => params.push((name, "Fin 256".to_owned())),
+                    "u16" => params.push((name, "BitVec 16".to_owned())),
                     _ => eligible = false,
                 }
             }
@@ -2864,7 +2889,16 @@ fn lean(module: &Module) -> String {
             out.push_str(" := ");
             out.push_str(&model.array);
             out.push_str(".set ");
-            out.push_str(index);
+            if index
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            {
+                out.push_str(index);
+            } else {
+                out.push('(');
+                out.push_str(index);
+                out.push(')');
+            }
             out.push(' ');
             out.push_str(value);
             out.push_str("\n  ");
@@ -3857,6 +3891,18 @@ mod tests {
         assert!(generated.contains(
             "let storage := storage.set begin low\n  let storage := storage.set second high"
         ));
+    }
+
+    #[test]
+    fn lowers_u16_little_endian_byte_stores() {
+        let m = parse(
+            "fn store_u16(storage: &mut [u8], begin: usize, value: u16) -> Option<()> {\nif begin == usize::MAX { return None; }\nif begin + 1 >= storage.len() { return None; }\nstorage[begin] = (value & 255) as u8;\nstorage[begin + 1] = (value >> 8) as u8;\nSome(())\n}",
+        )
+        .unwrap();
+        let generated = lean(&m);
+        assert!(generated.contains("(value : BitVec 16)"));
+        assert!(generated.contains("storage.set begin (Luffs.Memory.Scalar.byteAt value 0)"));
+        assert!(generated.contains("storage.set (begin + 1) (Luffs.Memory.Scalar.byteAt value 8)"));
     }
 
     #[test]

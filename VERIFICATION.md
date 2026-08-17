@@ -609,7 +609,13 @@ model to the abstract verified Vec handle transition. Ordered multiple
 mutations of one byte array are now translated directly: each generated
 `List.set` consumes the previous generated state, preserving Rust's sequential
 alias semantics. This removes the one-store restriction that blocked
-multi-byte scalar encodings. Loops, typed scalar expressions, and general
-checked-arithmetic semantics are the next translation cases.
+  multi-byte scalar encodings. Loops, typed scalar expressions, and general
+  checked-arithmetic semantics are the next translation cases.
+  The first wider typed expression case is now implemented end to end:
+  `box_store_u16` is ordinary Luffs/Rust source with two checked byte writes;
+  generated Lean uses `BitVec 16` and the verified little-endian `Scalar.byteAt`
+  encoding. Its generated state transformer refines `boxStoreU16`, which is
+  separately proved equal to codec-generic `boxStore Scalar.u16` for a
+  64-bit-addressable backing store.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.

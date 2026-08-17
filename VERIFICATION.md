@@ -151,8 +151,15 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   tags. This proof caught and rejected an 8-byte split threshold; the concrete
   code now enforces TLSF's proved 16-byte minimum remainder. The compiler's
   source-shape gate ties the checked Luffs primitive to that exact array model.
-  Composing the public Luffs bin lookup/removal and remainder reinsertion with
-  this physical theorem remains.
+  The physical model now includes the source alignment rejection itself, so
+  successful refinement derives alignment instead of accepting it as an
+  external premise. The public Luffs allocation path is tied to a single exact
+  Lean array transformer covering request classification, bitmap search,
+  bounded offset-to-header lookup, atomic candidate removal, physical
+  allocation, and conditional remainder insertion. Its offset scan is proved
+  equivalent to abstract physical lookup under pool well-formedness. Composing
+  this transformer with the abstract public allocator and Iris ownership
+  transfer remains.
 - [ ] Prove `dealloc`: consuming exactly a live allocation restores it to the
   allocator without leaks, overlap, or double-free.
   The executable deallocation transition now requires the exact returned

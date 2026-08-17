@@ -396,6 +396,7 @@ fn tlsf_allocate_physical(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096]
 // Allocate one aligned region. All checks precede the first write, so failure
 // is transactional. The returned value is the byte offset within the mmap
 // pool; `block_count[0]` carries the active physical-header count.
+// refines Luffs.Runtime.TLSF.allocateArrays
 fn tlsf_allocate(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], request: usize) -> Option<usize> {
     if request == 0 { return None; }
     if request & 7 != 0 { return None; }
@@ -435,7 +436,7 @@ fn tlsf_allocate(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free
         remainder_bin = tlsf_classify_size(remainder_size)?;
         if remainder_bin >= heads.len() { return None; }
     }
-    tlsf_remove_class(second_nonempty, first_nonempty, heads, next, previous, found_bin, selected_offset)?;
+    let detached_offset: usize = tlsf_take_candidate_class(second_nonempty, first_nonempty, heads, next, previous, start_fl, start_sl)?;
     let allocated_offset: usize = tlsf_allocate_physical(offsets, sizes, is_free, prev_free, block_count, block, request)?;
     if split {
         tlsf_insert_class(second_nonempty, first_nonempty, heads, next, previous, remainder_bin, remainder_offset)?;

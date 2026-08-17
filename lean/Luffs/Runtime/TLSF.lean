@@ -4623,7 +4623,8 @@ caller has detached the block from its bin and preflighted remainder links. -/
 def allocatePhysicalArrays (offsets sizes : List Nat)
     (isFree prevFree : List (Fin 256)) (count block request : Nat) :
     Option AllocatePhysicalResult := do
-  if count = 0 ∨ count > offsets.length ∨ count > sizes.length ∨
+  if request % alignment ≠ 0 ∨ count = 0 ∨
+      count > offsets.length ∨ count > sizes.length ∨
       count > isFree.length ∨ count > prevFree.length ∨ block ≥ count then none
   let selectedOffset ← offsets[block]?
   let selectedSize ← sizes[block]?
@@ -4651,7 +4652,8 @@ theorem allocatePhysicalArrays_result
     {count block request : Nat} {result : AllocatePhysicalResult}
     (hsuccess : allocatePhysicalArrays offsets sizes isFree prevFree count
       block request = some result) :
-    count ≤ offsets.length ∧ count ≤ sizes.length ∧ count ≤ isFree.length ∧
+    alignment ∣ request ∧ count ≤ offsets.length ∧
+      count ≤ sizes.length ∧ count ≤ isFree.length ∧
       count ≤ prevFree.length ∧ block < count ∧ 0 < request ∧
       ∃ selectedOffset selectedSize,
         offsets[block]? = some selectedOffset ∧
@@ -4676,10 +4678,17 @@ theorem allocatePhysicalArrays_result
             result.offsets = offsets ∧ result.sizes = sizes ∧
             result.isFree = isFree.set block 0 ∧
             result.prevFree = allocateWholePrevFree prevFree count block)) := by
-  let bad := count = 0 ∨ count > offsets.length ∨ count > sizes.length ∨
+  let bad := request % alignment ≠ 0 ∨ count = 0 ∨
+    count > offsets.length ∨ count > sizes.length ∨
     count > isFree.length ∨ count > prevFree.length ∨ block ≥ count
   by_cases hbad : bad
   · simp [allocatePhysicalArrays, bad, hbad] at hsuccess
+  have haligned : alignment ∣ request := by
+    simp only [bad] at hbad
+    apply Nat.dvd_of_mod_eq_zero
+    apply Classical.byContradiction
+    intro hmod
+    exact hbad (Or.inl hmod)
   have hb : count ≤ offsets.length ∧ count ≤ sizes.length ∧
       count ≤ isFree.length ∧ count ≤ prevFree.length ∧ block < count := by
     simp only [bad] at hbad
@@ -4715,7 +4724,7 @@ theorem allocatePhysicalArrays_result
           hsplit, hcapacity, Option.pure_def, Option.bind_eq_bind] at hsuccess
         rcases hsuccess with ⟨_, hresult⟩
         subst result
-        exact ⟨hb.1, hb.2.1, hb.2.2.1, hb.2.2.2.1, hb.2.2.2.2,
+        exact ⟨haligned, hb.1, hb.2.1, hb.2.2.1, hb.2.2.2.1, hb.2.2.2.2,
           hsuitable.2.2, selectedOffset, selectedSize, rfl, rfl,
           hsuitable.1, hsuitable.2.1, rfl,
           Or.inl ⟨hsplit, hcapacity.1, hcapacity.2.1, hcapacity.2.2.1,
@@ -4725,7 +4734,7 @@ theorem allocatePhysicalArrays_result
           hsplit, Option.pure_def, Option.bind_eq_bind] at hsuccess
         rcases hsuccess with ⟨_, hresult⟩
         subst result
-        exact ⟨hb.1, hb.2.1, hb.2.2.1, hb.2.2.2.1, hb.2.2.2.2,
+        exact ⟨haligned, hb.1, hb.2.1, hb.2.2.1, hb.2.2.2.1, hb.2.2.2.2,
           hsuitable.2.2, selectedOffset, selectedSize, rfl, rfl,
           hsuitable.1, hsuitable.2.1, rfl,
           Or.inr ⟨hwhole, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩
@@ -4737,7 +4746,7 @@ theorem allocatePhysicalArrays_refines
     {count : Nat} {result : AllocatePhysicalResult}
     (hrep : RepresentsPhysicalArrays offsets sizes isFree prevFree count blocks)
     (hget : blocks[block]? = some selected)
-    (htags : boundaryTags blocks) (haligned : alignment ∣ request)
+    (htags : boundaryTags blocks)
     (hsuccess : allocatePhysicalArrays offsets sizes isFree prevFree count
       block request = some result) :
     ∃ allocated next,
@@ -4746,7 +4755,7 @@ theorem allocatePhysicalArrays_refines
         result.prevFree result.count next ∧
       result.allocatedOffset = allocated.offset ∧
       result.allocatedBytes = allocated.bytes := by
-  obtain ⟨_, _, _, _, _, hrequest, selectedOffset, selectedSize,
+  obtain ⟨haligned, _, _, _, _, _, hrequest, selectedOffset, selectedSize,
       hoffset, hsize, hfreeFlag, hfits, hresultOffset,
       hcase⟩ := allocatePhysicalArrays_result hsuccess
   have hoffsetExpected := representsPhysicalArrays_get_offset hrep hget
@@ -4906,6 +4915,113 @@ theorem allocatePhysicalArrays_refines
     exact ⟨markAllocated selected, markAllocatedAt blocks block,
       habstract, hphysical, by simpa [markAllocated] using hresultOffset,
       by simpa [markAllocated] using hresultBytes⟩
+
+/-- The bounded linear scan used by the concrete allocator to translate a
+free-list byte offset back to its physical-header array index. -/
+def findOffsetIndex : List Nat → Nat → Nat → Option Nat
+  | _, 0, _ => none
+  | [], _ + 1, _ => none
+  | offset :: rest, count + 1, target =>
+      if offset = target then some 0
+      else (findOffsetIndex rest count target).map Nat.succ
+
+theorem findOffsetIndex_blockOffsets_eq_findPhysicalIndex
+    (blocks : List Block) (target : Block)
+    (hoffset : ∀ b ∈ blocks,
+      b.offset = target.offset ↔ SamePhysical b target) :
+    findOffsetIndex (blockOffsets blocks) blocks.length target.offset =
+      findPhysicalIndex blocks target := by
+  induction blocks with
+  | nil => simp [findOffsetIndex, blockOffsets, findPhysicalIndex]
+  | cons head rest ih =>
+      have hhead := hoffset head (by simp)
+      have htail : ∀ b ∈ rest,
+          b.offset = target.offset ↔ SamePhysical b target := by
+        intro b hb
+        exact hoffset b (by simp [hb])
+      simp only [blockOffsets, List.map_cons, List.length_cons,
+        findOffsetIndex, findPhysicalIndex]
+      by_cases h : head.offset = target.offset
+      · simp [h, hhead.mp h]
+      · have hsame : ¬SamePhysical head target :=
+          fun hsame => h (hhead.mpr hsame)
+        rw [if_neg h, if_neg hsame]
+        exact congrArg (Option.map Nat.succ) (ih htail)
+
+theorem findOffsetIndex_refines_findPhysicalIndex
+    {pool : Luffs.Memory.Region} {blocks : List Block} {target actual : Block}
+    (hwell : wellFormed pool blocks) (hactual : actual ∈ blocks)
+    (hsame : SamePhysical actual target) :
+    findOffsetIndex (blockOffsets blocks) blocks.length target.offset =
+      findPhysicalIndex blocks target := by
+  apply findOffsetIndex_blockOffsets_eq_findPhysicalIndex
+  intro b hb
+  constructor
+  · intro hoffset
+    have hsameBlock : b = actual := wellFormed_same_offset hwell hb hactual
+      (hoffset.trans hsame.1.symm)
+    subst b
+    exact hsame
+  · exact fun h => h.1
+
+structure AllocateArraysResult where
+  offsets : List Nat
+  sizes : List Nat
+  isFree : List (Fin 256)
+  prevFree : List (Fin 256)
+  count : Nat
+  second : List (BitVec 32)
+  first : BitVec 64
+  heads : List Nat
+  next : List Nat
+  previous : List Nat
+  allocatedOffset : Nat
+  allocatedBytes : Nat
+deriving DecidableEq, Repr
+
+/-- Exact pure state transformer for the public `tlsf_allocate` lowering.
+Every check before `removeClassArrays` is a preflight check, so `none` leaves
+all caller-owned arrays unchanged. -/
+def allocateArrays (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (request : Nat) :
+    Option AllocateArraysResult := do
+  if request = 0 ∨ request % alignment ≠ 0 then none
+  let startBin ← classifyRequestBin request
+  let foundBin ← findNonemptyClassLowered second first
+    (startBin / secondLevelCount) (startBin % secondLevelCount)
+  if foundBin ≥ heads.length then none
+  let selectedOffset ← heads[foundBin]?
+  if selectedOffset ≥ next.length ∨ selectedOffset ≥ previous.length ∨
+      count = 0 ∨ count > offsets.length ∨ count > sizes.length ∨
+      count > isFree.length ∨ count > prevFree.length then none
+  let block ← findOffsetIndex offsets count selectedOffset
+  let selectedSize ← sizes[block]?
+  if isFree[block]? = some 0 ∨ selectedSize < request then none
+  let remainderSize := selectedSize - request
+  let split := minimumBlockBytes ≤ remainderSize
+  let remainderOffset := selectedOffset + request
+  if split ∧ (remainderOffset ≥ 2 ^ 64 ∨ remainderOffset ≥ next.length ∨
+      remainderOffset ≥ previous.length) then none
+  let remainderBin ← if split then classifySizeBin remainderSize else some 0
+  if split ∧ remainderBin ≥ heads.length then none
+  let removed ← takeCandidateClassArrays second first heads next previous
+    (startBin / secondLevelCount) (startBin % secondLevelCount)
+  let physical ← allocatePhysicalArrays offsets sizes isFree prevFree count
+    block request
+  if split then
+    let inserted ← insertClassArrays removed.second removed.first
+      removed.heads removed.next removed.previous remainderBin remainderOffset
+    some ⟨physical.offsets, physical.sizes, physical.isFree,
+      physical.prevFree, physical.count, inserted.second, inserted.first,
+      inserted.heads, inserted.next, inserted.previous,
+      physical.allocatedOffset, physical.allocatedBytes⟩
+  else
+    some ⟨physical.offsets, physical.sizes, physical.isFree,
+      physical.prevFree, physical.count, removed.second, removed.first,
+      removed.heads, removed.next, removed.previous,
+      physical.allocatedOffset, physical.allocatedBytes⟩
 
 /-- Exact fixed-array effect of `tlsf_coalesce_physical`. The active right
 header is deleted by left-compacting the suffix; the final array slot is spare

@@ -168,8 +168,12 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   exactly the allocated byte capability to its caller. Both its split and
   whole-block branches now prove that every concrete physical, intrusive-link,
   and bitmap post-state represents that same abstract result, preserving bin
-  validity and cross-bin offset disjointness. Transactional failure at the
-  external allocator API remains.
+  validity and cross-bin offset disjointness. The Luffs public entry point now
+  hoists every fallible condition of candidate removal, physical splitting,
+  and remainder insertion before candidate removal performs the first write;
+  the source-shape refinement gate rejects omission of these transactional
+  capacity and link-address checks. The corresponding operational failure
+  theorem at the external allocator API remains.
 - [ ] Prove `dealloc`: consuming exactly a live allocation restores it to the
   allocator without leaks, overlap, or double-free.
   The executable deallocation transition now requires the exact returned

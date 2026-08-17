@@ -1772,13 +1772,22 @@ fn parse_tlsf_allocate_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
         "if request & 7 != 0 { return None; }",
         "let start_bin: usize = tlsf_classify_request(request)?;",
         "let found_bin: usize = tlsf_find_nonempty_class(second_nonempty, first_nonempty, start_fl, start_sl)?;",
+        "let found_fl: usize = found_bin >> 5;",
+        "if found_fl >= second_nonempty.len() { return None; }",
+        "if first_nonempty.len() == 0 { return None; }",
         "let selected_offset: usize = heads[found_bin];",
         "while block < count {",
         "if offsets[block] == selected_offset { break; }",
         "if selected_size < request { return None; }",
         "let split: bool = remainder_size >= 16;",
+        "if count >= offsets.len() { return None; }",
+        "if count >= sizes.len() { return None; }",
+        "if count >= is_free.len() { return None; }",
+        "if count >= prev_free.len() { return None; }",
         "remainder_offset = selected_offset.checked_add(request)?;",
         "remainder_bin = tlsf_classify_size(remainder_size)?;",
+        "let remainder_fl: usize = remainder_bin >> 5;",
+        "if remainder_fl >= second_nonempty.len() { return None; }",
         "let detached_offset: usize = tlsf_take_candidate_class(second_nonempty, first_nonempty, heads, next, previous, start_fl, start_sl)?;",
         "let allocated_offset: usize = tlsf_allocate_physical(offsets, sizes, is_free, prev_free, block_count, block, request)?;",
         "tlsf_insert_class(second_nonempty, first_nonempty, heads, next, previous, remainder_bin, remainder_offset)?;",
@@ -3121,6 +3130,14 @@ mod tests {
         );
         let m = parse(&source).unwrap();
         assert!(m.tlsf_allocate_physical_models.is_empty());
+        assert!(m.tlsf_allocate_models.is_empty());
+    }
+
+    #[test]
+    fn tlsf_allocation_refinement_rejects_missing_transactional_capacity_check() {
+        let source = include_str!("../stdlib/tlsf.luffs")
+            .replace("if count >= offsets.len() { return None; }", "");
+        let m = parse(&source).unwrap();
         assert!(m.tlsf_allocate_models.is_empty());
     }
 

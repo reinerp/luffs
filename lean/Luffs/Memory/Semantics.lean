@@ -20,6 +20,12 @@ def Memory.regionUnmapped (mem : Memory) (r : Region) : Prop :=
 def Memory.write (mem : Memory) (p : Addr) (v : Byte) : Memory :=
   fun q => if q = p then some v else mem q
 
+theorem Memory.mapped_write {mem : Memory} {written p : Addr} {value : Byte}
+    (hmapped : mem.mapped p) :
+    (mem.write written value).mapped p := by
+  simp only [Memory.mapped, Memory.write]
+  split <;> simp_all [Memory.mapped]
+
 def Memory.mapZeroed (mem : Memory) (r : Region) : Memory :=
   fun p => if r.contains p then some 0 else mem p
 
@@ -579,6 +585,77 @@ theorem WriteSteps.program_wp {GF : BundledGFunctors} {base : Addr}
     {values : List Byte} {before after : Memory}
     (hsteps : WriteSteps base values before after) :
     ⊢@{IProp GF} Program.wp (Program.writeBytes base values) before
+      (fun final => final = after) := by
+  unfold Program.wp
+  ipureintro
+  exact ⟨⟨after, hsteps.program_exec⟩,
+    fun final hexec => hsteps.program_exec_unique hexec⟩
+
+/-- Stores emitted for ordinary indexed assignments. Unlike `writeBytes`, the
+offsets need not be contiguous; their list order is the source execution
+order. -/
+def Program.writeOffsets (base : Addr) : List (Nat × Byte) → Program
+  | [] => .done
+  | (offset, value) :: rest =>
+      .call (.store (base + offset) value) (fun _ => writeOffsets base rest)
+
+inductive WriteOffsetSteps (base : Addr) :
+    List (Nat × Byte) → Memory → Memory → Prop where
+  | nil {mem} : WriteOffsetSteps base [] mem mem
+  | cons {offset value rest mem next old}
+      (hstore : PrimStep (.store (base + offset) value) mem .unit
+        (mem.write (base + offset) value))
+      (hold : mem (base + offset) = some old)
+      (htail : WriteOffsetSteps base rest
+        (mem.write (base + offset) value) next) :
+      WriteOffsetSteps base ((offset, value) :: rest) mem next
+
+theorem writeOffsetSteps_exists (base : Addr) (writes : List (Nat × Byte))
+    (mem : Memory)
+    (hmapped : ∀ write ∈ writes, mem.mapped (base + write.1)) :
+    ∃ next, WriteOffsetSteps base writes mem next := by
+  induction writes generalizing mem with
+  | nil => exact ⟨mem, .nil⟩
+  | cons write rest ih =>
+      obtain ⟨offset, value⟩ := write
+      obtain ⟨old, hold⟩ : ∃ old, mem (base + offset) = some old := by
+        have h := hmapped (offset, value) (by simp)
+        unfold Memory.mapped at h
+        cases hmem : mem (base + offset) with
+        | none => simp [hmem] at h
+        | some old => exact ⟨old, rfl⟩
+      have htailMapped :
+          ∀ write ∈ rest,
+            (mem.write (base + offset) value).mapped (base + write.1) := by
+        intro tail htail
+        exact Memory.mapped_write (hmapped tail (by simp [htail]))
+      obtain ⟨next, htail⟩ :=
+        ih (mem.write (base + offset) value) htailMapped
+      exact ⟨next, .cons (.store hold) hold htail⟩
+
+theorem WriteOffsetSteps.program_exec {base : Addr}
+    {writes : List (Nat × Byte)} {before after : Memory}
+    (hsteps : WriteOffsetSteps base writes before after) :
+    Program.Exec (Program.writeOffsets base writes) before after := by
+  induction hsteps with
+  | nil => exact .done
+  | cons hstore hold htail ih => exact .call hstore ih
+
+theorem WriteOffsetSteps.program_exec_unique {base : Addr}
+    {writes : List (Nat × Byte)} {before after final : Memory}
+    (hsteps : WriteOffsetSteps base writes before after)
+    (hexec : Program.Exec (Program.writeOffsets base writes) before final) :
+    final = after := by
+  induction hsteps generalizing final with
+  | nil => cases hexec; rfl
+  | cons hstore hold htail ih =>
+      cases hexec with
+      | call executed rest => cases executed; exact ih rest
+
+theorem WriteOffsetSteps.program_wp {GF : BundledGFunctors} {base : Addr}
+    {writes : List (Nat × Byte)} {before after : Memory}
+    (hsteps : WriteOffsetSteps base writes before after) :
+    ⊢@{IProp GF} Program.wp (Program.writeOffsets base writes) before
       (fun final => final = after) := by
   unfold Program.wp
   ipureintro

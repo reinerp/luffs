@@ -2884,7 +2884,7 @@ fn validate(module: &Module) -> Result<(), String> {
 
 fn lean(module: &Module) -> String {
     let mut out = String::from("import Init.Omega\n");
-    if !module.copy_models.is_empty() {
+    if !module.copy_models.is_empty() || !module.array_models.is_empty() {
         out.push_str("import Luffs.Memory.Semantics\n");
     }
     if module
@@ -3068,6 +3068,119 @@ fn lean(module: &Module) -> String {
             out.push_str(target);
             out.push_str("]\n\n");
         }
+        out.push_str(&format!(
+            "def {}_program ({}Base : Nat)",
+            model.name, model.array
+        ));
+        for (name, ty) in &model.params {
+            out.push_str(&format!(" ({name} : {ty})"));
+        }
+        out.push_str(" : Luffs.Memory.Program :=\n  ");
+        for (name, expression) in &model.lets {
+            out.push_str(&format!("let {name} := {expression}\n  "));
+        }
+        for guard in &model.guards {
+            out.push_str(&format!(
+                "Luffs.Memory.Program.branch (decide ({guard})) .done (\n    "
+            ));
+        }
+        out.push_str(&format!(
+            "Luffs.Memory.Program.writeOffsets {}Base [",
+            model.array
+        ));
+        for (index, (offset, value)) in model.assignments.iter().enumerate() {
+            if index != 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&format!("({offset}, {value})"));
+        }
+        out.push(']');
+        for _ in &model.guards {
+            out.push(')');
+        }
+        out.push_str("\n\n");
+
+        out.push_str(&format!(
+            "theorem {}_program_wp {{GF : Iris.BundledGFunctors}} ({}Base : Nat)",
+            model.name, model.array
+        ));
+        for (name, ty) in &model.params {
+            out.push_str(&format!(" ({name} : {ty})"));
+        }
+        out.push_str(" (before after : Luffs.Memory.Memory)\n");
+        for (index, guard) in model.guards.iter().enumerate() {
+            out.push_str(&format!("    (hguard{index} : ¬({guard}))\n"));
+        }
+        out.push_str(&format!(
+            "    (hsteps : Luffs.Memory.WriteOffsetSteps {}Base [",
+            model.array
+        ));
+        for (index, (offset, value)) in model.assignments.iter().enumerate() {
+            if index != 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&format!("({offset}, {value})"));
+        }
+        out.push_str("] before after) :\n    ⊢@{Iris.IProp GF} Luffs.Memory.Program.wp (");
+        out.push_str(&format!("{}_program {}Base", model.name, model.array));
+        for (name, _) in &model.params {
+            out.push(' ');
+            out.push_str(name);
+        }
+        out.push_str(") before (fun final => final = after) := by\n  simp only [");
+        out.push_str(&format!("{}_program", model.name));
+        for index in 0..model.guards.len() {
+            out.push_str(&format!(
+                ", hguard{index}, decide_false, Luffs.Memory.Program.branch"
+            ));
+        }
+        out.push_str("]\n  exact hsteps.program_wp\n\n");
+
+        out.push_str(&format!(
+            "theorem {}_program_wp_of_mapped {{GF : Iris.BundledGFunctors}} ({}Base : Nat)",
+            model.name, model.array
+        ));
+        for (name, ty) in &model.params {
+            out.push_str(&format!(" ({name} : {ty})"));
+        }
+        out.push_str(" (before : Luffs.Memory.Memory)\n");
+        for (index, guard) in model.guards.iter().enumerate() {
+            out.push_str(&format!("    (hguard{index} : ¬({guard}))\n"));
+        }
+        out.push_str("    (hmapped : ∀ write ∈ [");
+        for (index, (offset, value)) in model.assignments.iter().enumerate() {
+            if index != 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&format!("({offset}, {value})"));
+        }
+        out.push_str(&format!(
+            "], before.mapped ({}Base + write.1)) :\n    ∃ after, ⊢@{{Iris.IProp GF}} Luffs.Memory.Program.wp ({}_program {}Base",
+            model.array, model.name, model.array
+        ));
+        for (name, _) in &model.params {
+            out.push(' ');
+            out.push_str(name);
+        }
+        out.push_str(") before (fun final => final = after) := by\n  obtain ⟨after, hsteps⟩ := Luffs.Memory.writeOffsetSteps_exists ");
+        out.push_str(&format!("{}Base [", model.array));
+        for (index, (offset, value)) in model.assignments.iter().enumerate() {
+            if index != 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&format!("({offset}, {value})"));
+        }
+        out.push_str("] before hmapped\n  exact ⟨after, ");
+        out.push_str(&format!("{}_program_wp {}Base", model.name, model.array));
+        for (name, _) in &model.params {
+            out.push(' ');
+            out.push_str(name);
+        }
+        out.push_str(" before after");
+        for index in 0..model.guards.len() {
+            out.push_str(&format!(" hguard{index}"));
+        }
+        out.push_str(" hsteps⟩\n\n");
     }
     for model in &module.read_models {
         out.push_str("def ");
@@ -4141,6 +4254,18 @@ mod tests {
         assert!(generated.contains(
             "theorem vec_push_u8_refines : vec_push_u8_model = Luffs.Runtime.Containers.vecPushU8"
         ));
+        assert!(
+            generated
+                .contains("def vec_push_u8_program (storageBase : Nat) (storage : List (Fin 256))")
+        );
+        assert!(generated.contains("Luffs.Memory.Program.writeOffsets storageBase [(len, value)]"));
+        assert!(generated.contains("theorem vec_push_u8_program_wp"));
+        assert!(generated.contains("theorem vec_push_u8_program_wp_of_mapped"));
+        assert!(
+            generated.contains(
+                "hmapped : ∀ write ∈ [(len, value)], before.mapped (storageBase + write.1)"
+            )
+        );
     }
 
     #[test]
@@ -4154,6 +4279,12 @@ mod tests {
         let generated = lean(&m);
         assert!(generated.contains(
             "let storage := storage.set begin low\n  let storage := storage.set second high"
+        ));
+        assert!(generated.contains(
+            "Luffs.Memory.Program.writeOffsets storageBase [(begin, low), (second, high)]"
+        ));
+        assert!(generated.contains(
+            "hsteps : Luffs.Memory.WriteOffsetSteps storageBase [(begin, low), (second, high)]"
         ));
     }
 

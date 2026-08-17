@@ -62,8 +62,14 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   Rust-shaped `copy_from_slice` Luffs function. Its two source `if` guards
   become nested `Program.branch` nodes, and the generated theorem uses the
   CFG facts plus the exact copy trace to establish the program WP. General
-  emission for arbitrary branches and loop bodies still needs composition
-  before this end-to-end item can be checked off.
+  indexed assignments are emitted as ordered \`writeOffsets\` programs as well,
+  including every early-return guard. Their generated theorems can consume
+  either an exact store trace or only a mapped-address premise; the latter
+  constructs the trace and returns an exact-final-memory WP. This covers the
+  source-derived scalar Box stores and spare-capacity Vec pushes, including
+  multi-byte encodings. General emission for arbitrary nested branches and
+  loop bodies still needs composition before this end-to-end item can be
+  checked off.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

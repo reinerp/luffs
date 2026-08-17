@@ -2505,6 +2505,39 @@ theorem removeClassArrays_result
                 Nat.lt_of_not_ge hnext, Nat.lt_of_not_ge hprevious,
                 hmetadata, by simp [hsuccessor]⟩
 
+/-- Once its public source guards and the intrusive-splice preflight hold,
+class removal cannot fail after it begins mutating metadata. -/
+theorem removeClassArrays_ne_none_of_preflight
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {bin block : Nat}
+    (hbin : bin < heads.length) (hfl : bin / 32 < second.length)
+    (hnext : block < next.length) (hprevious : block < previous.length) :
+    removeClassArrays second first heads next previous bin block ≠ none := by
+  have hremove := removeArrays_ne_none_of_bounds hbin hnext hprevious
+  simp only [removeClassArrays, Nat.not_le.mpr hbin, if_false,
+    Nat.not_le.mpr hfl, Nat.not_le.mpr hnext, Nat.not_le.mpr hprevious]
+  cases hremoveEq : removeArrays heads next previous bin block with
+  | none => exact (hremove hremoveEq).elim
+  | some removed => simp
+
+theorem removeClassArrays_preserves_lengths
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {bin block : Nat}
+    {result : RemoveClassResult}
+    (hremove : removeClassArrays second first heads next previous bin block =
+      some result) :
+    result.second.length = second.length ∧ result.heads.length = heads.length ∧
+      result.next.length = next.length ∧
+      result.previous.length = previous.length := by
+  have hresult := removeClassArrays_result hremove
+  have hmetadata := removeArrays_result hresult.2.2.2.2.1
+  have hlens := remove_preserves_lengths hmetadata
+  constructor
+  · split at hresult
+    · rw [hresult.2.1, clearClassBit_length]
+    · rw [hresult.2.1]
+  · exact hlens
+
 /-- Bounds preflighted by public allocation make remainder insertion total.
 No property of the old head is required: insertion conditionally repairs its
 back-link only when that sentinel-or-offset is representable. -/
@@ -6575,6 +6608,27 @@ theorem coalescePhysicalArrays_result {offsets sizes : List Nat}
                     exact ⟨rfl, Nat.lt_of_not_ge hright, hleftFree,
                       hrightFree, leftOffset, leftSize, rightSize,
                       rfl, rfl, by simpa [hoffset], rfl⟩
+
+/-- The checked physical compaction has no post-preflight failure edge. -/
+theorem coalescePhysicalArrays_ne_none_of_preflight
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count left leftOffset leftSize rightOffset rightSize : Nat}
+    (hoffsetsCount : count ≤ offsets.length)
+    (hsizesCount : count ≤ sizes.length)
+    (hfreeCount : count ≤ isFree.length)
+    (hprevCount : count ≤ prevFree.length)
+    (hright : left + 1 < count)
+    (hleftFree : isFree[left]? ≠ some 0)
+    (hrightFree : isFree[left + 1]? ≠ some 0)
+    (hleftOffset : offsets[left]? = some leftOffset)
+    (hleftSize : sizes[left]? = some leftSize)
+    (hrightOffset : offsets[left + 1]? = some rightOffset)
+    (hrightSize : sizes[left + 1]? = some rightSize)
+    (hadjacent : leftOffset + leftSize = rightOffset) :
+    coalescePhysicalArrays offsets sizes isFree prevFree count left ≠ none := by
+  simp [coalescePhysicalArrays, hoffsetsCount, hsizesCount, hfreeCount,
+    hprevCount, Nat.not_le.mpr hright, hleftFree, hrightFree, hleftOffset,
+    hleftSize, hrightOffset, hrightSize, hadjacent]
 
 /-- The concrete active-prefix compaction is already the abstract head
 coalescing transition. The old final active slot becomes spare capacity and is

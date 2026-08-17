@@ -339,6 +339,11 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   seven mutable metadata components exactly. Iris-Lean corollaries frame
   arbitrary disjoint allocator and client resources. Composing the optional
   coalescing stages into the same public failure theorem remains.
+  For that composition, Lean now proves each guarded arbitrary class removal
+  total, proves it preserves all link, head, and second-level bitmap lengths,
+  and proves physical compaction total from the checked active-prefix,
+  free-pair, lookup, and adjacency facts. These eliminate three more possible
+  post-mutation failure edges in the coalescing transaction.
 - [x] Prove the bounded-step property of bin lookup and local list updates.
   The exact lowered flat-bitmap cost model counts inspected 64-bit words and
   is bounded by the input word count, hence at most four probes for the fixed

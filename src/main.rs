@@ -35,6 +35,7 @@ struct Module {
     tlsf_find_fit_models: Vec<TlsfFindFitModel>,
     tlsf_find_nonempty_bin_models: Vec<TlsfFindNonemptyBinModel>,
     tlsf_take_candidate_models: Vec<TlsfTakeCandidateModel>,
+    tlsf_find_nonempty_class_models: Vec<TlsfFindNonemptyClassModel>,
 }
 
 #[derive(Debug)]
@@ -107,6 +108,12 @@ struct TlsfFindNonemptyBinModel {
 
 #[derive(Debug)]
 struct TlsfTakeCandidateModel {
+    name: String,
+    refines: String,
+}
+
+#[derive(Debug)]
+struct TlsfFindNonemptyClassModel {
     name: String,
     refines: String,
 }
@@ -354,6 +361,7 @@ fn parse(source: &str) -> Result<Module, String> {
         tlsf_find_fit_models: parse_tlsf_find_fit_models(source),
         tlsf_find_nonempty_bin_models: parse_tlsf_find_nonempty_bin_models(source),
         tlsf_take_candidate_models: parse_tlsf_take_candidate_models(source),
+        tlsf_find_nonempty_class_models: parse_tlsf_find_nonempty_class_models(source),
     })
 }
 
@@ -1163,6 +1171,61 @@ fn parse_tlsf_take_candidate_models(source: &str) -> Vec<TlsfTakeCandidateModel>
     }
 }
 
+fn parse_tlsf_find_nonempty_class_models(source: &str) -> Vec<TlsfFindNonemptyClassModel> {
+    let lines = source.lines().collect::<Vec<_>>();
+    let Some(index) = lines
+        .iter()
+        .position(|line| line.trim().starts_with("fn tlsf_find_nonempty_class("))
+    else {
+        return Vec::new();
+    };
+    let Some(target) = index
+        .checked_sub(1)
+        .and_then(|i| lines.get(i))
+        .and_then(|line| line.trim().strip_prefix("// refines "))
+    else {
+        return Vec::new();
+    };
+    let body = lines[index + 1..]
+        .iter()
+        .map(|line| line.trim())
+        .collect::<Vec<_>>();
+    let required = [
+        "if start_fl >= second_nonempty.len() { return None; }",
+        "if start_sl >= 32 { return None; }",
+        "let second_bitmap: u32 = second_nonempty[start_fl];",
+        "let second_masked: u32 = second_bitmap & (u32::MAX << start_sl);",
+        "if second_masked != 0 {",
+        "let found_sl: usize = second_masked.trailing_zeros() as usize;",
+        "return Some(bin);",
+        "let next_fl: usize = start_fl.checked_add(1)?;",
+        "let first_bitmap: u64 = first_nonempty[0];",
+        "let first_masked: u64 = first_bitmap & (u64::MAX << next_fl);",
+        "if first_masked == 0 { return None; }",
+        "let found_fl: usize = first_masked.trailing_zeros() as usize;",
+        "let found_second: u32 = second_nonempty[found_fl];",
+        "if found_second == 0 { return None; }",
+        "let found_sl: usize = found_second.trailing_zeros() as usize;",
+        "Some(bin)",
+    ];
+    let mut position = 0;
+    if required.iter().all(|expected| {
+        if let Some(offset) = body[position..].iter().position(|line| line == expected) {
+            position += offset + 1;
+            true
+        } else {
+            false
+        }
+    }) {
+        vec![TlsfFindNonemptyClassModel {
+            name: "tlsf_find_nonempty_class".to_owned(),
+            refines: target.trim().to_owned(),
+        }]
+    } else {
+        Vec::new()
+    }
+}
+
 fn logical_lines(source: &str) -> Result<Vec<(usize, String)>, String> {
     let lines: Vec<&str> = source.lines().collect();
     let mut result = Vec::new();
@@ -1460,6 +1523,7 @@ fn lean(module: &Module) -> String {
         || !module.tlsf_find_fit_models.is_empty()
         || !module.tlsf_find_nonempty_bin_models.is_empty()
         || !module.tlsf_take_candidate_models.is_empty()
+        || !module.tlsf_find_nonempty_class_models.is_empty()
     {
         out.push_str("import Luffs.Runtime.TLSF\n");
     }
@@ -1750,6 +1814,22 @@ exact Luffs.Runtime.TLSF.findNonemptyBinLowered_refines words start\n\n",
             model.name, model.name, model.refines
         ));
     }
+    for model in &module.tlsf_find_nonempty_class_models {
+        out.push_str(&format!(
+            "def {}_model (second : List (BitVec 32)) (first : BitVec 64) (start_fl start_sl : Nat) : Option Nat :=\n  \
+Luffs.Runtime.TLSF.findNonemptyClassLowered second first start_fl start_sl\n\n",
+            model.name
+        ));
+        out.push_str(&format!(
+            "theorem {}_refines (second : List (BitVec 32)) (first : BitVec 64)\n    \
+(hrep : Luffs.Runtime.TLSF.FirstBitmapRep first second) (start_fl start_sl : Nat)\n    \
+(hstart_sl : start_sl < 32) :\n    \
+{}_model\n      \
+second first start_fl start_sl = {} second start_fl start_sl := by\n  \
+exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl hstart_sl\n\n",
+            model.name, model.name, model.refines
+        ));
+    }
     out.push_str("end LuffsGenerated\n");
     out
 }
@@ -1928,6 +2008,7 @@ mod tests {
         assert_eq!(m.tlsf_find_fit_models.len(), 1);
         assert_eq!(m.tlsf_find_nonempty_bin_models.len(), 1);
         assert_eq!(m.tlsf_take_candidate_models.len(), 1);
+        assert_eq!(m.tlsf_find_nonempty_class_models.len(), 1);
         let generated = lean(&m);
         assert!(generated.contains(
             "theorem tlsf_insert_refines : tlsf_insert_model = Luffs.Runtime.TLSF.insertArrays"
@@ -1944,6 +2025,7 @@ mod tests {
         assert!(generated.contains(
             "theorem tlsf_take_candidate_refines : tlsf_take_candidate_model = Luffs.Runtime.TLSF.takeCandidateArrays"
         ));
+        assert!(generated.contains("theorem tlsf_find_nonempty_class_refines"));
     }
 
     #[test]

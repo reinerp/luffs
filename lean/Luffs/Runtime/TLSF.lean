@@ -778,6 +778,270 @@ theorem findNonemptyClassChunked_refines (second : List (BitVec 32))
       simp [Function.comp_def]
       omega
 
+def findNonzeroClassWords : List (BitVec 32) → Nat → Option Nat
+  | [], _ => none
+  | word :: rest, base =>
+      if word = 0 then findNonzeroClassWords rest (base + 32)
+      else some (base + word.ctz.toNat)
+
+theorem findNonzeroClassWords_refines (second : List (BitVec 32))
+    (base : Nat) :
+    findNonzeroClassWords second base =
+      (firstTrueIndex (classBits second)).map (base + ·) := by
+  induction second generalizing base with
+  | nil => simp [findNonzeroClassWords, classBits, firstTrueIndex]
+  | cons word rest ih =>
+    rw [classBits, firstTrueIndex_append]
+    by_cases hzero : word = (0 : BitVec 32)
+    · subst word
+      have hwordZero : firstTrueIndex (secondWordBits (0 : BitVec 32)) = none := by
+        native_decide
+      rw [hwordZero]
+      simp only [findNonzeroClassWords, if_pos rfl, ih, Option.map_map]
+      cases hrest : firstTrueIndex (classBits rest) with
+      | none => simp
+      | some offset =>
+        simp only [Option.map_some]
+        congr 1
+        simp [secondWordBits_length]
+        omega
+    · rw [firstTrueIndex_secondWordBits_ctz hzero]
+      rw [findNonzeroClassWords, if_neg hzero]
+      rfl
+
+def findNonzeroViaBits (second : List (BitVec 32)) (start : Nat) : Option Nat :=
+  match firstSetFrom (secondNonzeroBits second) start with
+  | none => none
+  | some fl =>
+      let word := second[fl]?.getD 0
+      if word = 0 then none else some (fl * 32 + word.ctz.toNat)
+
+def findNonzeroClassOffset : List (BitVec 32) → Option Nat
+  | [] => none
+  | word :: rest =>
+      if word = 0 then (findNonzeroClassOffset rest).map (32 + ·)
+      else some word.ctz.toNat
+
+def firstClassFromNonzero (second : List (BitVec 32)) : Option Nat :=
+  match firstTrueIndex (secondNonzeroBits second) with
+  | none => none
+  | some fl =>
+      let word := second[fl]?.getD 0
+      if word = 0 then none else some (fl * 32 + word.ctz.toNat)
+
+theorem firstClassFromNonzero_refines (second : List (BitVec 32)) :
+    firstClassFromNonzero second = firstTrueIndex (classBits second) := by
+  induction second with
+  | nil => simp [firstClassFromNonzero, secondNonzeroBits, classBits,
+      firstTrueIndex]
+  | cons word rest ih =>
+    by_cases hzero : word = (0 : BitVec 32)
+    · subst word
+      have hwordZero : firstTrueIndex (secondWordBits (0 : BitVec 32)) = none := by
+        native_decide
+      have hnonzeroIndex :
+          firstTrueIndex (secondNonzeroBits ((0 : BitVec 32) :: rest)) =
+            (firstTrueIndex (secondNonzeroBits rest)).map Nat.succ := by
+        simp [secondNonzeroBits, firstTrueIndex]
+      rw [classBits, firstTrueIndex_append, hwordZero]
+      unfold firstClassFromNonzero
+      rw [hnonzeroIndex]
+      cases hfind : firstTrueIndex (secondNonzeroBits rest) with
+      | none =>
+        have hi := ih
+        unfold firstClassFromNonzero at hi
+        rw [hfind] at hi
+        simp only at hi
+        rw [← hi]
+        simp
+      | some fl =>
+        simp only [Option.map_some, List.getElem?_cons_succ]
+        have hselectedBits := firstTrueIndex_sound hfind
+        cases hget : rest[fl]? with
+        | none =>
+          simp [secondNonzeroBits, List.getElem?_map, hget] at hselectedBits
+        | some selected =>
+          have hselected : selected ≠ 0 := by
+            simp [secondNonzeroBits, List.getElem?_map, hget] at hselectedBits
+            exact hselectedBits
+          have hi := ih
+          unfold firstClassFromNonzero at hi
+          rw [hfind] at hi
+          simp only [hget, Option.getD_some, if_neg hselected] at hi
+          rw [← hi]
+          simp only [Option.getD_some]
+          rw [if_neg hselected]
+          simp [secondWordBits_length]
+          omega
+    · rw [classBits, firstTrueIndex_append,
+        firstTrueIndex_secondWordBits_ctz hzero]
+      have hnonzeroIndex :
+          firstTrueIndex (secondNonzeroBits (word :: rest)) = some 0 := by
+        have hzero' : word ≠ (0 : BitVec 32) := by simpa only using hzero
+        have hdecide : decide (word ≠ (0 : BitVec 32)) = true := by
+          exact decide_eq_true hzero'
+        simp only [secondNonzeroBits, List.map_cons, firstTrueIndex]
+        rw [hdecide]
+        rfl
+      unfold firstClassFromNonzero
+      rw [hnonzeroIndex]
+      simp only [List.getElem?_cons_zero, Option.getD_some]
+      rw [if_neg hzero]
+      simp
+
+theorem secondNonzeroBits_drop (second : List (BitVec 32)) (start : Nat) :
+    secondNonzeroBits (second.drop start) =
+      (secondNonzeroBits second).drop start := by
+  simp [secondNonzeroBits, List.map_drop]
+
+theorem findNonzeroViaBits_refines (second : List (BitVec 32)) (start : Nat) :
+    findNonzeroViaBits second start =
+      (firstTrueIndex (classBits (second.drop start))).map
+        (start * 32 + ·) := by
+  unfold findNonzeroViaBits firstSetFrom
+  rw [← secondNonzeroBits_drop]
+  cases hfind : firstTrueIndex (secondNonzeroBits (second.drop start)) with
+  | none =>
+    have href := firstClassFromNonzero_refines (second.drop start)
+    unfold firstClassFromNonzero at href
+    rw [hfind] at href
+    simp only at href
+    simp [hfind, ← href]
+  | some offset =>
+    have href := firstClassFromNonzero_refines (second.drop start)
+    unfold firstClassFromNonzero at href
+    rw [hfind] at href
+    simp only at href
+    have hget : second[start + offset]? = (second.drop start)[offset]? := by
+      rw [List.getElem?_drop]
+    simp only [hfind, Option.map_some]
+    rw [hget]
+    rw [← href]
+    split
+    next hzero => simp only [hzero, if_true, Option.map_none]
+    next hnonzero =>
+      simp only [hnonzero, if_false, Option.map_some]
+      congr 1
+      omega
+
+def findNonzeroViaFirst (second : List (BitVec 32)) (first : BitVec 64)
+    (start : Nat) : Option Nat :=
+  match firstSetFrom (wordBits first) start with
+  | none => none
+  | some fl =>
+      let word := second[fl]?.getD 0
+      if word = 0 then none else some (fl * 32 + word.ctz.toNat)
+
+theorem findNonzeroViaFirst_refines {second : List (BitVec 32)}
+    {first : BitVec 64} (hrep : FirstBitmapRep first second) (start : Nat) :
+    findNonzeroViaFirst second first start = findNonzeroViaBits second start := by
+  unfold findNonzeroViaFirst findNonzeroViaBits
+  rw [hrep.2]
+
+def findNonemptyClassCached (second : List (BitVec 32)) (first : BitVec 64)
+    (startFl startSl : Nat) : Option Nat :=
+  if startFl ≥ second.length then none else
+  if startSl ≥ 32 then none else
+  let word := second[startFl]?.getD 0
+  match firstSetFrom (secondWordBits word) startSl with
+  | some sl => some (startFl * 32 + sl)
+  | none => findNonzeroViaFirst second first (startFl + 1)
+
+theorem findNonemptyClassCached_eq_chunked {second : List (BitVec 32)}
+    {first : BitVec 64} (hrep : FirstBitmapRep first second)
+    (startFl startSl : Nat) (hstartSl : startSl < 32) :
+    findNonemptyClassCached second first startFl startSl =
+      findNonemptyClassChunked second startFl startSl := by
+  unfold findNonemptyClassCached findNonemptyClassChunked
+  by_cases hfl : startFl < second.length
+  · rw [if_neg (by omega), if_neg (by omega),
+      List.drop_eq_getElem_cons hfl]
+    simp only [List.getElem?_eq_getElem hfl, Option.getD_some]
+    cases hfirst : firstSetFrom (secondWordBits second[startFl]) startSl with
+    | some sl => simp [hfirst]
+    | none =>
+      simp only [hfirst]
+      rw [findNonzeroViaFirst_refines hrep,
+        findNonzeroViaBits_refines]
+  · rw [if_pos (by omega)]
+    have hdrop : second.drop startFl = [] :=
+      List.drop_eq_nil_of_le (by omega)
+    rw [hdrop]
+
+theorem findNonemptyClassLowered_eq_cached {second : List (BitVec 32)}
+    {first : BitVec 64} (hrep : FirstBitmapRep first second)
+    (startFl startSl : Nat) :
+    findNonemptyClassLowered second first startFl startSl =
+      findNonemptyClassCached second first startFl startSl := by
+  unfold findNonemptyClassLowered findNonemptyClassCached
+  by_cases hfl : startFl < second.length
+  · have hnfl : ¬ startFl ≥ second.length := by omega
+    simp only [hnfl, if_false]
+    by_cases hsl : startSl < 32
+    · have hnsl : ¬ startSl ≥ 32 := by omega
+      simp only [hnsl, if_false]
+      by_cases hsecond :
+          second[startFl]?.getD 0 &&& maskFrom32 startSl = 0
+      · rw [if_neg (not_not_intro hsecond),
+          firstSetFrom_secondWordBits_eq_none_of_masked_eq_zero _ _ hsecond]
+        by_cases hnext : startFl + 1 < 64
+        · rw [if_neg (by omega)]
+          by_cases hfirst : first &&& maskFrom (startFl + 1) = 0
+          · rw [if_pos hfirst]
+            unfold findNonzeroViaFirst
+            rw [firstSetFrom_wordBits_eq_none_of_masked_eq_zero _ _ hfirst]
+          · rw [if_neg hfirst]
+            have hfirstSet :=
+              firstSetFrom_wordBits_eq_masked_ctz first (startFl + 1) hfirst
+            have hfoundBound :
+                (first &&& maskFrom (startFl + 1)).ctz.toNat < second.length := by
+              rw [hrep.1]
+              exact (maskedWord64_ctz_facts hfirst).2.1
+            rw [if_neg (by omega)]
+            unfold findNonzeroViaFirst
+            rw [hfirstSet]
+        · rw [if_pos (by omega)]
+          unfold findNonzeroViaFirst firstSetFrom
+          have hdrop : (wordBits first).drop (startFl + 1) = [] := by
+            apply List.drop_eq_nil_of_le
+            rw [wordBits_length]
+            omega
+          rw [hdrop]
+          rfl
+      · rw [if_pos hsecond,
+          firstSetFrom_secondWordBits_eq_masked_ctz _ _ hsecond]
+    · have hgesl : startSl ≥ 32 := by omega
+      simp only [hgesl, if_true]
+  · have hgefl : startFl ≥ second.length := by omega
+    simp only [hgefl, if_true]
+
+theorem findNonemptyClassLowered_refines {second : List (BitVec 32)}
+    {first : BitVec 64} (hrep : FirstBitmapRep first second)
+    (startFl startSl : Nat) (hstartSl : startSl < 32) :
+    findNonemptyClassLowered second first startFl startSl =
+      findNonemptyClass second startFl startSl := by
+  rw [findNonemptyClassLowered_eq_cached hrep,
+    findNonemptyClassCached_eq_chunked hrep _ _ hstartSl,
+    findNonemptyClassChunked_refines _ _ _ hstartSl]
+
+theorem findNonemptyClassLowered_complete {second : List (BitVec 32)}
+    {first : BitVec 64} (hrep : FirstBitmapRep first second)
+    {startFl startSl index : Nat} (hstartSl : startSl < 32)
+    (hstart : startFl * 32 + startSl ≤ index)
+    (hset : (classBits second)[index]? = some true) :
+    ∃ found, findNonemptyClassLowered second first startFl startSl = some found := by
+  rw [findNonemptyClassLowered_refines hrep _ _ hstartSl]
+  exact firstSetFrom_complete hstart hset
+
+theorem findNonemptyClassLowered_minimal {second : List (BitVec 32)}
+    {first : BitVec 64} (hrep : FirstBitmapRep first second)
+    {startFl startSl found earlier : Nat} (hstartSl : startSl < 32)
+    (hfind : findNonemptyClassLowered second first startFl startSl = some found)
+    (hstart : startFl * 32 + startSl ≤ earlier) (hearlier : earlier < found) :
+    (classBits second)[earlier]? = some false := by
+  rw [findNonemptyClassLowered_refines hrep _ _ hstartSl] at hfind
+  exact firstSetFrom_minimal hfind hstart hearlier
+
 theorem findNonemptyClass_sound {second : List (BitVec 32)}
     {startFl startSl found : Nat}
     (hfind : findNonemptyClass second startFl startSl = some found) :

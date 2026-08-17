@@ -224,7 +224,11 @@ second-level words. For each `u32`, masked `ctz` is proved exactly equal to its
 logical suffix search, including the zero-mask failure case. The first-level
 cache relation is stated extensionally as equality between its 64 bits and the
 64-element map of second-level-word nonemptiness; proving that cached jump
-equal to the remaining complete-word search is the next refinement step.
+equal to the remaining complete-word search is now complete. Under that cache
+relation and `start_sl < 32`, the exact lowered Luffs lookup equals logical
+first-set search over all 2048 classes. Consequently it is sound, complete,
+and minimal. The compiler emits this lowered model and checks the refinement
+theorem with the cache relation as an explicit premise.
 The current linear size/free-array fallback also has executable list semantics.
 Success is proved to return an in-bounds entry whose flag is nonzero and whose
 size satisfies the request; conversely, any such entry proves lookup cannot

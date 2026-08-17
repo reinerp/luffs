@@ -120,6 +120,7 @@ fn tlsf_take_candidate(nonempty: &mut [u64; 4], heads: &mut [usize; 2048], next:
 // True TLSF lookup over the allocator's 64 × 32 class space. Search the
 // starting first-level class from start_sl, then use the first-level bitmap to
 // jump directly to the next first-level class with a nonempty second level.
+// refines Luffs.Runtime.TLSF.findNonemptyClass
 fn tlsf_find_nonempty_class(second_nonempty: &[u32; 64], first_nonempty: &[u64; 1], start_fl: usize, start_sl: usize) -> Option<usize> {
     if start_fl >= second_nonempty.len() { return None; }
     if start_sl >= 32 { return None; }

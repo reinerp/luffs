@@ -98,9 +98,13 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   are true. Setting a class bit is now proved to preserve every other packed
   class bit. Consequently, under abstract bin validity, the entire concrete
   second-level bitmap refines `Bins.State.insert`; setting the corresponding
-  first-level bit is also proved to preserve `FirstBitmapRep`. Framing every
-  non-selected intrusive chain across the concrete insertion is the next
-  bridge.
+  first-level bit is also proved to preserve `FirstBitmapRep`. Every
+  non-selected intrusive chain is now framed across the concrete writes using
+  cross-bin offset disjointness, including the selected old head's back-link.
+  The final insertion theorem therefore refines exactly `Bins.State.insert`,
+  preserves abstract bin validity, represents every successor chain, and
+  preserves both bitmap abstractions. Composing it with the physical free-bit
+  transition is the next bridge.
 - [ ] Prove physical blocks form a disjoint partition of every mapped pool.
   `partitions` now requires adjacency from offset zero plus exact byte coverage,
   closing the gap permitted by the earlier ordered/sum-only invariant.

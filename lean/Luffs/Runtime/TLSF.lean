@@ -2134,6 +2134,20 @@ def linked (state : Metadata) : Nat → List Nat → Prop
       state.next[block]? = some (rest.head?.getD state.next.length) ∧
       linked state block rest
 
+theorem linked_member_bounds {state : Metadata} {expected : Nat}
+    {chain : List Nat} (hlinked : linked state expected chain)
+    {node : Nat} (hmem : node ∈ chain) :
+    node < state.next.length ∧ node < state.previous.length := by
+  induction chain generalizing expected with
+  | nil => simp at hmem
+  | cons head rest ih =>
+      simp only [linked] at hlinked
+      rcases hlinked with ⟨hheadNext, hheadPrevious, _, _, hrest⟩
+      simp only [List.mem_cons] at hmem
+      rcases hmem with rfl | htail
+      · exact ⟨hheadNext, hheadPrevious⟩
+      · exact ih hrest htail
+
 /-- A logical bin chain is represented by the head table and intrusive links. -/
 def RepresentsBin (state : Metadata) (bin : Nat) (chain : List Nat) : Prop :=
   bin < state.heads.length ∧
@@ -2478,6 +2492,74 @@ theorem insertClassArrays_preserves_metadata_lengths
   rcases hresult with ⟨_, _, _, _, hmetadata, _, _⟩
   exact insert_preserves_lengths hmetadata
 
+theorem insert_frames_other_bin
+    {state nextState : Metadata} {bin otherBin block : Nat}
+    {selectedChain otherChain : List Nat}
+    (hselected : RepresentsBin state bin selectedChain)
+    (hother : RepresentsBin state otherBin otherChain)
+    (hbinsNe : otherBin ≠ bin)
+    (hblockFresh : block ∉ otherChain)
+    (hchainsDisjoint : ∀ offset, offset ∈ selectedChain →
+      offset ∈ otherChain → False)
+    (hinsert : insert state bin block = some nextState) :
+    RepresentsBin nextState otherBin otherChain := by
+  rcases hselected with
+    ⟨_, hselectedLengths, hselectedHead, hselectedLinked, _⟩
+  rcases hother with
+    ⟨hotherBin, hotherLengths, hotherHead, hotherLinked, hotherNodup⟩
+  have hresult := insert_result hinsert
+  rcases hresult with
+    ⟨_, _, _, hheads, hnext, hprevious⟩
+  have hlengths := insert_preserves_lengths hinsert
+  let oldHead := state.heads[bin]?.getD 0
+  have holdHeadFresh : oldHead ∉ otherChain := by
+    cases hchain : selectedChain with
+    | nil =>
+        have holdSentinel : oldHead = state.next.length := by
+          simpa [oldHead, hchain] using hselectedHead
+        intro hmem
+        have hbound := (linked_member_bounds hotherLinked hmem).1
+        rw [holdSentinel] at hbound
+        omega
+    | cons head rest =>
+        have holdHead : oldHead = head := by
+          simpa [oldHead, hchain] using hselectedHead
+        intro hmem
+        apply hchainsDisjoint oldHead
+        · rw [holdHead]
+          simp [hchain]
+        · exact hmem
+  refine ⟨by omega, by omega, ?_, ?_, hotherNodup⟩
+  · rw [hheads, List.getElem?_set_ne (Ne.symm hbinsNe)]
+    rw [hlengths.2.1]
+    exact hotherHead
+  · rw [hlengths.2.1]
+    apply linked_congr hlengths.2.1 hlengths.2.2
+    · intro node hmem
+      rw [hnext, List.getElem?_set_ne]
+      intro heq
+      apply hblockFresh
+      rw [heq]
+      exact hmem
+    · intro node hmem
+      rw [hprevious]
+      have hnodeBlock : node ≠ block := by
+        intro heq
+        apply hblockFresh
+        rw [← heq]
+        exact hmem
+      have hnodeHead : node ≠ oldHead := by
+        intro heq
+        apply holdHeadFresh
+        rw [← heq]
+        exact hmem
+      change node ≠ state.heads[bin]?.getD 0 at hnodeHead
+      split
+      · rw [List.getElem?_set_ne (Ne.symm hnodeHead),
+          List.getElem?_set_ne (Ne.symm hnodeBlock)]
+      · rw [List.getElem?_set_ne (Ne.symm hnodeBlock)]
+    · exact hotherLinked
+
 theorem insertClassArrays_represents_selected
     {second : List (BitVec 32)} {first : BitVec 64}
     {heads next previous : List Nat} {bin block : Nat}
@@ -2491,6 +2573,93 @@ theorem insertClassArrays_represents_selected
   have hresult := insertClassArrays_result hinsert
   rcases hresult with ⟨_, _, _, _, hmetadata, _, _⟩
   exact insert_represents hrep hfresh hmetadata
+
+theorem insertClassArrays_preserves_bins
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {bin block : Nat}
+    {result : InsertClassResult} {state : Bins.State} {cls : SizeClass}
+    {inserted : Block}
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hfresh : ∀ query, inserted.offset ∉
+      (state.chains query).map Block.offset)
+    (hblock : block = inserted.offset)
+    (hbin : bin = encodeSizeClass cls)
+    (hinsert : insertClassArrays second first heads next previous bin block =
+      some result) :
+    RepresentsBins (Metadata.mk result.heads result.next result.previous)
+      (state.insert cls inserted) := by
+  subst bin
+  intro query
+  by_cases hquery : query = cls
+  · subst query
+    have hselected := insertClassArrays_represents_selected
+      (hrep := hbins cls) (hfresh := by simpa [hblock] using hfresh cls)
+      hinsert
+    have hchain :
+        ((state.insert cls inserted).chains cls).map Block.offset =
+          inserted.offset :: (state.chains cls).map Block.offset := by
+      cases hcurrent : state.chains cls <;>
+        simp [Bins.State.insert, Bins.State.replaceChain,
+          Bins.State.fromChains, Bins.Chains.replace,
+          FreeList.insertFront, FreeList.withLinks, hcurrent]
+    change RepresentsBin (Metadata.mk result.heads result.next result.previous)
+      (encodeSizeClass cls)
+      (((state.insert cls inserted).chains cls).map Block.offset)
+    rw [hchain, ← hblock]
+    exact hselected
+  · have hresult := insertClassArrays_result hinsert
+    rcases hresult with ⟨_, _, _, _, hmetadata, _, _⟩
+    have hindexNe : encodeSizeClass query ≠ encodeSizeClass cls := by
+      intro heq
+      exact hquery (classIndex_injective heq)
+    have hframe := insert_frames_other_bin
+      (hselected := hbins cls) (hother := hbins query)
+      (hbinsNe := hindexNe)
+      (hblockFresh := by simpa [hblock] using hfresh query)
+      (hchainsDisjoint := by
+        intro offset hselectedMem hqueryMem
+        exact hdisjoint (Ne.symm hquery) offset hselectedMem hqueryMem)
+      hmetadata
+    have hchain : (state.insert cls inserted).chains query =
+        state.chains query := by
+      simp [Bins.State.insert, Bins.State.replaceChain,
+        Bins.State.fromChains, Bins.Chains.replace, hquery]
+    change RepresentsBin (Metadata.mk result.heads result.next result.previous)
+      (encodeSizeClass query)
+      (((state.insert cls inserted).chains query).map Block.offset)
+    rw [hchain]
+    exact hframe
+
+/-- End-to-end refinement of the concrete Luffs class insertion to the
+abstract TLSF bin transition, including intrusive chains and both cache levels. -/
+theorem insertClassArrays_refines_insert
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {bin block : Nat}
+    {result : InsertClassResult} {state : Bins.State} {cls : SizeClass}
+    {inserted : Block}
+    (hvalid : Bins.Valid state)
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hfresh : ∀ query, inserted.offset ∉
+      (state.chains query).map Block.offset)
+    (hbelongs : Bins.Belongs cls inserted)
+    (hblock : block = inserted.offset)
+    (hbin : bin = encodeSizeClass cls)
+    (hinsert : insertClassArrays second first heads next previous bin block =
+      some result) :
+    Bins.Valid (state.insert cls inserted) ∧
+      RepresentsBins (Metadata.mk result.heads result.next result.previous)
+        (state.insert cls inserted) ∧
+      RepresentsSecondBitmap result.second (state.insert cls inserted) ∧
+      FirstBitmapRep result.first result.second := by
+  have hbitmaps := insertClassArrays_preserves_bitmaps
+    (inserted := inserted) hsecond hfirst hvalid hbin hinsert
+  exact ⟨Bins.insert_valid hvalid cls inserted hbelongs (hfresh cls),
+    insertClassArrays_preserves_bins hbins hdisjoint hfresh hblock hbin hinsert,
+    hbitmaps.1, hbitmaps.2⟩
 
 theorem remove_result {state nextState : Metadata} {bin block : Nat}
     (hremove : remove state bin block = some nextState) :

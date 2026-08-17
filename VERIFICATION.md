@@ -58,8 +58,12 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   cursor-indexed invariant rule that exposes each loop-condition fact to its
   body instance. Bytewise Vec relocation also has a generated effect program:
   its exact `CopySteps` trace proves execution, unique final memory, and a
-  closed WP. Compiler emission of branch and loop program terms still needs
-  composition before this end-to-end item can be checked off.
+  closed WP. The compiler now emits this effect program for the ordinary
+  Rust-shaped `copy_from_slice` Luffs function. Its two source `if` guards
+  become nested `Program.branch` nodes, and the generated theorem uses the
+  CFG facts plus the exact copy trace to establish the program WP. General
+  emission for arbitrary branches and loop bodies still needs composition
+  before this end-to-end item can be checked off.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

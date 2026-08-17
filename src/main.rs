@@ -2884,6 +2884,9 @@ fn validate(module: &Module) -> Result<(), String> {
 
 fn lean(module: &Module) -> String {
     let mut out = String::from("import Init.Omega\n");
+    if !module.copy_models.is_empty() {
+        out.push_str("import Luffs.Memory.Semantics\n");
+    }
     if module
         .scalar_models
         .iter()
@@ -3126,6 +3129,45 @@ fn lean(module: &Module) -> String {
                 target
             ));
         }
+        out.push_str(&format!(
+            "def {}_program (sourceBase destinationBase : Nat) ({} {} : List (Fin 256)) ({} : Nat) : Luffs.Memory.Program :=\n  ",
+            model.name, model.source, model.destination, model.len
+        ));
+        for guard in &model.guards {
+            out.push_str(&format!(
+                "Luffs.Memory.Program.branch (decide ({guard})) .done (\n    "
+            ));
+        }
+        out.push_str(&format!(
+            "Luffs.Memory.Program.copyBytes sourceBase destinationBase ({}.take {})",
+            model.source, model.len
+        ));
+        for _ in &model.guards {
+            out.push(')');
+        }
+        out.push_str("\n\n");
+        out.push_str(&format!(
+            "theorem {}_program_wp {{GF : Iris.BundledGFunctors}} (sourceBase destinationBase : Nat) ({} {} : List (Fin 256)) ({} : Nat) (before after : Luffs.Memory.Memory)\n",
+            model.name,
+            model.source,
+            model.destination,
+            model.len,
+        ));
+        for (index, guard) in model.guards.iter().enumerate() {
+            out.push_str(&format!("    (hguard{index} : ¬({guard}))\n"));
+        }
+        out.push_str(&format!(
+            "    (hsteps : Luffs.Memory.CopySteps sourceBase destinationBase ({}.take {}) before after) :\n    ⊢@{{Iris.IProp GF}} Luffs.Memory.Program.wp ({}_program sourceBase destinationBase {} {} {}) before (fun final => final = after) := by\n  simp only [{}_program",
+            model.source,
+            model.len,
+            model.name, model.source, model.destination, model.len, model.name,
+        ));
+        for index in 0..model.guards.len() {
+            out.push_str(&format!(
+                ", hguard{index}, decide_false, Luffs.Memory.Program.branch"
+            ));
+        }
+        out.push_str("]\n  exact hsteps.program_wp\n\n");
     }
     for model in &module.tlsf_insert_models {
         out.push_str(&format!(
@@ -4222,5 +4264,21 @@ mod tests {
         assert!(generated.contains(
             "theorem copy_refines : copy_model = Luffs.Runtime.Containers.vecCopyGrowU8"
         ));
+        assert!(generated.contains(
+            "def copy_program (sourceBase destinationBase : Nat) (source destination : List (Fin 256)) (len : Nat) : Luffs.Memory.Program"
+        ));
+        assert!(
+            generated.contains("Luffs.Memory.Program.branch (decide (len > source.length)) .done")
+        );
+        assert!(
+            generated
+                .contains("Luffs.Memory.Program.branch (decide (len > destination.length)) .done")
+        );
+        assert!(generated.contains(
+            "Luffs.Memory.Program.copyBytes sourceBase destinationBase (source.take len)"
+        ));
+        assert!(generated.contains("theorem copy_program_wp {GF : Iris.BundledGFunctors}"));
+        assert!(generated.contains("(hguard0 : ¬(len > source.length))"));
+        assert!(generated.contains("hsteps.program_wp"));
     }
 }

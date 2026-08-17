@@ -69,6 +69,86 @@ def insertArrays (heads next previous : List Nat) (bin block : Nat) :
   | none => none
   | some state => some (state.heads, state.next, state.previous)
 
+def setWordBit (bitmap : BitVec 64) (bit : Nat) : BitVec 64 :=
+  bitmap ||| (BitVec.ofNat 64 1 <<< bit)
+
+def setSecondBit (bitmap : BitVec 32) (bit : Nat) : BitVec 32 :=
+  bitmap ||| (BitVec.ofNat 32 1 <<< bit)
+
+structure InsertClassResult where
+  second : List (BitVec 32)
+  first : BitVec 64
+  heads : List Nat
+  next : List Nat
+  previous : List Nat
+deriving DecidableEq, Repr
+
+/-- Exact effect of `tlsf_insert_class`: intrusive insertion followed by
+setting the selected second- and first-level cache bits. -/
+def insertClassArrays (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (bin block : Nat) :
+    Option InsertClassResult :=
+  if bin ≥ heads.length then none
+  else
+    let fl := bin / 32
+    let sl := bin % 32
+    if fl ≥ second.length then none
+    else if block ≥ next.length then none
+    else if block ≥ previous.length then none
+    else
+      match insert { heads, next, previous } bin block with
+      | none => none
+      | some metadata =>
+          let oldSecond := second[fl]?.getD 0
+          some {
+            second := second.set fl (setSecondBit oldSecond sl)
+            first := setWordBit first fl
+            heads := metadata.heads
+            next := metadata.next
+            previous := metadata.previous }
+
+theorem insertClassArrays_result
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {bin block : Nat}
+    {result : InsertClassResult}
+    (hinsert : insertClassArrays second first heads next previous bin block =
+      some result) :
+    bin < heads.length ∧ bin / 32 < second.length ∧
+      block < next.length ∧ block < previous.length ∧
+      insert { heads, next, previous } bin block =
+        some (Metadata.mk result.heads result.next result.previous) ∧
+      result.second = second.set (bin / 32)
+        (setSecondBit (second[bin / 32]?.getD 0) (bin % 32)) ∧
+      result.first = setWordBit first (bin / 32) := by
+  unfold insertClassArrays at hinsert
+  split at hinsert <;> try contradiction
+  next hbin =>
+    dsimp only at hinsert
+    split at hinsert <;> try contradiction
+    next hfl =>
+      split at hinsert <;> try contradiction
+      next hnext =>
+        split at hinsert <;> try contradiction
+        next hprevious =>
+          cases hmetadata : insert { heads, next, previous } bin block with
+          | none => simp [hmetadata] at hinsert
+          | some metadata =>
+              simp only [hmetadata, Option.some.injEq] at hinsert
+              subst result
+              exact ⟨Nat.lt_of_not_ge hbin, Nat.lt_of_not_ge hfl,
+                Nat.lt_of_not_ge hnext, Nat.lt_of_not_ge hprevious,
+                rfl, rfl, rfl⟩
+
+theorem setSecondBit_selected (bitmap : BitVec 32) {bit : Nat}
+    (hbit : bit < 32) : (setSecondBit bitmap bit).getLsbD bit = true := by
+  simp [setSecondBit, BitVec.getLsbD_or, BitVec.getLsbD_shiftLeft,
+    BitVec.getLsbD_ofNat, hbit]
+
+theorem setWordBit_selected (bitmap : BitVec 64) {bit : Nat}
+    (hbit : bit < 64) : (setWordBit bitmap bit).getLsbD bit = true := by
+  simp [setWordBit, BitVec.getLsbD_or, BitVec.getLsbD_shiftLeft,
+    BitVec.getLsbD_ofNat, hbit]
+
 /-- Exact pure effect of `tlsf_remove` in `stdlib/tlsf.luffs`. -/
 def remove (state : Metadata) (bin block : Nat) : Option Metadata :=
   if bin ≥ state.heads.length then none
@@ -645,6 +725,30 @@ theorem classBits_get {second : List (BitVec 32)} {fl sl : Nat}
       have hindex : (fl + 1) * 32 + sl - 32 = fl * 32 + sl := by omega
       rw [hindex]
       exact ih hword
+
+theorem insertClassArrays_sets_cache
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {bin block : Nat}
+    {result : InsertClassResult}
+    (hsecondLength : second.length = 64)
+    (hinsert : insertClassArrays second first heads next previous bin block =
+      some result) :
+    result.second.length = second.length ∧
+      (classBits result.second)[bin]? = some true ∧
+      result.first.getLsbD (bin / 32) = true := by
+  have hresult := insertClassArrays_result hinsert
+  rcases hresult with ⟨_, hfl, _, _, _, hsecond, hfirst⟩
+  have hsl : bin % 32 < 32 := Nat.mod_lt bin (by decide)
+  have hfl64 : bin / 32 < 64 := by omega
+  have hword : result.second[bin / 32]? =
+      some (setSecondBit (second[bin / 32]?.getD 0) (bin % 32)) := by
+    rw [hsecond]
+    simp [hfl]
+  have hclass := classBits_get hword hsl
+  rw [setSecondBit_selected _ hsl] at hclass
+  rw [Nat.mul_comm (bin / 32) 32, Nat.div_add_mod] at hclass
+  exact ⟨by simp [hsecond], hclass, by
+    rw [hfirst, setWordBit_selected _ hfl64]⟩
 
 def secondNonzeroBits (second : List (BitVec 32)) : List Bool :=
   second.map fun word => decide (word ≠ 0)
@@ -2125,6 +2229,32 @@ theorem insert_represents {state nextState : Metadata} {bin block : Nat}
             rw [List.getElem?_set_ne (Ne.symm hnodeHead),
               List.getElem?_set_ne (Ne.symm hnodeBlock)]
           · exact htail
+
+theorem insertClassArrays_preserves_metadata_lengths
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {bin block : Nat}
+    {result : InsertClassResult}
+    (hinsert : insertClassArrays second first heads next previous bin block =
+      some result) :
+    result.heads.length = heads.length ∧ result.next.length = next.length ∧
+      result.previous.length = previous.length := by
+  have hresult := insertClassArrays_result hinsert
+  rcases hresult with ⟨_, _, _, _, hmetadata, _, _⟩
+  exact insert_preserves_lengths hmetadata
+
+theorem insertClassArrays_represents_selected
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {bin block : Nat}
+    {result : InsertClassResult} {chain : List Nat}
+    (hrep : RepresentsBin { heads, next, previous } bin chain)
+    (hfresh : block ∉ chain)
+    (hinsert : insertClassArrays second first heads next previous bin block =
+      some result) :
+    RepresentsBin (Metadata.mk result.heads result.next result.previous)
+      bin (block :: chain) := by
+  have hresult := insertClassArrays_result hinsert
+  rcases hresult with ⟨_, _, _, _, hmetadata, _, _⟩
+  exact insert_represents hrep hfresh hmetadata
 
 theorem remove_result {state nextState : Metadata} {bin block : Nat}
     (hremove : remove state bin block = some nextState) :

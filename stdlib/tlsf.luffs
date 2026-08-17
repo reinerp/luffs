@@ -45,6 +45,26 @@ fn tlsf_insert(heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &m
     Some(())
 }
 
+// Insert a free header and set both levels of the nonempty-class cache.
+// Every fallible check precedes the intrusive-list mutation.
+// refines Luffs.Runtime.TLSF.insertClassArrays
+fn tlsf_insert_class(second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], bin: usize, block: usize) -> Option<()> {
+    if bin >= heads.len() { return None; }
+    let fl: usize = bin >> 5;
+    let sl: usize = bin & 31;
+    if fl >= second_nonempty.len() { return None; }
+    if first_nonempty.len() == 0 { return None; }
+    if block >= next.len() { return None; }
+    if block >= previous.len() { return None; }
+
+    tlsf_insert(heads, next, previous, bin, block)?;
+    let second_mask: u32 = 1 << sl;
+    second_nonempty[fl] = second_nonempty[fl] | second_mask;
+    let first_mask: u64 = 1 << fl;
+    first_nonempty[0] = first_nonempty[0] | first_mask;
+    Some(())
+}
+
 // refines Luffs.Runtime.TLSF.removeArrays
 fn tlsf_remove(heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], bin: usize, block: usize) -> Option<()> {
     if bin >= heads.len() { return None; }

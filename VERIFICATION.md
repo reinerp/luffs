@@ -90,7 +90,12 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   proved aligned and large enough, and remains related to an authoritative
   physical header. Executable physical-header lookup by shared metadata is
   proved sound and complete. Applying the exact-fit/split mutation and
-  reinserting a remainder remain.
+  reinserting a remainder remain. The concrete Luffs insertion wrapper now
+  performs all bounds checks before mutation, inserts the block through the
+  intrusive primitive, and sets both packed bitmap-cache levels. Its exact
+  generated state model proves metadata-length preservation, representation
+  of the new selected chain under freshness, and that both selected cache bits
+  are true. Whole-state bitmap abstraction preservation is the next bridge.
 - [ ] Prove physical blocks form a disjoint partition of every mapped pool.
   `partitions` now requires adjacency from offset zero plus exact byte coverage,
   closing the gap permitted by the earlier ordered/sum-only invariant.

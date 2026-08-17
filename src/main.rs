@@ -39,6 +39,7 @@ struct Module {
     tlsf_take_candidate_class_models: Vec<TlsfTakeCandidateModel>,
     tlsf_mark_free_models: Vec<TlsfMarkFreeModel>,
     tlsf_classify_size_models: Vec<TlsfClassifySizeModel>,
+    tlsf_insert_class_models: Vec<TlsfInsertClassModel>,
 }
 
 #[derive(Debug)]
@@ -129,6 +130,12 @@ struct TlsfMarkFreeModel {
 
 #[derive(Debug)]
 struct TlsfClassifySizeModel {
+    name: String,
+    refines: String,
+}
+
+#[derive(Debug)]
+struct TlsfInsertClassModel {
     name: String,
     refines: String,
 }
@@ -380,6 +387,7 @@ fn parse(source: &str) -> Result<Module, String> {
         tlsf_take_candidate_class_models: parse_tlsf_take_candidate_class_models(source),
         tlsf_mark_free_models: parse_tlsf_mark_free_models(source),
         tlsf_classify_size_models: parse_tlsf_classify_size_models(source),
+        tlsf_insert_class_models: parse_tlsf_insert_class_models(source),
     })
 }
 
@@ -1411,6 +1419,58 @@ fn parse_tlsf_classify_size_models(source: &str) -> Vec<TlsfClassifySizeModel> {
     }
 }
 
+fn parse_tlsf_insert_class_models(source: &str) -> Vec<TlsfInsertClassModel> {
+    let lines = source.lines().collect::<Vec<_>>();
+    let Some(index) = lines
+        .iter()
+        .position(|line| line.trim().starts_with("fn tlsf_insert_class("))
+    else {
+        return Vec::new();
+    };
+    let Some(target) = index
+        .checked_sub(1)
+        .and_then(|i| lines.get(i))
+        .and_then(|line| line.trim().strip_prefix("// refines "))
+    else {
+        return Vec::new();
+    };
+    let body = lines[index + 1..]
+        .iter()
+        .map(|line| line.trim())
+        .collect::<Vec<_>>();
+    let required = [
+        "if bin >= heads.len() { return None; }",
+        "let fl: usize = bin >> 5;",
+        "let sl: usize = bin & 31;",
+        "if fl >= second_nonempty.len() { return None; }",
+        "if first_nonempty.len() == 0 { return None; }",
+        "if block >= next.len() { return None; }",
+        "if block >= previous.len() { return None; }",
+        "tlsf_insert(heads, next, previous, bin, block)?;",
+        "let second_mask: u32 = 1 << sl;",
+        "second_nonempty[fl] = second_nonempty[fl] | second_mask;",
+        "let first_mask: u64 = 1 << fl;",
+        "first_nonempty[0] = first_nonempty[0] | first_mask;",
+        "Some(())",
+    ];
+    let mut position = 0;
+    if required.iter().all(|expected| {
+        if let Some(offset) = body[position..].iter().position(|line| line == expected) {
+            position += offset + 1;
+            true
+        } else {
+            false
+        }
+    }) {
+        vec![TlsfInsertClassModel {
+            name: "tlsf_insert_class".to_owned(),
+            refines: target.trim().to_owned(),
+        }]
+    } else {
+        Vec::new()
+    }
+}
+
 fn logical_lines(source: &str) -> Result<Vec<(usize, String)>, String> {
     let lines: Vec<&str> = source.lines().collect();
     let mut result = Vec::new();
@@ -1712,6 +1772,7 @@ fn lean(module: &Module) -> String {
         || !module.tlsf_take_candidate_class_models.is_empty()
         || !module.tlsf_mark_free_models.is_empty()
         || !module.tlsf_classify_size_models.is_empty()
+        || !module.tlsf_insert_class_models.is_empty()
     {
         out.push_str("import Luffs.Runtime.TLSF\n");
     }
@@ -2050,6 +2111,16 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
             model.name, model.name, model.refines
         ));
     }
+    for model in &module.tlsf_insert_class_models {
+        out.push_str(&format!(
+            "def {}_model (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (bin block : Nat) : Option Luffs.Runtime.TLSF.InsertClassResult :=\n  {} second first heads next previous bin block\n\n",
+            model.name, model.refines
+        ));
+        out.push_str(&format!(
+            "theorem {}_refines : {}_model = {} := by rfl\n\n",
+            model.name, model.name, model.refines
+        ));
+    }
     out.push_str("end LuffsGenerated\n");
     out
 }
@@ -2232,6 +2303,7 @@ mod tests {
         assert_eq!(m.tlsf_take_candidate_class_models.len(), 1);
         assert_eq!(m.tlsf_mark_free_models.len(), 1);
         assert_eq!(m.tlsf_classify_size_models.len(), 1);
+        assert_eq!(m.tlsf_insert_class_models.len(), 1);
         let generated = lean(&m);
         assert!(generated.contains(
             "theorem tlsf_insert_refines : tlsf_insert_model = Luffs.Runtime.TLSF.insertArrays"
@@ -2257,6 +2329,9 @@ mod tests {
         ));
         assert!(generated.contains(
             "theorem tlsf_classify_size_refines : tlsf_classify_size_model = Luffs.Runtime.TLSF.classifySizeBin"
+        ));
+        assert!(generated.contains(
+            "theorem tlsf_insert_class_refines : tlsf_insert_class_model = Luffs.Runtime.TLSF.insertClassArrays"
         ));
     }
 

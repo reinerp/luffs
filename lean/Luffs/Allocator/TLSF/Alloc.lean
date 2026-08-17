@@ -735,6 +735,52 @@ theorem allocate_safe {pool : Region} {state : State}
     (fun core remainder _ hcore hremainder _ =>
       allocateCore_remainder_fresh hvalid hcore hremainder) hsuccess
 
+/-- Allocation mutates only its selected free block. Every previously
+allocated block remains represented by the same physical region, even when a
+neighbor's boundary-tag cache changes. -/
+theorem allocate_preserves_allocated {pool : Region} {state : State}
+    (hvalid : Valid pool state) {request : Nat} {hrequest : 0 < request}
+    {hkeyMax : requestKey request < 2 ^ firstLevelCount} {result : Result}
+    (hsuccess : allocate state request hrequest hkeyMax = some result)
+    {old : Block} (hold : old ∈ state.physical) (holdAllocated : old.free = false) :
+    ∃ updated ∈ result.state.physical,
+      SamePhysical updated old ∧ updated ≠ result.allocated := by
+  obtain ⟨core, hcore, hfinish, hresultAllocated⟩ := allocate_result hsuccess
+  obtain ⟨prepared, hprepare, hchosen, _, _⟩ := allocateCore_result hcore
+  obtain ⟨selected, hget, _, hselectedFree, _, _, _, _⟩ :=
+    prepare_safe hvalid hprepare
+  have hother : ¬ SamePhysical selected old := by
+    intro hsame
+    have : selected.free = false := (samePhysical_free hsame).trans holdAllocated
+    simp [hselectedFree] at this
+  obtain ⟨updated, hupdated, hsame⟩ :=
+    allocateChosenAt_preserves_other hget hchosen hold hother
+  have hnew := allocateChosenAt_allocated_mem hget hchosen
+  have hupdatedNe : updated ≠ core.allocated := by
+    intro heq
+    have hoffset : selected.offset = old.offset := by
+      rw [← hnew.2.1, ← heq, hsame.1]
+    have hselectedMem : selected ∈ state.physical :=
+      List.mem_of_getElem? hget
+    have heqOld := wellFormed_same_offset hvalid.1 hselectedMem hold hoffset
+    subst old
+    simp [hselectedFree] at holdAllocated
+  rw [finishCore_physical hfinish]
+  exact ⟨updated, hupdated, hsame, by simpa [hresultAllocated] using hupdatedNe⟩
+
+theorem allocate_allocated_mem {state : State} {request : Nat}
+    {hrequest : 0 < request}
+    {hkeyMax : requestKey request < 2 ^ firstLevelCount} {result : Result}
+    (hsuccess : allocate state request hrequest hkeyMax = some result) :
+    result.allocated ∈ result.state.physical := by
+  obtain ⟨core, hcore, hfinish, hallocated⟩ := allocate_result hsuccess
+  obtain ⟨prepared, hprepare, hchosen, _, _⟩ := allocateCore_result hcore
+  obtain ⟨_, hfind⟩ := prepare_result hprepare
+  obtain ⟨selected, hget, _⟩ := findPhysicalIndex_sound hfind
+  have hmem := (allocateChosenAt_allocated_mem hget hchosen).1
+  rw [hallocated, finishCore_physical hfinish]
+  exact hmem
+
 /-- Main pure allocator preservation theorem. -/
 theorem allocate_preserves_valid {pool : Region} {state : State}
     (hvalid : Valid pool state) {request : Nat} {hrequest : 0 < request}

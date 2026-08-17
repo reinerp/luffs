@@ -58,6 +58,77 @@ inductive PrimStep : Prim -> Memory -> Result -> Memory -> Prop where
   | munmap {mem region} (hmapped : mem.regionMapped region) :
       PrimStep (.munmap region) mem .unit (mem.unmap region)
 
+/-- The operational trace used by moves and reallocations: each source byte is
+loaded and then stored before proceeding to the next byte. This is deliberately
+not a bulk-memory axiom. -/
+inductive CopySteps : Addr -> Addr -> List Byte -> Memory -> Memory -> Prop where
+  | nil {src dst mem} : CopySteps src dst [] mem mem
+  | cons {src dst value rest mem next}
+      (hload : PrimStep (.load src) mem (.byte value) mem)
+      (hstore : PrimStep (.store dst value) mem .unit (mem.write dst value))
+      (htail : CopySteps (src + 1) (dst + 1) rest
+        (mem.write dst value) next) :
+      CopySteps src dst (value :: rest) mem next
+
+
+/-- A bytewise copy has an operational execution whenever every source byte
+has the specified value, every destination byte is mapped, and the ranges do
+not overlap. -/
+theorem copySteps_exists (src dst : Addr) (values : List Byte) (mem : Memory)
+    (hsrc : ∀ i value, values[i]? = some value →
+      mem (src + i) = some value)
+    (hdst : ∀ i, i < values.length → mem.mapped (dst + i))
+    (hdisjoint : ∀ i, i < values.length → ∀ j, j < values.length →
+      src + i ≠ dst + j) :
+    ∃ next, CopySteps src dst values mem next := by
+  induction values generalizing src dst mem with
+  | nil => exact ⟨mem, .nil⟩
+  | cons value rest ih =>
+      have hload : PrimStep (.load src) mem (.byte value) mem := by
+        exact .load (by simpa using hsrc 0 value (by simp))
+      obtain ⟨old, hold⟩ : ∃ old, mem dst = some old := by
+        have hmapped := hdst 0 (by simp)
+        unfold Memory.mapped at hmapped
+        cases h : mem dst with
+        | none => simp [h] at hmapped
+        | some old => exact ⟨old, rfl⟩
+      have hstore : PrimStep (.store dst value) mem .unit
+          (mem.write dst value) := .store hold
+      have hsrcTail : ∀ i tailValue, rest[i]? = some tailValue →
+          (mem.write dst value) (src + 1 + i) = some tailValue := by
+        intro i tailValue hget
+        have hi : i < rest.length := (getElem?_eq_some_iff.mp hget).1
+        have hne : src + (i + 1) ≠ dst := by
+          simpa using hdisjoint (i + 1)
+            (by simpa only [List.length_cons] using Nat.succ_lt_succ hi)
+            0 (by simp)
+        rw [Nat.add_assoc, Nat.add_comm 1 i]
+        simp only [Memory.write, if_neg hne]
+        exact hsrc (i + 1) tailValue (by simpa using hget)
+      have hdstTail : ∀ i, i < rest.length →
+          (mem.write dst value).mapped (dst + 1 + i) := by
+        intro i hi
+        have hmapped := hdst (i + 1)
+          (by simpa only [List.length_cons] using Nat.succ_lt_succ hi)
+        unfold Memory.mapped at hmapped ⊢
+        simp only [Memory.write]
+        split
+        · simp
+        · rw [Nat.add_assoc, Nat.add_comm 1 i]
+          exact hmapped
+      have hdisjointTail : ∀ i, i < rest.length → ∀ j,
+          j < rest.length → src + 1 + i ≠ dst + 1 + j := by
+        intro i hi j hj
+        have hne := hdisjoint (i + 1)
+          (by simpa only [List.length_cons] using Nat.succ_lt_succ hi) (j + 1)
+          (by simpa only [List.length_cons] using Nat.succ_lt_succ hj)
+        intro heq
+        apply hne
+        simpa [Nat.add_assoc, Nat.add_comm, Nat.add_left_comm] using heq
+      obtain ⟨next, htail⟩ := ih (src + 1) (dst + 1)
+        (mem.write dst value) hsrcTail hdstTail hdisjointTail
+      exact ⟨next, .cons hload hstore htail⟩
+
 def Prim.safe (op : Prim) (mem : Memory) : Prop :=
   ∃ result next, PrimStep op mem result next
 

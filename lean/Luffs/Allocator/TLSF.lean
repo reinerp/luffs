@@ -751,6 +751,30 @@ theorem wellFormed_same_offset {pool : Region} {blocks : List Block}
     have hpositive := (hwell.2.2.2 right hright).1
     omega
 
+theorem wellFormed_regions_disjoint {pool : Region} {blocks : List Block}
+    (hwell : wellFormed pool blocks) {left right : Block}
+    (hleft : left ∈ blocks) (hright : right ∈ blocks)
+    (hne : left ≠ right) :
+    (left.region pool).disjoint (right.region pool) := by
+  obtain ⟨i, hi, hgetLeft⟩ := List.mem_iff_getElem.mp hleft
+  obtain ⟨j, hj, hgetRight⟩ := List.mem_iff_getElem.mp hright
+  rcases Nat.lt_trichotomy i j with hij | hij | hij
+  · have hord := hwell.1 i j hi hj hij
+    rw [hgetLeft, hgetRight] at hord
+    exact Or.inl (by
+      simp only [Block.region, Region.endAddr]
+      rw [Nat.add_assoc]
+      exact Nat.add_le_add_left hord pool.base)
+  · subst j
+    have : left = right := by rw [← hgetLeft, ← hgetRight]
+    exact (hne this).elim
+  · have hord := hwell.1 j i hj hi hij
+    rw [hgetRight, hgetLeft] at hord
+    exact Or.inr (by
+      simp only [Block.region, Region.endAddr]
+      rw [Nat.add_assoc]
+      exact Nat.add_le_add_left hord pool.base)
+
 theorem block_inside {pool : Region} {blocks : List Block}
     (h : wellFormed pool blocks) {b : Block} (hb : b ∈ blocks) {i : Nat}
     (hi : i < b.bytes) : pool.contains (pool.base + b.offset + i) := by

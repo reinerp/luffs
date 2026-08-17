@@ -291,6 +291,106 @@ theorem grow_preserves_valid {α : Type} {codec : Codec α} {pool : Region}
     rw [hallocated]
   exact ⟨⟨hlen, by simpa [hcap] using hsafe.1.2⟩, hnext⟩
 
+theorem grow_complete {α : Type} {codec : Codec α} {pool : Region}
+    {handle : Handle} {newCapacity : Nat} {hcapacity : 0 < newCapacity}
+    {state : Alloc.State} (hvalid : Alloc.Valid pool state)
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hmember : handle.block ∈ state.physical)
+    (hallocated : handle.block.free = false)
+    {hkeyMax : requestKey (allocationBytes codec newCapacity) <
+      2 ^ firstLevelCount}
+    (heligible : Bins.HasEligibleBin state.bins
+      (searchSizeClass (allocationBytes codec newCapacity)
+        (allocationBytes_positive codec hcapacity) hkeyMax)) :
+    ∃ result,
+      grow codec pool handle newCapacity hcapacity state hkeyMax = some result := by
+  obtain ⟨allocated, halloc⟩ :=
+    allocate_complete (hcapacity := hcapacity) hvalid heligible
+  obtain ⟨raw, hraw, hhandle, hstate⟩ :=
+    allocate_result (hcapacity := hcapacity) halloc
+  have hnextValid :=
+    (allocate_safe (hcapacity := hcapacity) hvalid halloc).2.2.2
+  obtain ⟨updated, hupdated, hsame, _⟩ :=
+    Alloc.allocate_preserves_allocated (hrequest :=
+      allocationBytes_positive codec hcapacity) hvalid hraw hmember hallocated
+  rw [hstate] at hnextValid
+  obtain ⟨next, hdrop⟩ := Box.drop_complete hnextValid hpoolMax hupdated
+    hsame hallocated
+  exact ⟨⟨⟨allocated.handle.block, handle.len, newCapacity⟩, next⟩, by
+    simp [grow, halloc, drop, hstate, hdrop]⟩
+
+theorem replacement_regions_disjoint {α : Type} {codec : Codec α}
+    {pool : Region} {handle : Handle} {newCapacity : Nat}
+    {hcapacity : 0 < newCapacity} {state : Alloc.State}
+    (hvalid : Alloc.Valid pool state) (hmember : handle.block ∈ state.physical)
+    (hallocated : handle.block.free = false)
+    {hkeyMax : requestKey (allocationBytes codec newCapacity) <
+      2 ^ firstLevelCount} {allocated : AllocResult}
+    (halloc : allocate codec newCapacity hcapacity state hkeyMax =
+      some allocated) :
+    (handle.block.region pool).disjoint
+      (allocated.handle.block.region pool) := by
+  obtain ⟨raw, hraw, hhandle, hstate⟩ :=
+    allocate_result (hcapacity := hcapacity) halloc
+  obtain ⟨updated, hupdated, hsame, hne⟩ :=
+    Alloc.allocate_preserves_allocated (hrequest :=
+      allocationBytes_positive codec hcapacity) hvalid hraw hmember hallocated
+  have hnew : raw.allocated ∈ raw.state.physical :=
+    Alloc.allocate_allocated_mem hraw
+  have hnextValid :=
+    (allocate_safe (hcapacity := hcapacity) hvalid halloc).2.2.2
+  rw [hstate] at hnextValid
+  have hdisjoint := wellFormed_regions_disjoint hnextValid.1 hupdated hnew hne
+  have holdRegion := Bins.samePhysical_region hsame pool
+  rw [← holdRegion, hhandle]
+  exact hdisjoint
+
+theorem grow_copy_steps {α : Type} {codec : Codec α} {pool : Region}
+    {handle : Handle} (hhandle : Valid codec handle) {values : List α}
+    (hlen : values.length = handle.len) {newCapacity : Nat}
+    {hcapacity : 0 < newCapacity} (hlenCapacity : handle.len ≤ newCapacity)
+    {state : Alloc.State} (hvalid : Alloc.Valid pool state)
+    (hmember : handle.block ∈ state.physical)
+    (hallocated : handle.block.free = false)
+    {hkeyMax : requestKey (allocationBytes codec newCapacity) <
+      2 ^ firstLevelCount} {allocated : AllocResult}
+    (halloc : allocate codec newCapacity hcapacity state hkeyMax =
+      some allocated) (mem : Memory)
+    (hsrc : ∀ i value, (encodeValues codec values)[i]? = some value →
+      mem ((handle.block.region pool).base + i) = some value)
+    (hdst : ∀ i, i < (encodeValues codec values).length →
+      mem.mapped ((allocated.handle.block.region pool).base + i)) :
+    ∃ next, CopySteps (handle.block.region pool).base
+      (allocated.handle.block.region pool).base (encodeValues codec values)
+      mem next := by
+  have hregions := replacement_regions_disjoint hvalid hmember hallocated halloc
+  have holdFit : (encodeValues codec values).length ≤ handle.block.bytes := by
+    rw [encodeValues_length, hlen]
+    exact Nat.le_trans (Nat.mul_le_mul_right codec.size hhandle.1) hhandle.2
+  have hnewSafe := (allocate_safe (hcapacity := hcapacity) hvalid halloc).1
+  obtain ⟨raw, _, hnewHandle, _⟩ :=
+    allocate_result (hcapacity := hcapacity) halloc
+  have hnewFit : (encodeValues codec values).length ≤
+      allocated.handle.block.bytes := by
+    rw [encodeValues_length, hlen]
+    have hcapBytes := Nat.mul_le_mul_right codec.size hlenCapacity
+    have hcap : allocated.handle.capacity = newCapacity := by rw [hnewHandle]
+    have hcapacityFit := hnewSafe.2
+    rw [hcap] at hcapacityFit
+    exact Nat.le_trans hcapBytes hcapacityFit
+  apply copySteps_exists _ _ _ _ hsrc hdst
+  intro i hi j hj heq
+  have hiContains : (handle.block.region pool).contains
+      ((handle.block.region pool).base + i) := by
+    exact contains_offset _ _ (Nat.lt_of_lt_of_le hi holdFit)
+  have hjContains : (allocated.handle.block.region pool).contains
+      ((allocated.handle.block.region pool).base + j) := by
+    exact contains_offset _ _ (Nat.lt_of_lt_of_le hj hnewFit)
+  have hnot := not_contains_of_disjoint hregions hiContains
+  apply hnot
+  rw [heq]
+  exact hjContains
+
 theorem grow_owns_step {GF : BundledGFunctors}
     [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
     (codec : Codec α) {pool : Region} {handle : Handle}

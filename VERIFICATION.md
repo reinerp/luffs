@@ -192,7 +192,14 @@ concurrency are later extensions and are not prerequisites for `Box` and
   the complete allocator invariant, proves the larger layout fits, and has an
   Iris ownership law that initializes exactly one copy of the logical prefix,
   deletes the old copy, and returns the old region without loss or
-  double-ownership. Operational byte-copy sequencing, growth completeness,
-  decoded element reads, slices, and Luffs lowering remain.
+  double-ownership. Growth is also proved complete when TLSF reports an
+  eligible replacement bin: allocation preserves the old live block, so its
+  subsequent deallocation cannot fail. The memory semantics now represents a
+  copy as an explicit load/store trace for every byte, proves such a trace
+  exists from exact source bytes, mapped destination bytes, and non-overlap,
+  and derives the old/new non-overlap from the allocator partition invariant.
+  Connecting the entire trace to the Iris authoritative maps in one framed
+  weakest-precondition rule, decoded element reads, slices, and Luffs lowering
+  remain.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.

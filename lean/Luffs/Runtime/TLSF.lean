@@ -149,6 +149,50 @@ theorem setWordBit_selected (bitmap : BitVec 64) {bit : Nat}
   simp [setWordBit, BitVec.getLsbD_or, BitVec.getLsbD_shiftLeft,
     BitVec.getLsbD_ofNat, hbit]
 
+theorem setSecondBit_getLsbD (bitmap : BitVec 32) (bit index : Nat) :
+    (setSecondBit bitmap bit).getLsbD index =
+      if index = bit ∧ index < 32 then true else bitmap.getLsbD index := by
+  simp only [setSecondBit, BitVec.getLsbD_or, BitVec.getLsbD_shiftLeft,
+    BitVec.getLsbD_ofNat]
+  by_cases hindex : index < 32 <;> by_cases heq : index = bit
+  · subst bit
+    simp [hindex]
+  · by_cases hbefore : index < bit
+    · simp [hindex, heq, hbefore]
+    · have htestFalse : Nat.testBit 1 (index - bit) = false := by
+        cases htest : Nat.testBit 1 (index - bit) with
+        | false => rfl
+        | true =>
+            have hzero := Nat.testBit_one_eq_true_iff_self_eq_zero.mp htest
+            omega
+      simp [hindex, heq, hbefore, htestFalse]
+  · have hbitmap := BitVec.getLsbD_of_ge bitmap index (by omega)
+    simp [hindex, hbitmap]
+  · have hbitmap := BitVec.getLsbD_of_ge bitmap index (by omega)
+    simp [hindex, hbitmap]
+
+theorem setWordBit_getLsbD (bitmap : BitVec 64) (bit index : Nat) :
+    (setWordBit bitmap bit).getLsbD index =
+      if index = bit ∧ index < 64 then true else bitmap.getLsbD index := by
+  simp only [setWordBit, BitVec.getLsbD_or, BitVec.getLsbD_shiftLeft,
+    BitVec.getLsbD_ofNat]
+  by_cases hindex : index < 64 <;> by_cases heq : index = bit
+  · subst bit
+    simp [hindex]
+  · by_cases hbefore : index < bit
+    · simp [hindex, heq, hbefore]
+    · have htestFalse : Nat.testBit 1 (index - bit) = false := by
+        cases htest : Nat.testBit 1 (index - bit) with
+        | false => rfl
+        | true =>
+            have hzero := Nat.testBit_one_eq_true_iff_self_eq_zero.mp htest
+            omega
+      simp [hindex, heq, hbefore, htestFalse]
+  · have hbitmap := BitVec.getLsbD_of_ge bitmap index (by omega)
+    simp [hindex, hbitmap]
+  · have hbitmap := BitVec.getLsbD_of_ge bitmap index (by omega)
+    simp [hindex, hbitmap]
+
 /-- Exact pure effect of `tlsf_remove` in `stdlib/tlsf.luffs`. -/
 def remove (state : Metadata) (bin block : Nat) : Option Metadata :=
   if bin ≥ state.heads.length then none
@@ -1506,6 +1550,198 @@ theorem clearBinBit_preserves_other_bit {words : List (BitVec 64)} {bin : Nat}
   simp only [Option.getD_some]
   rw [clearWordBit_getLsbD]
   simp [hne]
+
+def setClassBit (second : List (BitVec 32)) (bin : Nat) :
+    List (BitVec 32) :=
+  let fl := bin / 32
+  let sl := bin % 32
+  let bitmap := second[fl]?.getD 0
+  second.set fl (setSecondBit bitmap sl)
+
+theorem setClassBit_length (second : List (BitVec 32)) (bin : Nat) :
+    (setClassBit second bin).length = second.length := by
+  simp [setClassBit]
+
+theorem setClassBit_selected_true {second : List (BitVec 32)} {bin : Nat}
+    (hfl : bin / 32 < second.length) :
+    (classBits (setClassBit second bin))[bin]? = some true := by
+  have hsl : bin % 32 < 32 := Nat.mod_lt bin (by decide)
+  have hset : (setClassBit second bin)[bin / 32]? =
+      some (setSecondBit second[bin / 32] (bin % 32)) := by
+    simp [setClassBit, hfl]
+  have hclass := classBits_get hset hsl
+  rw [setSecondBit_selected _ hsl] at hclass
+  rw [Nat.mul_comm (bin / 32) 32, Nat.div_add_mod] at hclass
+  exact hclass
+
+theorem setClassBit_preserves_other {second : List (BitVec 32)}
+    {bin other : Nat} (hfl : bin / 32 < second.length)
+    (hother : other < second.length * 32) (hne : other ≠ bin) :
+    (classBits (setClassBit second bin))[other]? =
+      (classBits second)[other]? := by
+  have hotherFl : other / 32 < second.length := by
+    rw [Nat.div_lt_iff_lt_mul (by decide : 0 < 32)]
+    exact hother
+  have hotherSl : other % 32 < 32 := Nat.mod_lt other (by decide)
+  have hold : second[other / 32]? = some second[other / 32] := by
+    simp [hotherFl]
+  by_cases hword : other / 32 = bin / 32
+  · have hnew : (setClassBit second bin)[other / 32]? =
+        some (setSecondBit second[other / 32] (bin % 32)) := by
+      simp [setClassBit, hfl, hword]
+    have hnewBit := classBits_get hnew hotherSl
+    have holdBit := classBits_get hold hotherSl
+    have hslNe : other % 32 ≠ bin % 32 := by
+      intro hsl
+      apply hne
+      have hotherEq := Nat.div_add_mod other 32
+      have hbinEq := Nat.div_add_mod bin 32
+      omega
+    rw [setSecondBit_getLsbD] at hnewBit
+    simp [hslNe] at hnewBit
+    have heq := hnewBit.trans holdBit.symm
+    rw [Nat.mul_comm (other / 32) 32, Nat.div_add_mod] at heq
+    exact heq
+  · have hnew : (setClassBit second bin)[other / 32]? =
+        some second[other / 32] := by
+      simp [setClassBit, hfl, List.getElem?_set_ne (Ne.symm hword), hold]
+    have hnewBit := classBits_get hnew hotherSl
+    have holdBit := classBits_get hold hotherSl
+    have heq := hnewBit.trans holdBit.symm
+    rw [Nat.mul_comm (other / 32) 32, Nat.div_add_mod] at heq
+    exact heq
+
+theorem setClassBit_preserves_firstBitmapRep
+    {second : List (BitVec 32)} {first : BitVec 64} {bin : Nat}
+    (hrep : FirstBitmapRep first second) (hfl : bin / 32 < second.length) :
+    FirstBitmapRep (setWordBit first (bin / 32))
+      (setClassBit second bin) := by
+  apply firstBitmapRep_of_point
+  · simpa [setClassBit_length] using hrep.1
+  · intro index hindex
+    have hlength : second.length = 64 := by
+      simpa [FirstBitmapRep] using hrep.1
+    have hfl64 : bin / 32 < 64 := by omega
+    by_cases hselected : index = bin / 32
+    · subst index
+      have hsl : bin % 32 < 32 := Nat.mod_lt bin (by decide)
+      have hget : (setClassBit second bin)[bin / 32]? =
+          some (setSecondBit second[bin / 32] (bin % 32)) := by
+        simp [setClassBit, hfl]
+      have hnonzero : (setClassBit second bin)[bin / 32]?.getD 0 ≠ 0 := by
+        rw [hget]
+        simp only [Option.getD_some]
+        intro hzero
+        have hbit := setSecondBit_selected second[bin / 32] hsl
+        rw [hzero] at hbit
+        simp at hbit
+      rw [setWordBit_getLsbD]
+      simp only [hfl64, and_self, if_true]
+      exact (decide_eq_true hnonzero).symm
+    · have hold := hrep.point hindex
+      have hnextGet :
+          (setClassBit second bin)[index]? = second[index]? := by
+        unfold setClassBit
+        exact List.getElem?_set_ne (Ne.symm hselected)
+      rw [setWordBit_getLsbD]
+      simp only [hselected, false_and, if_false, hnextGet]
+      exact hold
+
+theorem setClassBit_represents_insert
+    {second : List (BitVec 32)} {state : Bins.State}
+    (hrep : RepresentsSecondBitmap second state) (hvalid : Bins.Valid state)
+    (cls : SizeClass)
+    (block : Block) :
+    RepresentsSecondBitmap
+      (setClassBit second (encodeSizeClass cls)) (state.insert cls block) := by
+  constructor
+  · simpa [setClassBit_length] using hrep.1
+  · intro query
+    by_cases hquery : query = cls
+    · subst query
+      have hlength : second.length = 64 := by
+        simpa [firstLevelCount] using hrep.1
+      have hdecode : encodeSizeClass cls / 32 = cls.fl.val := by
+        simp only [encodeSizeClass, secondLevelCount]
+        rw [Nat.mul_comm cls.fl.val 32,
+          Nat.mul_add_div (by decide : 0 < 32)]
+        simp [Nat.div_eq_of_lt cls.sl.isLt]
+      have hfl : encodeSizeClass cls / 32 < second.length := by
+        rw [hdecode, hlength]
+        exact cls.fl.isLt
+      have hselected := setClassBit_selected_true hfl
+      change (classBits (setClassBit second (encodeSizeClass cls)))[encodeSizeClass cls]? =
+        some ((state.insert cls block).slSet cls.fl cls.sl)
+      have hnonempty : FreeList.insertFront block (state.chains cls) ≠ [] := by
+        cases state.chains cls <;> simp [FreeList.insertFront]
+      have hset : (state.insert cls block).slSet cls.fl cls.sl = true := by
+        simp [Bins.State.insert, Bins.State.replaceChain,
+          Bins.State.fromChains, Bins.Chains.replace, hnonempty]
+      rw [hset]
+      exact hselected
+    · have hotherBound :
+          encodeSizeClass query < second.length * 32 := by
+        have hlength : second.length = 64 := by
+          simpa [firstLevelCount] using hrep.1
+        change query.fl.val * 32 + query.sl.val < second.length * 32
+        rw [hlength]
+        have hflBound := query.fl.isLt
+        have hslBound := query.sl.isLt
+        simp only [firstLevelCount] at hflBound
+        simp only [secondLevelCount] at hslBound
+        omega
+      have hindexNe : encodeSizeClass query ≠ encodeSizeClass cls := by
+        intro heq
+        exact hquery (classIndex_injective heq)
+      have hpreserve := setClassBit_preserves_other
+        (bin := encodeSizeClass cls) (other := encodeSizeClass query)
+        (by
+          have hlength : second.length = 64 := by
+            simpa [firstLevelCount] using hrep.1
+          have hdecode : encodeSizeClass cls / 32 = cls.fl.val := by
+            simp only [encodeSizeClass, secondLevelCount]
+            rw [Nat.mul_comm cls.fl.val 32,
+              Nat.mul_add_div (by decide : 0 < 32)]
+            simp [Nat.div_eq_of_lt cls.sl.isLt]
+          rw [hdecode, hlength]
+          exact cls.fl.isLt)
+        hotherBound hindexNe
+      change (classBits (setClassBit second (encodeSizeClass cls)))[encodeSizeClass query]? =
+        some ((state.insert cls block).slSet query.fl query.sl)
+      rw [hpreserve]
+      have hold := hrep.2 query
+      change (classBits second)[encodeSizeClass query]? =
+        some (state.slSet query.fl query.sl) at hold
+      rw [hold]
+      have hslEq : (state.insert cls block).slSet query.fl query.sl =
+          state.slSet query.fl query.sl := by
+        rw [slSet_eq_decide_nonempty hvalid query]
+        simp [Bins.State.insert, Bins.State.replaceChain,
+          Bins.State.fromChains, Bins.Chains.replace, hquery]
+      rw [hslEq]
+
+theorem insertClassArrays_preserves_bitmaps
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {bin block : Nat}
+    {result : InsertClassResult} {state : Bins.State} {cls : SizeClass}
+    {inserted : Block}
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second) (hvalid : Bins.Valid state)
+    (hbin : bin = encodeSizeClass cls)
+    (hinsert : insertClassArrays second first heads next previous bin block =
+      some result) :
+    RepresentsSecondBitmap result.second (state.insert cls inserted) ∧
+      FirstBitmapRep result.first result.second := by
+  have hresult := insertClassArrays_result hinsert
+  rcases hresult with ⟨_, hfl, _, _, _, hsecondEq, hfirstEq⟩
+  have hsecondSet : result.second = setClassBit second bin := by
+    rw [hsecondEq]
+    rfl
+  constructor
+  · rw [hsecondSet, hbin]
+    exact setClassBit_represents_insert hsecond hvalid cls inserted
+  · rw [hsecondSet, hfirstEq]
+    exact setClassBit_preserves_firstBitmapRep hfirst hfl
 
 def clearSecondBit (bitmap : BitVec 32) (bit : Nat) : BitVec 32 :=
   bitmap &&& ~~~(BitVec.ofNat 32 1 <<< bit)

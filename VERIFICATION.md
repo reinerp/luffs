@@ -95,7 +95,12 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   intrusive primitive, and sets both packed bitmap-cache levels. Its exact
   generated state model proves metadata-length preservation, representation
   of the new selected chain under freshness, and that both selected cache bits
-  are true. Whole-state bitmap abstraction preservation is the next bridge.
+  are true. Setting a class bit is now proved to preserve every other packed
+  class bit. Consequently, under abstract bin validity, the entire concrete
+  second-level bitmap refines `Bins.State.insert`; setting the corresponding
+  first-level bit is also proved to preserve `FirstBitmapRep`. Framing every
+  non-selected intrusive chain across the concrete insertion is the next
+  bridge.
 - [ ] Prove physical blocks form a disjoint partition of every mapped pool.
   `partitions` now requires adjacency from offset zero plus exact byte coverage,
   closing the gap permitted by the earlier ordered/sum-only invariant.

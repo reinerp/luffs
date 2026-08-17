@@ -208,7 +208,9 @@ In particular, TLSF is not an axiom and `malloc` is not a primitive.
   preflights both old and merged classes, removes both old nodes, compacts the
   physical arrays, and reinserts the merged node. The generated transaction is
   tied to its exact Lean composition, and its physical projection is proved to
-  refine arbitrary-position `coalesceAt`. Proving that the composed concrete
+  refine arbitrary-position `coalesceAt`; the same theorem carries the
+  Iris-Lean `OwnsFree` equivalence showing that adjacent byte capabilities are
+  recombined without loss or duplication. Proving that the composed concrete
   bin arrays preserve the complete abstract bin relation remains.
   Pointer-to-offset validation belongs at the mmap-backed pool boundary.
 - [ ] Prove the bounded-step property of bin lookup and local list updates.

@@ -3708,6 +3708,36 @@ theorem coalesceClassArrays_refines_physical_append
   subst expected
   simpa [hoffsets, hsizes, hfree, hprevFree, hcount] using hrep
 
+theorem coalesceClassArrays_ownsFree_append
+    {PROP : Type} [Iris.BI PROP] [Luffs.Memory.ByteRegionLogic PROP]
+    (pool : Luffs.Memory.Region) (pre : List Block)
+    (leftBlock rightBlock : Block) (rest : List Block)
+    (hcan : canCoalesce leftBlock rightBlock)
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {result : CoalesceClassResult}
+    (hsuccess : coalesceClassArrays
+      (blockOffsets (pre ++ leftBlock :: rightBlock :: rest))
+      (blockSizes (pre ++ leftBlock :: rightBlock :: rest))
+      (freeFlags (pre ++ leftBlock :: rightBlock :: rest))
+      (prevFreeFlags (pre ++ leftBlock :: rightBlock :: rest))
+      second first heads next previous
+      (pre ++ leftBlock :: rightBlock :: rest).length pre.length = some result) :
+    RepresentsPhysicalArrays result.offsets result.sizes result.isFree
+        result.prevFree result.count
+        (coalesceAt (pre ++ leftBlock :: rightBlock :: rest) pre.length) ∧
+      (Luffs.Allocator.TLSF.Ownership.OwnsFree (PROP := PROP) pool
+          (pre ++ leftBlock :: rightBlock :: rest) ⊣⊢
+        Luffs.Allocator.TLSF.Ownership.OwnsFree pool
+          (coalesceAt (pre ++ leftBlock :: rightBlock :: rest) pre.length)) := by
+  constructor
+  · exact coalesceClassArrays_refines_physical_append pre leftBlock rightBlock
+      rest hcan hsuccess
+  · apply Luffs.Allocator.TLSF.Ownership.coalesceAt_ownsFree pool
+      (left := leftBlock) (right := rightBlock)
+    · simp
+    · simp
+    · exact hcan
+
 /-- Exact all-or-nothing array semantics of the first deallocation stage.
 The source lowering preflights the same three component operations before its
 first write; this pure model makes their successful composition explicit. -/

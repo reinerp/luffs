@@ -83,6 +83,49 @@ theorem writeBytes_four_eq_set {α : Type} (values : List α)
             List.cons_append, List.cons.injEq, true_and]
           simpa [Nat.succ_eq_add_one, Nat.add_assoc] using ih offset htail
 
+theorem writeBytes_eight_eq_set {α : Type} (values : List α)
+    (offset : Nat) (b0 b1 b2 b3 b4 b5 b6 b7 : α)
+    (hbound : offset + 8 ≤ values.length) :
+    values.take offset ++ [b0, b1, b2, b3, b4, b5, b6, b7] ++
+        values.drop (offset + 8) =
+      (((((((values.set offset b0).set (offset + 1) b1).set
+        (offset + 2) b2).set (offset + 3) b3).set
+        (offset + 4) b4).set (offset + 5) b5).set
+        (offset + 6) b6).set (offset + 7) b7 := by
+  induction values generalizing offset with
+  | nil => simp at hbound
+  | cons head tail ih =>
+      cases offset with
+      | zero =>
+          cases tail with
+          | nil => simp at hbound
+          | cons t1 tail =>
+              cases tail with
+              | nil => simp at hbound
+              | cons t2 tail =>
+                  cases tail with
+                  | nil => simp at hbound
+                  | cons t3 tail =>
+                      cases tail with
+                      | nil => simp at hbound
+                      | cons t4 tail =>
+                          cases tail with
+                          | nil => simp at hbound
+                          | cons t5 tail =>
+                              cases tail with
+                              | nil => simp at hbound
+                              | cons t6 tail =>
+                                  cases tail with
+                                  | nil => simp at hbound
+                                  | cons t7 rest => simp
+      | succ offset =>
+          have htail : offset + 8 ≤ tail.length := by
+            simp only [List.length_cons] at hbound
+            omega
+          simp only [List.take_succ_cons, List.drop_succ_cons, List.set,
+            List.cons_append, List.cons.injEq, true_and]
+          simpa [Nat.succ_eq_add_one, Nat.add_assoc] using ih offset htail
+
 theorem writeBytes_length (values : List Byte) (offset : Nat)
     (replacement : List Byte) (hbound : offset + replacement.length ≤ values.length) :
     (writeBytes values offset replacement).length = values.length := by
@@ -2809,6 +2852,110 @@ theorem vecPushU32_owns {GF : Iris.BundledGFunctors}
       handle.capacity value = some ⟨nextStorage, nextLen⟩ :=
     vecPushU32_refines_generic hcapacityMax hpush
   exact vecPush_owns Scalar.u32 hlen hgeneric
+
+def vecPushU64 (storage : List Byte) (offset len capacity : Nat)
+    (value : BitVec 64) : Option (List Byte × Nat) :=
+  if len ≥ capacity then none
+  else if len > Luffs.Runtime.TLSF.usizeMax / 8 then none
+  else if offset > Luffs.Runtime.TLSF.usizeMax - len * 8 then none
+  else if offset + len * 8 > Luffs.Runtime.TLSF.usizeMax - 8 then none
+  else if offset + len * 8 + 7 ≥ storage.length then none
+  else some (((((((((storage.set (offset + len * 8) (Scalar.byteAt value 0)).set
+    (offset + len * 8 + 1) (Scalar.byteAt value 8)).set
+    (offset + len * 8 + 2) (Scalar.byteAt value 16)).set
+    (offset + len * 8 + 3) (Scalar.byteAt value 24)).set
+    (offset + len * 8 + 4) (Scalar.byteAt value 32)).set
+    (offset + len * 8 + 5) (Scalar.byteAt value 40)).set
+    (offset + len * 8 + 6) (Scalar.byteAt value 48)).set
+    (offset + len * 8 + 7) (Scalar.byteAt value 56)), len + 1)
+
+theorem vecPushU64_result {storage next : List Byte}
+    {offset len capacity nextLen : Nat} {value : BitVec 64}
+    (hpush : vecPushU64 storage offset len capacity value =
+      some (next, nextLen)) :
+    len < capacity ∧ len ≤ Luffs.Runtime.TLSF.usizeMax / 8 ∧
+      offset ≤ Luffs.Runtime.TLSF.usizeMax - len * 8 ∧
+      offset + len * 8 ≤ Luffs.Runtime.TLSF.usizeMax - 8 ∧
+      offset + len * 8 + 8 ≤ storage.length ∧
+      next = (((((((storage.set (offset + len * 8) (Scalar.byteAt value 0)).set
+        (offset + len * 8 + 1) (Scalar.byteAt value 8)).set
+        (offset + len * 8 + 2) (Scalar.byteAt value 16)).set
+        (offset + len * 8 + 3) (Scalar.byteAt value 24)).set
+        (offset + len * 8 + 4) (Scalar.byteAt value 32)).set
+        (offset + len * 8 + 5) (Scalar.byteAt value 40)).set
+        (offset + len * 8 + 6) (Scalar.byteAt value 48)).set
+        (offset + len * 8 + 7) (Scalar.byteAt value 56) ∧
+      nextLen = len + 1 := by
+  unfold vecPushU64 at hpush
+  split at hpush <;> try contradiction
+  next hlen =>
+    split at hpush <;> try contradiction
+    next hmul =>
+      split at hpush <;> try contradiction
+      next hoffset =>
+        split at hpush <;> try contradiction
+        next haddress =>
+          split at hpush <;> try contradiction
+          next hstorage =>
+            simp only [Option.some.injEq, Prod.mk.injEq] at hpush
+            exact ⟨Nat.lt_of_not_ge hlen, Nat.le_of_not_gt hmul,
+              Nat.le_of_not_gt hoffset, Nat.le_of_not_gt haddress,
+              by omega, hpush.1.symm, hpush.2.symm⟩
+
+theorem vecPushU64_refines_generic {storage next : List Byte}
+    {offset len capacity nextLen : Nat} {value : BitVec 64}
+    (hcapacityMax : capacity ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hpush : vecPushU64 storage offset len capacity value =
+      some (next, nextLen)) :
+    vecPush Scalar.u64 storage offset len capacity value =
+      some ⟨next, nextLen⟩ := by
+  obtain ⟨hlen, hmul, hoffset, haddress, hstorage, hnext, hnextLen⟩ :=
+    vecPushU64_result hpush
+  have hwrite := writeBytes_eight_eq_set storage (offset + len * 8)
+    (Scalar.byteAt value 0) (Scalar.byteAt value 8)
+    (Scalar.byteAt value 16) (Scalar.byteAt value 24)
+    (Scalar.byteAt value 32) (Scalar.byteAt value 40)
+    (Scalar.byteAt value 48) (Scalar.byteAt value 56) hstorage
+  have hstoreBound : ¬storage.length < offset + len * 8 + 8 := by omega
+  rw [hnext, hnextLen]
+  simp [vecPush, Scalar.u64, hcapacityMax, hlen, hmul, hoffset, haddress,
+    boxStore, hstoreBound, writeBytes, Scalar.encode64]
+  simpa only [List.cons_append, List.nil_append, List.append_assoc] using hwrite
+
+theorem vecPushU64_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {pool : Region} {storage nextStorage : List Byte}
+    {handle : Luffs.Containers.Vec.Handle} {values : List (BitVec 64)}
+    {value : BitVec 64} {nextLen : Nat}
+    (hcapacityMax : handle.capacity ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hlen : values.length = handle.len)
+    (hpush : vecPushU64 storage handle.block.offset handle.len
+      handle.capacity value = some (nextStorage, nextLen)) :
+    ∃ nextHandle,
+      Luffs.Containers.Vec.push handle = some nextHandle ∧
+      nextLen = nextHandle.len ∧
+      nextStorage = writeBytes storage
+        (handle.block.offset +
+          (Luffs.Containers.Vec.encodeValues Scalar.u64 values).length)
+        (Scalar.u64.encode value) ∧
+      ∀ contents : ContentsMap,
+        CanInsertBytes contents
+          ((handle.block.region pool).base +
+            (Luffs.Containers.Vec.encodeValues Scalar.u64 values).length)
+          (Scalar.u64.encode value) →
+        contentsInterp (G := G) contents ∗
+            Luffs.Containers.Vec.Owns Scalar.u64 pool handle values ==∗
+          contentsInterp
+              (insertBytes contents
+                ((handle.block.region pool).base +
+                  (Luffs.Containers.Vec.encodeValues Scalar.u64 values).length)
+                (Scalar.u64.encode value)) ∗
+            Luffs.Containers.Vec.Owns Scalar.u64 pool nextHandle
+              (values ++ [value]) := by
+  have hgeneric : vecPush Scalar.u64 storage handle.block.offset handle.len
+      handle.capacity value = some ⟨nextStorage, nextLen⟩ :=
+    vecPushU64_refines_generic hcapacityMax hpush
+  exact vecPush_owns Scalar.u64 hlen hgeneric
 
 set_option maxHeartbeats 1200000 in
 /-- End-to-end first push for an allocator-backed `Vec<u16>`. This composes the

@@ -218,6 +218,25 @@ fn vec_push_u32(storage: &mut [u8], offset: usize, len: usize, capacity: usize, 
     Some(next_len)
 }
 
+// refines Luffs.Runtime.Containers.vecPushU64
+fn vec_push_u64(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: u64) -> Option<usize> {
+    if len >= capacity { return None; }
+    if len > usize::MAX / 8 { return None; }
+    if offset > usize::MAX - len * 8 { return None; }
+    if offset + len * 8 > usize::MAX - 8 { return None; }
+    if offset + len * 8 + 7 >= storage.len() { return None; }
+    storage[offset + len * 8] = (value & 255) as u8;
+    storage[offset + len * 8 + 1] = (value >> 8) as u8;
+    storage[offset + len * 8 + 2] = (value >> 16) as u8;
+    storage[offset + len * 8 + 3] = (value >> 24) as u8;
+    storage[offset + len * 8 + 4] = (value >> 32) as u8;
+    storage[offset + len * 8 + 5] = (value >> 40) as u8;
+    storage[offset + len * 8 + 6] = (value >> 48) as u8;
+    storage[offset + len * 8 + 7] = (value >> 56) as u8;
+    let next_len: usize = len + 1;
+    Some(next_len)
+}
+
 // refines Luffs.Runtime.Containers.vecLastU8
 fn vec_last_u8(storage: &[u8], len: usize) -> Option<u8> {
     if len == 0 { return None; }

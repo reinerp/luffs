@@ -883,6 +883,13 @@ alias semantics. This removes the one-store restriction that blocked
   four-byte push, and ends with `Vec.Owns Scalar.u32 ... [value]` alongside the
   allocator's remaining free ownership. There is no intermediate theorem that
   exposes the freshly allocated region without its linear ownership resource.
+  In-capacity mutation now also covers concrete `vec_push_u64`. Its ordinary
+  Luffs body proves the eight-byte address arithmetic before eight ordered
+  little-endian writes; generated Lean supplies the exact eight-store program
+  and mapped-address WP. `vecPushU64_refines_generic` identifies successful
+  concrete execution with `vecPush Scalar.u64`, and `vecPushU64_owns` therefore
+  appends the logical value while transferring the same exclusive Vec
+  ownership capability to the incremented handle.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.
   All four checked-in examples are currently accepted by Lean and compile to

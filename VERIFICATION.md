@@ -1234,6 +1234,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   `coalesceClassArrays` selects that program without proof-only offsets; the
   right-node address is derived from the physical adjacency check. Decoding
   the combined final memory into all ten returned metadata fields is next.
+  Physical coalescing now also has the framing contract required for that
+  decoder. Every merged-size/compaction write is disjoint from all five class
+  fields and the separately stored count word. Its closed WP therefore returns
+  the four changed physical encodings together with unchanged class metadata
+  and count. This matches the Luffs helper: it returns the decremented count,
+  while only the eventual public boundary writes that count back to memory.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

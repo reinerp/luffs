@@ -23954,6 +23954,277 @@ theorem coalesceClassWrites_width
   · exact InsertProgram.insertClassWrites_width _ _ _ _ _ _ _ _ _ _ _ _ _ _
       write hinsert
 
+theorem compactPhysicalWrites_disjoint_class
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (cursor remaining : Nat)
+    (layout : AllocateComposition.MetadataLayout offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets.length sizes.length isFree.length prevFree.length secondLength
+      headsLength nextLength previousLength)
+    (hoffsetsBound : cursor + remaining < offsets.length)
+    (hsizesBound : cursor + remaining < sizes.length)
+    (hfreeBound : cursor + remaining < isFree.length)
+    (hprevBound : cursor + remaining < prevFree.length)
+    (field : AllocateComposition.ClassField) :
+    ∀ write, write ∈ compactPhysicalWrites offsetsBase sizesBase isFreeBase
+      prevFreeBase offsets sizes isFree prevFree cursor remaining →
+      write.region.disjoint
+        (AllocateComposition.classRegion secondBase firstBase headsBase nextBase
+          previousBase secondLength headsLength nextLength previousLength
+          field) := by
+  induction remaining generalizing cursor with
+  | zero => simp [compactPhysicalWrites]
+  | succ remaining ih =>
+      intro write hwrite
+      simp only [compactPhysicalWrites, List.mem_append, List.mem_cons,
+        List.not_mem_nil, _root_.or_false] at hwrite
+      rcases hwrite with (rfl | rfl | rfl | rfl) | hwrite
+      · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+          ValueRegion, Luffs.Memory.Scalar.u64,
+          AllocateComposition.physicalRegion,
+          AllocateComposition.classRegion] using
+          ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 (by omega)
+            (layout.cross .offsets field)
+      · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+          ValueRegion, Luffs.Memory.Scalar.u64,
+          AllocateComposition.physicalRegion,
+          AllocateComposition.classRegion] using
+          ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 (by omega)
+            (layout.cross .sizes field)
+      · simpa [ElementWrite.region, InitializeProgram.u8Bytes_length,
+          ValueRegion, Luffs.Memory.Scalar.u8,
+          AllocateComposition.physicalRegion,
+          AllocateComposition.classRegion] using
+          ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8 (by omega)
+            (layout.cross .isFree field)
+      · simpa [ElementWrite.region, InitializeProgram.u8Bytes_length,
+          ValueRegion, Luffs.Memory.Scalar.u8,
+          AllocateComposition.physicalRegion,
+          AllocateComposition.classRegion] using
+          ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8 (by omega)
+            (layout.cross .prevFree field)
+      · exact ih (cursor + 1) (by omega) (by omega) (by omega) (by omega)
+          write hwrite
+
+/-- Physical coalescing writes are disjoint from every segregated-class field
+and from the physical count word, which this helper does not update. -/
+theorem coalescePhysicalWrites_disjoint_class
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (count left mergedSize : Nat)
+    (layout : AllocateComposition.MetadataLayout offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets.length sizes.length isFree.length prevFree.length secondLength
+      headsLength nextLength previousLength)
+    (hcountOffsets : count ≤ offsets.length)
+    (hcountSizes : count ≤ sizes.length)
+    (hcountFree : count ≤ isFree.length)
+    (hcountPrev : count ≤ prevFree.length)
+    (hright : left + 1 < count)
+    (field : AllocateComposition.ClassField) :
+    ∀ write, write ∈ coalescePhysicalWrites offsetsBase sizesBase isFreeBase
+      prevFreeBase offsets sizes isFree prevFree count left mergedSize →
+      write.region.disjoint
+        (AllocateComposition.classRegion secondBase firstBase headsBase nextBase
+          previousBase secondLength headsLength nextLength previousLength
+          field) := by
+  intro write hwrite
+  simp only [coalescePhysicalWrites, List.mem_append, List.mem_cons,
+    List.not_mem_nil, _root_.or_false] at hwrite
+  rcases hwrite with rfl | hwrite
+  · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+      ValueRegion, Luffs.Memory.Scalar.u64,
+      AllocateComposition.physicalRegion,
+      AllocateComposition.classRegion] using
+      ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 (by omega)
+        (layout.cross .sizes field)
+  · apply compactPhysicalWrites_disjoint_class offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets sizes isFree prevFree (left + 1) (count - (left + 1) - 1) layout
+      (by omega) (by omega) (by omega) (by omega) field write hwrite
+
+theorem coalescePhysicalWrites_disjoint_count
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (count left mergedSize : Nat)
+    (layout : AllocateProgram.SplitMetadataDisjoint offsetsBase sizesBase
+      isFreeBase prevFreeBase countBase offsets.length sizes.length isFree.length
+      prevFree.length)
+    (hcountOffsets : count ≤ offsets.length)
+    (hcountSizes : count ≤ sizes.length)
+    (hcountFree : count ≤ isFree.length)
+    (hcountPrev : count ≤ prevFree.length)
+    (hright : left + 1 < count) :
+    ∀ write, write ∈ coalescePhysicalWrites offsetsBase sizesBase isFreeBase
+      prevFreeBase offsets sizes isFree prevFree count left mergedSize →
+      write.region.disjoint (ValueRegion countBase 8) := by
+  intro write hwrite
+  simp only [coalescePhysicalWrites, List.mem_append, List.mem_cons,
+    List.not_mem_nil, _root_.or_false] at hwrite
+  rcases hwrite with rfl | hwrite
+  · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+      ValueRegion, Luffs.Memory.Scalar.u64] using
+      ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 (by omega)
+        layout.sizes_count
+  · induction count - (left + 1) - 1 generalizing left with
+    | zero => simp [compactPhysicalWrites] at hwrite
+    | succ remaining ih =>
+        simp only [compactPhysicalWrites, List.mem_append, List.mem_cons,
+          List.not_mem_nil, _root_.or_false] at hwrite
+        rcases hwrite with (rfl | rfl | rfl | rfl) | hwrite
+        · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+            ValueRegion, Luffs.Memory.Scalar.u64] using
+            ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 (by omega)
+              layout.offsets_count
+        · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+            ValueRegion, Luffs.Memory.Scalar.u64] using
+            ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 (by omega)
+              layout.sizes_count
+        · simpa [ElementWrite.region, InitializeProgram.u8Bytes_length,
+            ValueRegion, Luffs.Memory.Scalar.u8] using
+            ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8 (by omega)
+              layout.isFree_count
+        · simpa [ElementWrite.region, InitializeProgram.u8Bytes_length,
+            ValueRegion, Luffs.Memory.Scalar.u8] using
+            ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8 (by omega)
+              layout.prevFree_count
+        · apply ih (left + 1) hwrite
+          all_goals omega
+
+/-- Physical coalescing refines its pure result while framing all five class
+fields and the separately stored active-header count. -/
+theorem coalescePhysicalProgram_wp_refines_frames_class
+    {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (count left : Nat)
+    (result : CoalescePhysicalResult) (mem : Memory)
+    (hsuccess : coalescePhysicalArrays offsets sizes isFree prevFree count left =
+      some result)
+    (layout : AllocateComposition.MetadataLayout offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets.length sizes.length isFree.length prevFree.length second.length
+      heads.length next.length previous.length)
+    (hoffsetsMapped : ∀ index, index < offsets.length → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizesMapped : ∀ index, index < sizes.length → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hfreeMapped : ∀ index, index < isFree.length →
+      mem.mapped (isFreeBase + index))
+    (hprevMapped : ∀ index, index < prevFree.length →
+      mem.mapped (prevFreeBase + index))
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree))
+    (hsecond : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hfirst : mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase first)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous))
+    (hcount : mem.EncodesAt Luffs.Memory.Scalar.u64 countBase
+      (BitVec.ofNat 64 count)) :
+    ⊢@{IProp GF} Program.wp
+      (coalescePhysicalProgram offsetsBase sizesBase isFreeBase prevFreeBase
+        offsets sizes isFree prevFree count left
+        (sizes[left]?.getD 0 + sizes[left + 1]?.getD 0)) mem
+      (fun final =>
+        (final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+            (InitializeProgram.encodeNats result.offsets) ∧
+         final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+            (InitializeProgram.encodeNats result.sizes) ∧
+         final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+            (AllocateProgram.encodeFlags result.isFree) ∧
+         final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+            (AllocateProgram.encodeFlags result.prevFree)) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u32 secondBase second ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 firstBase first ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+          (InitializeProgram.encodeNats heads) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+          (InitializeProgram.encodeNats next) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+          (InitializeProgram.encodeNats previous) ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 countBase
+          (BitVec.ofNat 64 count)) := by
+  obtain ⟨leftSize, rightSize, hcountOffsets, hcountSizes, hcountFree,
+      hcountPrev, hright, hleftSize, hrightSize, hresult⟩ :=
+    coalescePhysicalArrays_success_eq hsuccess
+  subst result
+  have hwp := coalescePhysicalProgram_wp_exact_mapped (GF := GF) offsetsBase
+    sizesBase isFreeBase prevFreeBase offsets sizes isFree prevFree count left
+    (leftSize + rightSize) mem hcountOffsets hcountSizes hcountFree hcountPrev
+    hright hoffsetsMapped hsizesMapped hfreeMapped hprevMapped
+  simpa only [hleftSize, hrightSize, Option.getD_some] using
+    Program.wp_mono hwp (fun final hfinal => by
+      subst final
+      let writes := coalescePhysicalWrites offsetsBase sizesBase isFreeBase
+        prevFreeBase offsets sizes isFree prevFree count left
+          (leftSize + rightSize)
+      have hphysical := coalescePhysicalWrites_encodes offsetsBase sizesBase
+        isFreeBase prevFreeBase countBase offsets sizes isFree prevFree count left
+        (leftSize + rightSize) mem hright hcountOffsets hcountSizes hcountFree
+        hcountPrev layout.physical hoffsets hsizes hfree hprev
+      refine ⟨hphysical, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · apply hsecond.applyAll_of_disjoint
+        intro write hwrite
+        exact coalescePhysicalWrites_disjoint_class offsetsBase sizesBase
+          isFreeBase prevFreeBase countBase secondBase firstBase headsBase nextBase
+          previousBase offsets sizes isFree prevFree count left
+          (leftSize + rightSize) layout hcountOffsets hcountSizes hcountFree
+          hcountPrev hright .second write hwrite
+      · apply hfirst.applyAll_of_disjoint
+        intro write hwrite
+        exact coalescePhysicalWrites_disjoint_class offsetsBase sizesBase
+          isFreeBase prevFreeBase countBase secondBase firstBase headsBase nextBase
+          previousBase offsets sizes isFree prevFree count left
+          (leftSize + rightSize) layout hcountOffsets hcountSizes hcountFree
+          hcountPrev hright .first write hwrite
+      · apply hheads.applyAll_of_disjoint
+        intro write hwrite
+        simpa [InitializeProgram.encodeNats,
+          AllocateComposition.classRegion] using
+          coalescePhysicalWrites_disjoint_class offsetsBase sizesBase isFreeBase
+            prevFreeBase countBase secondBase firstBase headsBase nextBase
+            previousBase offsets sizes isFree prevFree count left
+            (leftSize + rightSize) layout hcountOffsets hcountSizes hcountFree
+            hcountPrev hright .heads write hwrite
+      · apply hnext.applyAll_of_disjoint
+        intro write hwrite
+        simpa [InitializeProgram.encodeNats,
+          AllocateComposition.classRegion] using
+          coalescePhysicalWrites_disjoint_class offsetsBase sizesBase isFreeBase
+            prevFreeBase countBase secondBase firstBase headsBase nextBase
+            previousBase offsets sizes isFree prevFree count left
+            (leftSize + rightSize) layout hcountOffsets hcountSizes hcountFree
+            hcountPrev hright .next write hwrite
+      · apply hprevious.applyAll_of_disjoint
+        intro write hwrite
+        simpa [InitializeProgram.encodeNats,
+          AllocateComposition.classRegion] using
+          coalescePhysicalWrites_disjoint_class offsetsBase sizesBase isFreeBase
+            prevFreeBase countBase secondBase firstBase headsBase nextBase
+            previousBase offsets sizes isFree prevFree count left
+            (leftSize + rightSize) layout hcountOffsets hcountSizes hcountFree
+            hcountPrev hright .previous write hwrite
+      · apply hcount.applyAll_of_disjoint
+        exact coalescePhysicalWrites_disjoint_count offsetsBase sizesBase
+          isFreeBase prevFreeBase countBase offsets sizes isFree prevFree count
+          left (leftSize + rightSize) layout.physical hcountOffsets hcountSizes
+          hcountFree hcountPrev hright)
+
 /-- Exact deterministic WP for the complete four-stage class-coalescing
 transaction. Component success supplies every bound; mappedness is retained
 through each preceding write list. -/

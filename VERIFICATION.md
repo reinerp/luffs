@@ -1220,8 +1220,11 @@ concurrency are later extensions and are not prerequisites for `Box` and
   using region disjointness. The loop transformer is proved equal to
   `compactActive` under the CFG-derived active-prefix bounds, and the joint
   decoder returns all four compacted encodings from one byte execution. It
-  remains to prepend and decode the merged-size store, then identify the joint
-  result with `coalescePhysicalArrays`.
+  now also prepends and decodes the merged-size store: the complete physical
+  mutation preserves the offsets and flag arrays through that store, updates
+  exactly the selected size, and then establishes all four final compacted
+  encodings. It remains to identify this joint byte-level result with
+  `coalescePhysicalArrays`, then compose the surrounding class-index updates.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

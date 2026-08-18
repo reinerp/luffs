@@ -22979,6 +22979,23 @@ theorem compactLoopState_eq_compactActive {α : Type} [Inhabited α]
   simp only [compactActive]
   rw [harith]
 
+theorem compactLoopState_set_before_eq_compactActive
+    {α : Type} [Inhabited α] (values : List α)
+    (count removed before : Nat) (updated : α)
+    (hbefore : before < removed) (hremoved : removed < count)
+    (hcount : count ≤ values.length) :
+    compactLoopState values (values.set before updated) removed
+        (count - removed - 1) =
+      compactActive (values.set before updated) count removed := by
+  have harith : removed + (count - removed - 1) = count - 1 := by omega
+  rw [compactLoopState_eq_take_drop]
+  · simp only [compactActive]
+    rw [harith]
+    rw [List.drop_set_of_lt (by omega : before < removed + 1)]
+  · simp
+    omega
+  · omega
+
 theorem map_compactActive {α β : Type} [Inhabited α] [Inhabited β]
     (f : α → β) (values : List α) (count removed : Nat) :
     (compactActive values count removed).map f =
@@ -23594,6 +23611,147 @@ theorem compactPhysicalWrites_encodes
   rw [compactLoopState_eq_compactActive _ count removed hremoved (by
         simpa [AllocateProgram.encodeFlags] using hcountPrev)] at hprevFinal
   simpa [InitializeProgram.encodeNats, AllocateProgram.encodeFlags,
+    map_compactActive] using
+    And.intro hoffsetsFinal (And.intro hsizesFinal
+      (And.intro hfreeFinal hprevFinal))
+
+/-- Decoder for the complete physical coalescing mutation: merged-size store
+followed by the four-field forward compaction loop. -/
+theorem coalescePhysicalWrites_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (count left mergedSize : Nat) (mem : Memory)
+    (hright : left + 1 < count)
+    (hcountOffsets : count ≤ offsets.length)
+    (hcountSizes : count ≤ sizes.length)
+    (hcountFree : count ≤ isFree.length)
+    (hcountPrev : count ≤ prevFree.length)
+    (layout : AllocateProgram.SplitMetadataDisjoint offsetsBase sizesBase
+      isFreeBase prevFreeBase countBase offsets.length sizes.length isFree.length
+      prevFree.length)
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree)) :
+    let final := ElementWrite.applyAll
+      (coalescePhysicalWrites offsetsBase sizesBase isFreeBase prevFreeBase
+        offsets sizes isFree prevFree count left mergedSize) mem
+    final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+        (InitializeProgram.encodeNats
+          (compactActive offsets count (left + 1))) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+        (InitializeProgram.encodeNats
+          (compactActive (sizes.set left mergedSize) count (left + 1))) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+        (AllocateProgram.encodeFlags
+          (compactActive isFree count (left + 1))) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+        (AllocateProgram.encodeFlags
+          (compactActive prevFree count (left + 1))) := by
+  dsimp only
+  let sizeWrite : ElementWrite :=
+    ⟨sizesBase, 8, left, InitializeProgram.usizeBytes mergedSize⟩
+  let middle := ElementWrite.applyAll [sizeWrite] mem
+  have hleftOffsets : left < offsets.length := by omega
+  have hleftSizes : left < sizes.length := by omega
+  have hleftFree : left < isFree.length := by omega
+  have hleftPrev : left < prevFree.length := by omega
+  have hsizesMiddle : middle.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      ((InitializeProgram.encodeNats sizes).set left
+        (BitVec.ofNat 64 mergedSize)) := by
+    apply hsizes.writeElement
+    simpa [InitializeProgram.encodeNats] using hleftSizes
+  have hoffsetsMiddle : middle.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets) := by
+    apply hoffsets.applyAll_of_disjoint
+    intro write hwrite
+    simp [sizeWrite] at hwrite
+    subst write
+    simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+      InitializeProgram.encodeNats, ValueRegion, Luffs.Memory.Scalar.u64] using
+      ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hleftSizes
+        (disjoint_symmetric.mp layout.offsets_sizes)
+  have hfreeMiddle : middle.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree) := by
+    apply hfree.applyAll_of_disjoint
+    intro write hwrite
+    simp [sizeWrite] at hwrite
+    subst write
+    simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+      AllocateProgram.encodeFlags, ValueRegion, Luffs.Memory.Scalar.u64] using
+      ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hleftSizes
+        layout.sizes_isFree
+  have hprevMiddle : middle.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree) := by
+    apply hprev.applyAll_of_disjoint
+    intro write hwrite
+    simp [sizeWrite] at hwrite
+    subst write
+    simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+      AllocateProgram.encodeFlags, ValueRegion, Luffs.Memory.Scalar.u64] using
+      ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hleftSizes
+        layout.sizes_prevFree
+  have hboundOffsets : left + 1 + (count - (left + 1) - 1) < offsets.length := by
+    omega
+  have hboundSizes : left + 1 + (count - (left + 1) - 1) < sizes.length := by
+    omega
+  have hboundFree : left + 1 + (count - (left + 1) - 1) < isFree.length := by
+    omega
+  have hboundPrev : left + 1 + (count - (left + 1) - 1) < prevFree.length := by
+    omega
+  have hoffsetsFinal := compactPhysicalWrites_offsets_encodes offsetsBase
+    sizesBase isFreeBase prevFreeBase offsets sizes isFree prevFree (left + 1)
+    (count - (left + 1) - 1) (InitializeProgram.encodeNats offsets) middle
+    (by simp [InitializeProgram.encodeNats]) hboundOffsets hboundSizes
+    hboundFree hboundPrev layout.offsets_sizes layout.offsets_isFree
+    layout.offsets_prevFree hoffsetsMiddle
+  have hsizesFinal := compactPhysicalWrites_sizes_encodes offsetsBase sizesBase
+    isFreeBase prevFreeBase offsets sizes isFree prevFree (left + 1)
+    (count - (left + 1) - 1)
+    ((InitializeProgram.encodeNats sizes).set left
+      (BitVec.ofNat 64 mergedSize)) middle
+    (by simp [InitializeProgram.encodeNats]) hboundOffsets hboundSizes
+    hboundFree hboundPrev (disjoint_symmetric.mp layout.offsets_sizes)
+    layout.sizes_isFree layout.sizes_prevFree hsizesMiddle
+  have hfreeFinal := compactPhysicalWrites_isFree_encodes offsetsBase sizesBase
+    isFreeBase prevFreeBase offsets sizes isFree prevFree (left + 1)
+    (count - (left + 1) - 1) (AllocateProgram.encodeFlags isFree) middle
+    (by simp [AllocateProgram.encodeFlags]) hboundOffsets hboundSizes hboundFree
+    hboundPrev (disjoint_symmetric.mp layout.offsets_isFree)
+    (disjoint_symmetric.mp layout.sizes_isFree) layout.isFree_prevFree hfreeMiddle
+  have hprevFinal := compactPhysicalWrites_prevFree_encodes offsetsBase sizesBase
+    isFreeBase prevFreeBase offsets sizes isFree prevFree (left + 1)
+    (count - (left + 1) - 1) (AllocateProgram.encodeFlags prevFree) middle
+    (by simp [AllocateProgram.encodeFlags]) hboundOffsets hboundSizes hboundFree
+    hboundPrev (disjoint_symmetric.mp layout.offsets_prevFree)
+    (disjoint_symmetric.mp layout.sizes_prevFree)
+    (disjoint_symmetric.mp layout.isFree_prevFree) hprevMiddle
+  rw [compactLoopState_eq_compactActive _ count (left + 1) hright (by
+        simpa [InitializeProgram.encodeNats] using hcountOffsets)] at hoffsetsFinal
+  rw [compactLoopState_set_before_eq_compactActive _ count (left + 1) left
+      (BitVec.ofNat 64 mergedSize) (by omega) hright (by
+        simpa [InitializeProgram.encodeNats] using hcountSizes)] at hsizesFinal
+  rw [compactLoopState_eq_compactActive _ count (left + 1) hright (by
+        simpa [AllocateProgram.encodeFlags] using hcountFree)] at hfreeFinal
+  rw [compactLoopState_eq_compactActive _ count (left + 1) hright (by
+        simpa [AllocateProgram.encodeFlags] using hcountPrev)] at hprevFinal
+  have happly :
+      ElementWrite.applyAll
+          (coalescePhysicalWrites offsetsBase sizesBase isFreeBase prevFreeBase
+            offsets sizes isFree prevFree count left mergedSize) mem =
+        ElementWrite.applyAll
+          (compactPhysicalWrites offsetsBase sizesBase isFreeBase prevFreeBase
+            offsets sizes isFree prevFree (left + 1)
+            (count - (left + 1) - 1)) middle := by
+    rw [coalescePhysicalWrites, ElementWrite.applyAll_append]
+    rfl
+  rw [happly]
+  simpa [middle, sizeWrite, InitializeProgram.encodeNats,
+    AllocateProgram.encodeFlags, AllocateProgram.encodeNats_set,
     map_compactActive] using
     And.intro hoffsetsFinal (And.intro hsizesFinal
       (And.intro hfreeFinal hprevFinal))

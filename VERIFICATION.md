@@ -1190,6 +1190,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   Its closed Iris WP identifies the final memory as `insertClassWrites` applied
   after `markFreeWrites`; decoding that nested state across all ten metadata
   fields is the next deallocation step.
+  The first stage now has that full framing contract. A reusable theorem proves
+  `markFreeWrites` disjoint from any region disjoint from both flag arrays; the
+  typed metadata layout instantiates it for offsets, sizes, count, both bitmap
+  levels, and all three intrusive-list arrays. Thus the operational mark-free
+  WP changes exactly its two decoded flag arrays and preserves the other eight
+  fields for insertion-stage composition.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

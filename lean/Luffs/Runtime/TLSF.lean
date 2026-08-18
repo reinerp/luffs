@@ -14345,7 +14345,7 @@ theorem MetadataLayout.cross_symm
     {offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
       headsBase nextBase previousBase offsetsLength sizesLength isFreeLength
       prevFreeLength secondLength headsLength nextLength previousLength : Nat}
-    (layout : MetadataLayout offsetsBase sizesBase isFreeBase prevFreeBase
+    (layout : AllocateComposition.MetadataLayout offsetsBase sizesBase isFreeBase prevFreeBase
       countBase secondBase firstBase headsBase nextBase previousBase offsetsLength
       sizesLength isFreeLength prevFreeLength secondLength headsLength nextLength
       previousLength) (classField : ClassField) (physicalField : PhysicalField) :
@@ -14362,7 +14362,7 @@ theorem removeClassWrites_disjoint_physical
       prevFreeLength secondLength headsLength nextLength previousLength bin block
       successor predecessor fl sl : Nat) (oldSecond : BitVec 32)
     (oldFirst : BitVec 64)
-    (layout : MetadataLayout offsetsBase sizesBase isFreeBase prevFreeBase
+    (layout : AllocateComposition.MetadataLayout offsetsBase sizesBase isFreeBase prevFreeBase
       countBase secondBase firstBase headsBase nextBase previousBase offsetsLength
       sizesLength isFreeLength prevFreeLength secondLength headsLength nextLength
       previousLength)
@@ -22299,6 +22299,28 @@ theorem markFreeWrites_width
   simp [markFreeWrites] at hwrite
   rcases hwrite with rfl | ⟨_, rfl⟩ <;> simp
 
+theorem markFreeWrites_disjoint_region
+    (isFreeBase prevFreeBase block isFreeLength prevFreeLength : Nat)
+    (region : Luffs.Memory.Region)
+    (hblock : block < isFreeLength)
+    (hfreeRegion :
+      (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase isFreeLength).disjoint
+        region)
+    (hprevRegion :
+      (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase prevFreeLength).disjoint
+        region) :
+    ∀ write, write ∈ markFreeWrites isFreeBase prevFreeBase block prevFreeLength →
+      write.region.disjoint region := by
+  intro write hwrite
+  simp [markFreeWrites] at hwrite
+  rcases hwrite with rfl | ⟨hsuccessor, rfl⟩
+  · simpa [ElementWrite.region, InitializeProgram.u8Bytes_length,
+      ValueRegion, Luffs.Memory.Scalar.u8] using
+      ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8 hblock hfreeRegion
+  · simpa [ElementWrite.region, InitializeProgram.u8Bytes_length,
+      ValueRegion, Luffs.Memory.Scalar.u8] using
+      ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8 hsuccessor hprevRegion
+
 theorem markFreeInterleavedProgram_wp_exact {GF : BundledGFunctors}
     (offsetsBase sizesBase isFreeBase prevFreeBase block prevFreeLength : Nat)
     (mem : Memory)
@@ -22443,6 +22465,154 @@ theorem markFreeInterleavedProgram_wp_refines {GF : BundledGFunctors}
       AllocateProgram.encodeFlags, hsuccessor] using hencoded
   · simpa [hnextFree, hnextPrev, AllocateProgram.encodeFlags_set,
       AllocateProgram.encodeFlags, hsuccessor] using hencoded
+
+theorem markFreeInterleavedProgram_wp_refines_frames_all
+    {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase block returnedOffset returnedBytes : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (count : Nat)
+    (nextIsFree nextPrevFree : List (Fin 256)) (mem : Memory)
+    (hmark : markFreeArrays offsets sizes isFree prevFree block returnedOffset
+      returnedBytes = some (nextIsFree, nextPrevFree))
+    (layout : AllocateComposition.MetadataLayout offsetsBase sizesBase isFreeBase
+      prevFreeBase
+      countBase secondBase firstBase headsBase nextBase previousBase offsets.length
+      sizes.length isFree.length prevFree.length second.length heads.length
+      next.length previous.length)
+    (hfreeMapped : mem.mapped (isFreeBase + block))
+    (hoffsetsMapped : ∀ i, i < 8 →
+      mem.mapped (offsetsBase + block * 8 + i))
+    (hsizesMapped : ∀ i, i < 8 →
+      mem.mapped (sizesBase + block * 8 + i))
+    (hprevMapped : block + 1 < prevFree.length →
+      mem.mapped (prevFreeBase + (block + 1)))
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree))
+    (hcount : mem.EncodesAt Luffs.Memory.Scalar.u64 countBase
+      (BitVec.ofNat 64 count))
+    (hsecond : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hfirst : mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase first)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous)) :
+    ⊢@{IProp GF} Program.wp
+      (markFreeInterleavedProgram offsetsBase sizesBase isFreeBase prevFreeBase
+        block prevFree.length) mem
+      (fun final =>
+        (final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+            (AllocateProgram.encodeFlags nextIsFree) ∧
+         final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+            (AllocateProgram.encodeFlags nextPrevFree)) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+          (InitializeProgram.encodeNats offsets) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+          (InitializeProgram.encodeNats sizes) ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 countBase
+          (BitVec.ofNat 64 count) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u32 secondBase second ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 firstBase first ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+          (InitializeProgram.encodeNats heads) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+          (InitializeProgram.encodeNats next) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+          (InitializeProgram.encodeNats previous)) := by
+  obtain ⟨_, _, hblockFree, _, _, _, _, _, _⟩ := markFreeArrays_result hmark
+  apply AllocateComposition.wp_and
+    (markFreeInterleavedProgram_wp_refines (GF := GF) offsetsBase sizesBase
+      isFreeBase prevFreeBase block returnedOffset returnedBytes offsets sizes
+      isFree prevFree nextIsFree nextPrevFree mem hmark
+      layout.physical.isFree_prevFree hfreeMapped hoffsetsMapped hsizesMapped
+      hprevMapped hfree hprev)
+  apply Program.wp_mono
+    (markFreeInterleavedProgram_wp_exact (GF := GF) offsetsBase sizesBase
+      isFreeBase prevFreeBase block prevFree.length mem hfreeMapped
+      hoffsetsMapped hsizesMapped hprevMapped)
+  intro final hfinal
+  subst final
+  let writes := markFreeWrites isFreeBase prevFreeBase block prevFree.length
+  have preserve (region : Luffs.Memory.Region)
+      (hfreeRegion :
+        (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase isFree.length).disjoint
+          region)
+      (hprevRegion :
+        (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase prevFree.length).disjoint
+          region) :
+      ∀ write, write ∈ writes → write.region.disjoint region :=
+    markFreeWrites_disjoint_region isFreeBase prevFreeBase block isFree.length
+      prevFree.length region hblockFree hfreeRegion hprevRegion
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · apply hoffsets.applyAll_of_disjoint
+    exact preserve _ (by simpa [InitializeProgram.encodeNats] using
+      disjoint_symmetric.mp layout.physical.offsets_isFree) (by
+      simpa [InitializeProgram.encodeNats] using
+        disjoint_symmetric.mp layout.physical.offsets_prevFree)
+  · apply hsizes.applyAll_of_disjoint
+    exact preserve _ (by simpa [InitializeProgram.encodeNats] using
+      disjoint_symmetric.mp layout.physical.sizes_isFree) (by
+      simpa [InitializeProgram.encodeNats] using
+        disjoint_symmetric.mp layout.physical.sizes_prevFree)
+  · apply hcount.applyAll_of_disjoint
+    exact preserve _ layout.physical.isFree_count layout.physical.prevFree_count
+  · apply hsecond.applyAll_of_disjoint
+    exact preserve _ (by simpa [AllocateComposition.physicalRegion,
+      AllocateComposition.classRegion] using
+      (layout.cross AllocateComposition.PhysicalField.isFree
+        AllocateComposition.ClassField.second)) (by
+      simpa [AllocateComposition.physicalRegion,
+        AllocateComposition.classRegion] using
+        (layout.cross AllocateComposition.PhysicalField.prevFree
+          AllocateComposition.ClassField.second))
+  · apply hfirst.applyAll_of_disjoint
+    exact preserve _ (by simpa [AllocateComposition.physicalRegion,
+      AllocateComposition.classRegion] using
+      (layout.cross AllocateComposition.PhysicalField.isFree
+        AllocateComposition.ClassField.first)) (by
+      simpa [AllocateComposition.physicalRegion,
+        AllocateComposition.classRegion] using
+        (layout.cross AllocateComposition.PhysicalField.prevFree
+          AllocateComposition.ClassField.first))
+  · apply hheads.applyAll_of_disjoint
+    exact preserve _ (by simpa [AllocateComposition.physicalRegion,
+      AllocateComposition.classRegion,
+      InitializeProgram.encodeNats] using
+        (layout.cross AllocateComposition.PhysicalField.isFree
+          AllocateComposition.ClassField.heads)) (by
+      simpa [AllocateComposition.physicalRegion,
+        AllocateComposition.classRegion, InitializeProgram.encodeNats] using
+        (layout.cross AllocateComposition.PhysicalField.prevFree
+          AllocateComposition.ClassField.heads))
+  · apply hnext.applyAll_of_disjoint
+    exact preserve _ (by simpa [AllocateComposition.physicalRegion,
+      AllocateComposition.classRegion,
+      InitializeProgram.encodeNats] using
+        (layout.cross AllocateComposition.PhysicalField.isFree
+          AllocateComposition.ClassField.next)) (by
+      simpa [AllocateComposition.physicalRegion,
+        AllocateComposition.classRegion, InitializeProgram.encodeNats] using
+        (layout.cross AllocateComposition.PhysicalField.prevFree
+          AllocateComposition.ClassField.next))
+  · apply hprevious.applyAll_of_disjoint
+    exact preserve _ (by simpa [AllocateComposition.physicalRegion,
+      AllocateComposition.classRegion,
+      InitializeProgram.encodeNats] using
+        (layout.cross AllocateComposition.PhysicalField.isFree
+          AllocateComposition.ClassField.previous)) (by
+      simpa [AllocateComposition.physicalRegion,
+        AllocateComposition.classRegion, InitializeProgram.encodeNats] using
+        (layout.cross AllocateComposition.PhysicalField.prevFree
+          AllocateComposition.ClassField.previous))
 
 def deallocateUncoalescedInterleavedProgram
     (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase

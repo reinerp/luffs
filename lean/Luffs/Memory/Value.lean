@@ -77,6 +77,56 @@ theorem Memory.writeElement_encodesAt {α : Type} (codec : Codec α)
       codec (base + index * codec.size) value :=
   Memory.writeBytes_encodesAt codec mem _ value
 
+theorem Memory.EncodesAt.fillElements_of_disjoint {α : Type}
+    {codec : Codec α} {mem : Memory} {valueBase base : Addr}
+    {value : α} {bytes : List Byte} {start count : Nat}
+    (hencoded : mem.EncodesAt codec valueBase value)
+    (hdisjoint : ∀ index, start ≤ index → index < start + count →
+      (Region.mk (base + index * codec.size) bytes.length).disjoint
+        (ValueRegion codec valueBase)) :
+    (Memory.fillElements mem base codec.size start count bytes).EncodesAt
+      codec valueBase value := by
+  induction count generalizing mem start with
+  | zero => exact hencoded
+  | succ count ih =>
+      simp only [Memory.fillElements]
+      apply ih (mem := mem.writeBytes (base + start * codec.size) bytes)
+        (start := start + 1)
+      · exact hencoded.writeBytes_of_disjoint
+          (hdisjoint start (by omega) (by omega))
+      · intro index hlo hhi
+        exact hdisjoint index (by omega) (by omega)
+
+/-- One bounded scalar fill establishes every element's encoded value. The
+disjointness premise is discharged arithmetically for native fixed arrays. -/
+theorem Memory.fillElements_encodesAt {α : Type} (codec : Codec α)
+    (mem : Memory) (base start count index : Nat) (value : α)
+    (hindex : start ≤ index ∧ index < start + count)
+    (hdisjoint : ∀ other, start ≤ other → other < start + count →
+      other ≠ index →
+      (Region.mk (base + other * codec.size) codec.size).disjoint
+        (ValueRegion codec (base + index * codec.size))) :
+    (Memory.fillElements mem base codec.size start count
+      (codec.encode value)).EncodesAt codec
+        (base + index * codec.size) value := by
+  induction count generalizing mem start with
+  | zero => omega
+  | succ count ih =>
+      simp only [Memory.fillElements]
+      by_cases heq : index = start
+      · subst index
+        apply Memory.EncodesAt.fillElements_of_disjoint
+          (Memory.writeElement_encodesAt codec mem base start value)
+        intro other hlo hhi
+        simpa [codec.encode_length] using
+          hdisjoint other (by omega) (by omega) (by omega)
+      · apply ih (mem := mem.writeBytes
+          (base + start * codec.size) (codec.encode value))
+          (start := start + 1)
+        · omega
+        · intro other hlo hhi hne
+          exact hdisjoint other (by omega) (by omega) hne
+
 /-- Exclusive allocated storage together with authoritative knowledge of its
 initialized byte contents. -/
 def OwnsValue {GF : BundledGFunctors} [ByteRegionGS GF] [ByteContentsGS GF]

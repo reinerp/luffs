@@ -151,6 +151,10 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   assumed as an unrelated arithmetic axiom. These lemmas supply the bridge
   from Rust `&mut` non-aliasing to preservation of the other eight metadata
   arrays during each initializer store.
+  `fillElements_encodesAt` lifts that bridge through a bounded scalar loop:
+  every selected element is proved to contain the codec's exact bytes while
+  all distinct element encodings are preserved via disjoint regions. This is
+  the finite-array decoding rule used for the initializer's replicate loops.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

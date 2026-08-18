@@ -1196,6 +1196,15 @@ concurrency are later extensions and are not prerequisites for `Box` and
   levels, and all three intrusive-list arrays. Thus the operational mark-free
   WP changes exactly its two decoded flag arrays and preserves the other eight
   fields for insertion-stage composition.
+  That composition is now decoded as well. The operational uncoalesced
+  deallocator threads the exact mark-free memory into the verified insertion
+  helper, transports mappedness through the first transaction, and establishes
+  the final encodings of both updated physical flags and all five updated
+  class-index fields while framing offsets, sizes, and count. The theorem uses
+  the successful `markFreeArrays` and `insertClassArrays` results as its typed
+  boundary; connecting the public classifier/preflight wrapper and then the
+  two conditional coalescing calls remains the next operational deallocation
+  work.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

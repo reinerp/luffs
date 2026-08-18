@@ -22673,6 +22673,125 @@ theorem deallocateUncoalescedInterleavedProgram_wp_exact
     (fun i hi => ElementWrite.applyAll_mapped _ _ (hsecond i hi))
     (fun i hi => ElementWrite.applyAll_mapped _ _ (hfirst i hi))
 
+/-- A successful uncoalesced deallocation is operationally the composition of
+marking the physical block free and inserting it into its size class.  The
+postcondition covers every allocator metadata field, so this theorem can be
+used as the typed boundary for the later coalescing stages. -/
+theorem deallocateUncoalescedInterleavedProgram_wp_refines_components
+    {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase block returnedOffset returnedBytes bin : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (count : Nat)
+    (marked : List (Fin 256) × List (Fin 256))
+    (inserted : InsertClassResult) (mem : Memory)
+    (hmark : markFreeArrays offsets sizes isFree prevFree block returnedOffset
+      returnedBytes = some marked)
+    (hinsert : insertClassArrays second first heads next previous bin
+      returnedOffset = some inserted)
+    (layout : AllocateComposition.MetadataLayout offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets.length sizes.length isFree.length prevFree.length second.length
+      heads.length next.length previous.length)
+    (hfreeMapped : mem.mapped (isFreeBase + block))
+    (hoffsetsMapped : ∀ i, i < 8 →
+      mem.mapped (offsetsBase + block * 8 + i))
+    (hsizesMapped : ∀ i, i < 8 →
+      mem.mapped (sizesBase + block * 8 + i))
+    (hprevMapped : block + 1 < prevFree.length →
+      mem.mapped (prevFreeBase + (block + 1)))
+    (hsecondMapped : ∀ index, index < second.length → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheadsMapped : ∀ index, index < heads.length → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < next.length → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previous.length → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree))
+    (hcount : mem.EncodesAt Luffs.Memory.Scalar.u64 countBase
+      (BitVec.ofNat 64 count))
+    (hsecond : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hfirst : mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase first)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous)) :
+    ⊢@{IProp GF} Program.wp
+      (deallocateUncoalescedInterleavedProgram offsetsBase sizesBase isFreeBase
+        prevFreeBase secondBase firstBase headsBase nextBase previousBase block
+        prevFree.length next.length previous.length bin returnedOffset (bin / 32)
+        (bin % 32) (heads[bin]?.getD 0) (second[bin / 32]?.getD 0) first) mem
+      (fun final =>
+        (final.EncodesArray Luffs.Memory.Scalar.u32 secondBase inserted.second ∧
+         final.EncodesAt Luffs.Memory.Scalar.u64 firstBase inserted.first ∧
+         final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+           (InitializeProgram.encodeNats inserted.heads) ∧
+         final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+           (InitializeProgram.encodeNats inserted.next) ∧
+         final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+           (InitializeProgram.encodeNats inserted.previous)) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+          (InitializeProgram.encodeNats offsets) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+          (InitializeProgram.encodeNats sizes) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+          (AllocateProgram.encodeFlags marked.1) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+          (AllocateProgram.encodeFlags marked.2) ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 countBase
+          (BitVec.ofNat 64 count)) := by
+  unfold deallocateUncoalescedInterleavedProgram
+  apply Program.wp_then
+    (AllocateComposition.wp_and
+      (markFreeInterleavedProgram_wp_refines_frames_all (GF := GF)
+        offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase
+        firstBase headsBase nextBase previousBase block returnedOffset
+        returnedBytes offsets sizes isFree prevFree second first heads next
+        previous count marked.1 marked.2 mem hmark layout hfreeMapped
+        hoffsetsMapped hsizesMapped hprevMapped hoffsets hsizes hfree hprev
+        hcount hsecond hfirst hheads hnext hprevious)
+      (markFreeInterleavedProgram_wp_exact (GF := GF) offsetsBase sizesBase
+        isFreeBase prevFreeBase block prevFree.length mem hfreeMapped
+        hoffsetsMapped hsizesMapped hprevMapped))
+  intro middle hmiddle
+  rcases hmiddle with ⟨hencoded, rfl⟩
+  rcases hencoded with
+    ⟨hflags, hoffsets', hsizes', hcount', hsecond', hfirst', hheads', hnext',
+      hprevious'⟩
+  rcases hflags with ⟨hfree', hprev'⟩
+  have hlengths := markFreeArrays_lengths hmark
+  have layout' : AllocateComposition.MetadataLayout offsetsBase sizesBase
+      isFreeBase prevFreeBase countBase secondBase firstBase headsBase nextBase
+      previousBase offsets.length sizes.length marked.1.length marked.2.length
+      second.length heads.length next.length previous.length := by
+    simpa [hlengths.1, hlengths.2] using layout
+  exact AllocateComposition.insertClassInterleavedProgram_wp_refines_frames_physical
+    (GF := GF) offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase
+    firstBase headsBase nextBase previousBase offsets sizes marked.1 marked.2 count
+    second first heads next previous bin returnedOffset inserted _ hinsert layout'
+    (fun index hindex i hi => ElementWrite.applyAll_mapped _ _
+      (hsecondMapped index hindex i hi))
+    (fun i hi => ElementWrite.applyAll_mapped _ _ (hfirstMapped i hi))
+    (fun index hindex i hi => ElementWrite.applyAll_mapped _ _
+      (hheadsMapped index hindex i hi))
+    (fun index hindex i hi => ElementWrite.applyAll_mapped _ _
+      (hnextMapped index hindex i hi))
+    (fun index hindex i hi => ElementWrite.applyAll_mapped _ _
+      (hpreviousMapped index hindex i hi))
+    hsecond' hheads' hnext' hprevious' hoffsets' hsizes' hfree' hprev' hcount'
+
 end DeallocateProgram
 
 end Luffs.Runtime.TLSF

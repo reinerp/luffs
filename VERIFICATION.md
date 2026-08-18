@@ -245,9 +245,13 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   disjointness frames the other three writes in each projection, and
   `shiftPhysicalWrites_encodes` packages all four postconditions for the same
   byte execution. Length preservation and replacement of the insertion slot
-  by exactly `expandActive` are proved for arbitrary element types. Decoding
-  the finishing stores, then composing surrounding bin removal and remainder
-  insertion, remains the next operational step.
+  by exactly `expandActive` are proved for arbitrary element types. The first
+  finishing-store projection is now closed end to end as well:
+  `allocateSplitWrites_offsets_encodes` proves that the descending loop plus
+  the remainder-offset store encodes precisely the pure split result's
+  expanded offsets array. The analogous sizes/flag/count finishing
+  projections, then composition with surrounding bin removal and remainder
+  insertion, remain the next operational steps.
 - [x] Define the first pure block layout predicates and prove that splitting
   and coalescing preserve byte counts.
 - [x] Implement size-class mapping and prove every `(fl, sl)` index in range.

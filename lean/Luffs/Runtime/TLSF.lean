@@ -10087,6 +10087,12 @@ theorem shiftActive_set_inserted_length {α : Type} [Inhabited α]
   rw [shiftActive_set_inserted values count inserted value hinserted hcapacity,
     expandActive_length values count inserted value hinserted hcapacity]
 
+theorem encodeNats_expandActive (values : List Nat) (count inserted value : Nat) :
+    InitializeProgram.encodeNats (expandActive values count inserted value) =
+      expandActive (InitializeProgram.encodeNats values) count inserted
+        (BitVec.ofNat 64 value) := by
+  simp [InitializeProgram.encodeNats, expandActive]
+
 /-- Recursive typed state transformer matching the descending source loop.
 `source` remains fixed because descending copies never overwrite a later
 source before it is read; `state` records the stores performed so far. -/
@@ -10881,6 +10887,62 @@ def finishSplitWrites (offsetsBase sizesBase isFreeBase prevFreeBase countBase
     else []) ++
     [⟨countBase, 8, 0, InitializeProgram.usizeBytes (count + 1)⟩]
 
+def finishOffsetsBefore (sizesBase isFreeBase block request : Nat) :
+    List ElementWrite :=
+  [⟨sizesBase, 8, block, InitializeProgram.usizeBytes request⟩,
+   ⟨isFreeBase, 1, block, InitializeProgram.u8Bytes 0⟩]
+
+def finishOffsetsAfter (sizesBase isFreeBase prevFreeBase countBase block count
+    remainderSize : Nat) : List ElementWrite :=
+  let successor := block + 1
+  [⟨sizesBase, 8, successor, InitializeProgram.usizeBytes remainderSize⟩,
+   ⟨isFreeBase, 1, successor, InitializeProgram.u8Bytes 1⟩,
+   ⟨prevFreeBase, 1, successor, InitializeProgram.u8Bytes 0⟩] ++
+    (if successor + 1 < count + 1 then
+      [⟨prevFreeBase, 1, successor + 1, InitializeProgram.u8Bytes 1⟩]
+    else []) ++
+    [⟨countBase, 8, 0, InitializeProgram.usizeBytes (count + 1)⟩]
+
+theorem finishSplitWrites_offsets_decompose
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase block count request
+      remainderOffset remainderSize : Nat) :
+    finishSplitWrites offsetsBase sizesBase isFreeBase prevFreeBase countBase
+      block count request remainderOffset remainderSize =
+    finishOffsetsBefore sizesBase isFreeBase block request ++
+      (⟨offsetsBase, 8, block + 1,
+        InitializeProgram.usizeBytes remainderOffset⟩ : ElementWrite) ::
+      finishOffsetsAfter sizesBase isFreeBase prevFreeBase countBase block count
+        remainderSize := by
+  simp [finishSplitWrites, finishOffsetsBefore, finishOffsetsAfter]
+
+/-- Decode the unique offsets store in the finishing transaction. All other
+stores are exposed as explicit frame premises; the concrete TLSF layout will
+discharge them when the four projections are recombined. -/
+theorem finishSplitWrites_offsets_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase block count request
+      remainderOffset remainderSize : Nat)
+    (state : List (BitVec 64)) (mem : Memory)
+    (hsuccessor : block + 1 < state.length)
+    (hbefore : ∀ write,
+      write ∈ finishOffsetsBefore sizesBase isFreeBase block request →
+        write.region.disjoint
+          (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase state.length))
+    (hafter : ∀ write,
+      write ∈ finishOffsetsAfter sizesBase isFreeBase prevFreeBase countBase
+        block count remainderSize →
+        write.region.disjoint
+          (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase state.length))
+    (hencoded : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase state) :
+    (ElementWrite.applyAll
+      (finishSplitWrites offsetsBase sizesBase isFreeBase prevFreeBase countBase
+        block count request remainderOffset remainderSize) mem).EncodesArray
+      Luffs.Memory.Scalar.u64 offsetsBase
+        (state.set (block + 1) (BitVec.ofNat 64 remainderOffset)) := by
+  rw [finishSplitWrites_offsets_decompose]
+  simpa [InitializeProgram.usizeBytes, Luffs.Memory.Scalar.u64] using
+    hencoded.applyAll_update (index := block + 1)
+      (value := BitVec.ofNat 64 remainderOffset) hsuccessor hbefore hafter
+
 def allocateSplitWrites (offsetsBase sizesBase isFreeBase prevFreeBase countBase
     block count request remainderOffset remainderSize : Nat)
     (offsets sizes : List Nat) (isFree prevFree : List (Fin 256)) :
@@ -10889,6 +10951,81 @@ def allocateSplitWrites (offsetsBase sizesBase isFreeBase prevFreeBase countBase
       isFree prevFree (block + 1) count ++
     finishSplitWrites offsetsBase sizesBase isFreeBase prevFreeBase countBase
       block count request remainderOffset remainderSize
+
+/-- End-to-end offsets projection for the split transaction: the descending
+copy loop followed by the remainder-offset store is exactly the pure model's
+`expandActive` result. -/
+theorem allocateSplitWrites_offsets_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase block count request
+      remainderOffset remainderSize : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256)) (mem : Memory)
+    (hblock : block < count)
+    (hcountOffsets : count < offsets.length)
+    (hcountSizes : count < sizes.length)
+    (hcountFree : count < isFree.length)
+    (hcountPrev : count < prevFree.length)
+    (hoffsetsSizes :
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase offsets.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase sizes.length))
+    (hoffsetsFree :
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase offsets.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase isFree.length))
+    (hoffsetsPrev :
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase offsets.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase prevFree.length))
+    (hfinishBefore : ∀ write,
+      write ∈ finishOffsetsBefore sizesBase isFreeBase block request →
+        write.region.disjoint
+          (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase offsets.length))
+    (hfinishAfter : ∀ write,
+      write ∈ finishOffsetsAfter sizesBase isFreeBase prevFreeBase countBase
+        block count remainderSize →
+        write.region.disjoint
+          (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase offsets.length))
+    (hencoded : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets)) :
+    (ElementWrite.applyAll
+      (allocateSplitWrites offsetsBase sizesBase isFreeBase prevFreeBase
+        countBase block count request remainderOffset remainderSize offsets sizes
+        isFree prevFree) mem).EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats
+        (expandActive offsets count (block + 1) remainderOffset)) := by
+  rw [allocateSplitWrites, ElementWrite.applyAll_append]
+  have hloop := shiftPhysicalWrites_offsets_encodes_initial offsetsBase sizesBase
+    isFreeBase prevFreeBase offsets sizes isFree prevFree (block + 1) count mem
+    (by omega) hcountOffsets hcountSizes hcountFree hcountPrev hoffsetsSizes
+    hoffsetsFree hoffsetsPrev hencoded
+  have hshiftLength :
+      (shiftActive (InitializeProgram.encodeNats offsets) count
+        (block + 1)).length = offsets.length := by
+    rw [shiftActive_length (InitializeProgram.encodeNats offsets) count
+      (block + 1) (by omega)]
+    · simp [InitializeProgram.encodeNats]
+    · simpa [InitializeProgram.encodeNats] using hcountOffsets
+  have hfinish := finishSplitWrites_offsets_encodes offsetsBase sizesBase
+    isFreeBase prevFreeBase countBase block count request remainderOffset
+    remainderSize (shiftActive (InitializeProgram.encodeNats offsets) count
+      (block + 1))
+    (ElementWrite.applyAll
+      (shiftPhysicalWrites offsetsBase sizesBase isFreeBase prevFreeBase
+        offsets sizes isFree prevFree (block + 1) count) mem)
+    (by
+      rw [hshiftLength]
+      omega)
+    (by
+      intro write hwrite
+      rw [hshiftLength]
+      exact hfinishBefore write hwrite)
+    (by
+      intro write hwrite
+      rw [hshiftLength]
+      exact hfinishAfter write hwrite)
+    hloop
+  rw [shiftActive_set_inserted (InitializeProgram.encodeNats offsets) count
+    (block + 1) (BitVec.ofNat 64 remainderOffset) (by omega)] at hfinish
+  · rw [encodeNats_expandActive offsets count (block + 1) remainderOffset]
+    exact hfinish
+  · simpa [InitializeProgram.encodeNats] using hcountOffsets
 
 def allocateSplitProgram (offsetsBase sizesBase isFreeBase prevFreeBase countBase
     block count request remainderOffset remainderSize : Nat)

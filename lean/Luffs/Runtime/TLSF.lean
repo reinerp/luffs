@@ -20431,6 +20431,49 @@ theorem coalesceIfPossibleArraysOutcome_success_refines_option
                                 hmax, hright, hleftFree, hrightFree, hleftOffset,
                                 hleftSize, hrightOffset, hadjacent, hclassSuccess]
 
+/-- Successful conditional coalescing is either the identity path selected by
+an ordinary eligibility guard, or a successful complete class transaction. -/
+theorem coalesceIfPossibleArrays_success_cases
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {count left : Nat}
+    {result : CoalesceClassResult}
+    (hsuccess : coalesceIfPossibleArrays offsets sizes isFree prevFree second
+      first heads next previous count left = some result) :
+    result = allocatorArrays offsets sizes isFree prevFree second first heads next
+        previous count ∨
+      coalesceClassArrays offsets sizes isFree prevFree second first heads next
+        previous count left = some result := by
+  unfold coalesceIfPossibleArrays at hsuccess
+  split at hsuccess <;> try contradiction
+  next =>
+    dsimp only at hsuccess
+    split at hsuccess
+    next => exact Or.inl (Option.some.inj hsuccess).symm
+    next =>
+      split at hsuccess
+      next => exact Or.inl (Option.some.inj hsuccess).symm
+      next =>
+        split at hsuccess
+        next => exact Or.inl (Option.some.inj hsuccess).symm
+        next =>
+          split at hsuccess
+          next => exact Or.inl (Option.some.inj hsuccess).symm
+          next =>
+            cases hleftOffset : offsets[left]? with
+            | none => simp [hleftOffset] at hsuccess
+            | some leftOffset =>
+              cases hleftSize : sizes[left]? with
+              | none => simp [hleftOffset, hleftSize] at hsuccess
+              | some leftSize =>
+                cases hrightOffset : offsets[left + 1]? with
+                | none => simp [hleftOffset, hleftSize, hrightOffset] at hsuccess
+                | some rightOffset =>
+                  simp only [hleftOffset, hleftSize, hrightOffset] at hsuccess
+                  split at hsuccess
+                  next => exact Or.inl (Option.some.inj hsuccess).symm
+                  next => exact Or.inr hsuccess
+
 set_option maxHeartbeats 1000000 in
 /-- A conditionally coalescing call on a completely represented valid
 allocator cannot fail. Ineligible pairs return the identity state; eligible
@@ -24809,6 +24852,92 @@ theorem coalesceClassArrays_successfulProgram_wp_refines
   simpa [program, hresultOffsets, hresultSizes, hresultFree, hresultPrev,
     hresultSecond, hresultFirst, hresultHeads, hresultNext,
     hresultPrevious] using hfinal
+
+/-- A successful state-retaining conditional coalescing call selects either
+the no-op program or the complete class-coalescing program, with one common
+ten-field memory contract. -/
+theorem coalesceIfPossibleArraysOutcome_successfulProgram_wp
+    {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (count left : Nat)
+    (result : CoalesceClassResult) (mem : Memory)
+    (hsuccess : coalesceIfPossibleArraysOutcome offsets sizes isFree prevFree
+      second first heads next previous count left = .success result)
+    (layout : AllocateComposition.MetadataLayout offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets.length sizes.length isFree.length prevFree.length second.length
+      heads.length next.length previous.length)
+    (hoffsetsMapped : ∀ index, index < offsets.length → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizesMapped : ∀ index, index < sizes.length → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hfreeMapped : ∀ index, index < isFree.length →
+      mem.mapped (isFreeBase + index))
+    (hprevMapped : ∀ index, index < prevFree.length →
+      mem.mapped (prevFreeBase + index))
+    (hsecondMapped : ∀ index, index < second.length → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheadsMapped : ∀ index, index < heads.length → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < next.length → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previous.length → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree))
+    (hsecond : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hfirst : mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase first)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous))
+    (hcount : mem.EncodesAt Luffs.Memory.Scalar.u64 countBase
+      (BitVec.ofNat 64 count)) :
+    ∃ program,
+      ⊢@{IProp GF} Program.wp program mem (fun final =>
+        final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+            (InitializeProgram.encodeNats result.offsets) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+            (InitializeProgram.encodeNats result.sizes) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+            (AllocateProgram.encodeFlags result.isFree) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+            (AllocateProgram.encodeFlags result.prevFree) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u32 secondBase result.second ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 firstBase result.first ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+            (InitializeProgram.encodeNats result.heads) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+            (InitializeProgram.encodeNats result.next) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+            (InitializeProgram.encodeNats result.previous) ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 countBase
+            (BitVec.ofNat 64 count)) := by
+  have hoption := coalesceIfPossibleArraysOutcome_success_refines_option hsuccess
+  rcases coalesceIfPossibleArrays_success_cases hoption with hidentity | hclass
+  · subst result
+    refine ⟨.done, Program.wp_done mem _ ?_⟩
+    exact ⟨hoffsets, hsizes, hfree, hprev, hsecond, hfirst, hheads, hnext,
+      hprevious, hcount⟩
+  · exact coalesceClassArrays_successfulProgram_wp_refines (GF := GF)
+      offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase offsets sizes isFree prevFree second first
+      heads next previous count left result mem hclass layout hoffsetsMapped
+      hsizesMapped hfreeMapped hprevMapped hsecondMapped hfirstMapped hheadsMapped
+      hnextMapped hpreviousMapped hoffsets hsizes hfree hprev hsecond hfirst hheads
+      hnext hprevious hcount
 
 end DeallocateProgram
 

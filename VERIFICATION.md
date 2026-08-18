@@ -1247,6 +1247,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   returned physical and class encoding; the stored count is deliberately still
   the input count at this helper boundary. The remaining deallocation work is
   the two conditional coalescing calls followed by the public count store.
+  Conditional coalescing now has its operational boundary too. Its ordinary
+  CFG success is proved to select either `.done` for an absent/ineligible pair,
+  or the complete decoded class-coalescing program for an eligible pair. Both
+  branches establish the same full metadata postcondition and frame the stored
+  input count, making this a composable unit for the right-then-left public
+  deallocation sequence.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

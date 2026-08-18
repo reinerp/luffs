@@ -20,12 +20,15 @@ General structs/enums and general return types are intentionally rejected.
 SIMD operations will be admitted individually, each with a Lean model, as the
 zch decoder needs them.
 
-The current language target is 64-bit Rust (`target_pointer_width = "64"`),
-covering x86-64 and AArch64 rather than pretending that `usize` has one
-platform-independent layout. Lean models `usize`/`isize` as 64-bit values and
-all address arithmetic against `2^64 - 1`; every generated Rust crate contains
-a compile-time guard rejecting other pointer widths. Supporting 32-bit targets
-would require a separate target model and codec instantiation.
+The current language target is little-endian 64-bit Rust
+(`target_pointer_width = "64"`, `target_endian = "little"`), covering the
+usual x86-64 and little-endian AArch64 targets rather than pretending that
+`usize` or native integer object bytes have one platform-independent layout.
+Lean models `usize`/`isize` as 64-bit values, all address arithmetic against
+`2^64 - 1`, and native scalar bytes in little-endian order; every generated
+Rust crate contains compile-time guards rejecting other pointer widths and
+endiannesses. Other targets require separate target models and codec
+instantiations.
 
 ## Memory verification
 

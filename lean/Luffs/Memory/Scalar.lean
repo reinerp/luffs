@@ -163,4 +163,56 @@ x86-64 and AArch64. Target-width parameterization is a later codegen layer. -/
 def usize : Codec (BitVec 64) := u64
 def isize : Codec (BitVec 64) := i64
 
+/-- The object bytes of an unsigned Rust integer on the declared little-endian
+target. Code generation rejects big-endian targets, so this is a platform
+contract rather than an assumption hidden inside the container proofs. -/
+def nativeBytesLE {width : Nat} (bytes : Nat) (value : BitVec width) : List Byte :=
+  List.ofFn fun index : Fin bytes => byteAt value (index.val * 8)
+
+/-- A codec is exactly the native object representation of its Rust scalar,
+not merely some reversible serialization. -/
+def NativeRepresentation {width : Nat} (codec : Codec (BitVec width))
+    (bytes : Nat) : Prop :=
+  codec.size = bytes ∧ ∀ value, codec.encode value = nativeBytesLE bytes value
+
+theorem u8_native : NativeRepresentation u8 1 := by
+  constructor
+  · rfl
+  · intro value
+    simp [u8, encode8, nativeBytesLE, byteAt]
+
+theorem u16_native : NativeRepresentation u16 2 := by
+  constructor
+  · rfl
+  · intro value
+    simp [u16, encode16, nativeBytesLE]
+
+theorem u32_native : NativeRepresentation u32 4 := by
+  constructor
+  · rfl
+  · intro value
+    simp [u32, encode32, nativeBytesLE]
+
+theorem u64_native : NativeRepresentation u64 8 := by
+  constructor
+  · rfl
+  · intro value
+    simp [u64, encode64, nativeBytesLE]
+
+theorem u128_native : NativeRepresentation u128 16 := by
+  constructor
+  · rfl
+  · intro value
+    simp [u128, encode128, nativeBytesLE]
+
+/-- Signed and pointer-sized integers have the same Rust object bytes as their
+unsigned bit patterns on the declared two's-complement, 64-bit target. -/
+theorem i8_native : NativeRepresentation i8 1 := u8_native
+theorem i16_native : NativeRepresentation i16 2 := u16_native
+theorem i32_native : NativeRepresentation i32 4 := u32_native
+theorem i64_native : NativeRepresentation i64 8 := u64_native
+theorem i128_native : NativeRepresentation i128 16 := u128_native
+theorem usize_native : NativeRepresentation usize 8 := u64_native
+theorem isize_native : NativeRepresentation isize 8 := i64_native
+
 end Luffs.Memory.Scalar

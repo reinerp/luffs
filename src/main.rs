@@ -310,7 +310,7 @@ fn run() -> Result<(), String> {
 
 fn parse(source: &str) -> Result<Module, String> {
     let mut rust = String::from(
-        "#[cfg(not(target_pointer_width = \"64\"))]\ncompile_error!(\"Luffs currently supports only 64-bit Rust targets\");\n\n",
+        "#[cfg(not(target_pointer_width = \"64\"))]\ncompile_error!(\"Luffs currently supports only 64-bit Rust targets\");\n#[cfg(not(target_endian = \"little\"))]\ncompile_error!(\"Luffs scalar representations currently require a little-endian Rust target\");\n\n",
     );
     let mut proofs = Vec::new();
     let mut accesses = Vec::new();
@@ -4534,10 +4534,13 @@ mod tests {
     }
 
     #[test]
-    fn generated_rust_rejects_non_64_bit_targets() {
+    fn generated_rust_rejects_unsupported_targets() {
         let module = parse("fn identity(value: usize) -> Option<usize> {\nSome(value)\n}").unwrap();
         assert!(module.rust.starts_with(
             "#[cfg(not(target_pointer_width = \"64\"))]\ncompile_error!(\"Luffs currently supports only 64-bit Rust targets\");"
+        ));
+        assert!(module.rust.contains(
+            "#[cfg(not(target_endian = \"little\"))]\ncompile_error!(\"Luffs scalar representations currently require a little-endian Rust target\");"
         ));
     }
 

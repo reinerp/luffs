@@ -656,9 +656,10 @@ concurrency are later extensions and are not prerequisites for `Box` and
   encoded bytes, and is proved to refine generic `Box.allocate`. Its Iris law
   converts the raw allocation capability into `Box.Owns codec ... value` while
   retaining exactly the allocator's remaining free ownership. Generated Rust
-  now rejects non-64-bit pointer widths at compile time, making the Lean
-  `usize`/`isize` and address-width premise an enforced target contract rather
-  than an unchecked portability assumption. The current `u8` constructor is now proved equal to the
+  now rejects non-64-bit pointer widths and non-little-endian targets at
+  compile time, making the Lean `usize`/`isize`, address-width, and native
+  scalar representation premises an enforced target contract rather than
+  unchecked portability assumptions. The current `u8` constructor is now proved equal to the
   generic constructor specialized with `Scalar.u8`, including equivalence of
   its one-byte bounds check and `List.set` update to the generic range write.
   The first non-byte allocator-backed monomorphization is checked as well:
@@ -1122,9 +1123,12 @@ alias semantics. This removes the one-store restriction that blocked
   its linear classifier has been re-proved for 32 sixteen-byte bins, and a
   generic element-address theorem proves alignment from the mmap base through
   every block offset and element stride. All twelve scalar codecs, including
-  `u128`/`i128`, are proved compatible with that alignment. A native-layout
-  view still needs its representation proof before the overall Vec item is
-  complete.
+  `u128`/`i128`, are proved compatible with that alignment. `nativeBytesLE`
+  defines the enforced target's scalar object bytes, and all twelve codecs are
+  proved exactly equal to that native representation (not merely reversible
+  serializations). A native-layout view still needs verified typed-slice
+  lowering that connects the aligned owned byte region to Rust's reference
+  operation before the overall Vec item is complete.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.
   All four checked-in examples are currently accepted by Lean and compile to

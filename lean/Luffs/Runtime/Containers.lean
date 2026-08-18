@@ -30,6 +30,28 @@ theorem all_scalar_native_alignment_compatible :
     Scalar.u32, Scalar.u64, Scalar.u128, Scalar.i8, Scalar.i16, Scalar.i32,
     Scalar.i64, Scalar.i128, Scalar.usize, Scalar.isize, alignment]
 
+/-- Every scalar codec in the Luffs surface is the native object-byte
+representation of the corresponding Rust integer on the enforced
+little-endian, 64-bit target. This discharges the representation half of a
+future byte-region-to-native-reference conversion. -/
+theorem all_scalar_native_representations :
+    Scalar.NativeRepresentation Scalar.u8 1 ∧
+    Scalar.NativeRepresentation Scalar.u16 2 ∧
+    Scalar.NativeRepresentation Scalar.u32 4 ∧
+    Scalar.NativeRepresentation Scalar.u64 8 ∧
+    Scalar.NativeRepresentation Scalar.u128 16 ∧
+    Scalar.NativeRepresentation Scalar.i8 1 ∧
+    Scalar.NativeRepresentation Scalar.i16 2 ∧
+    Scalar.NativeRepresentation Scalar.i32 4 ∧
+    Scalar.NativeRepresentation Scalar.i64 8 ∧
+    Scalar.NativeRepresentation Scalar.i128 16 ∧
+    Scalar.NativeRepresentation Scalar.usize 8 ∧
+    Scalar.NativeRepresentation Scalar.isize 8 := by
+  exact ⟨Scalar.u8_native, Scalar.u16_native, Scalar.u32_native,
+    Scalar.u64_native, Scalar.u128_native, Scalar.i8_native,
+    Scalar.i16_native, Scalar.i32_native, Scalar.i64_native,
+    Scalar.i128_native, Scalar.usize_native, Scalar.isize_native⟩
+
 structure BoxNewU8ArraysResult extends
     Luffs.Runtime.TLSF.AllocateArraysResult where
   storage : List Byte

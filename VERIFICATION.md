@@ -160,6 +160,13 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   first-level bitmap scalar, and head array decode to their cleared values
   after their interleaved stores. Cross-array preservation is justified by
   whole-array region disjointness and element-subregion lemmas.
+  The same decoding bridge now covers the physical loop's offsets field.
+  A six-store row establishes its zero offset while preserving it across the
+  other five metadata writes; induction over the remaining rows proves every
+  element of the complete offsets array decodes to zero. The proof uses only
+  pairwise array-region disjointness plus same-array distinct-index
+  disjointness, exposing the reusable pattern for the other five physical
+  metadata arrays.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

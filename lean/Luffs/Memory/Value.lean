@@ -174,6 +174,43 @@ theorem ArrayRegion.element_disjoint {α : Type} (codec : Codec α)
     (disjoint_symmetric.mp hdisjoint)
   exact disjoint_symmetric.mp hother
 
+theorem ArrayRegion.elements_disjoint {α β : Type}
+    (leftCodec : Codec α) (rightCodec : Codec β)
+    {leftBase leftCount leftIndex rightBase rightCount rightIndex : Nat}
+    (hleft : leftIndex < leftCount) (hright : rightIndex < rightCount)
+    (hdisjoint : (ArrayRegion leftCodec leftBase leftCount).disjoint
+      (ArrayRegion rightCodec rightBase rightCount)) :
+    (ValueRegion leftCodec (leftBase + leftIndex * leftCodec.size)).disjoint
+      (ValueRegion rightCodec (rightBase + rightIndex * rightCodec.size)) := by
+  have hleftRegion := ArrayRegion.element_disjoint leftCodec hleft hdisjoint
+  exact ArrayRegion.disjoint_element rightCodec hright hleftRegion
+
+def ElementWrite.region (write : ElementWrite) : Region :=
+  { base := write.base + write.index * write.width,
+    bytes := write.bytes.length }
+
+theorem Memory.EncodesAt.elementWrite_of_disjoint {α : Type}
+    {codec : Codec α} {mem : Memory} {base : Nat} {value : α}
+    {write : ElementWrite} (hencoded : mem.EncodesAt codec base value)
+    (hdisjoint : write.region.disjoint (ValueRegion codec base)) :
+    (write.apply mem).EncodesAt codec base value := by
+  simpa [ElementWrite.apply, ElementWrite.region] using
+    hencoded.writeBytes_of_disjoint hdisjoint
+
+theorem Memory.EncodesAt.applyAll_of_disjoint {α : Type}
+    {codec : Codec α} {mem : Memory} {base : Nat} {value : α}
+    {writes : List ElementWrite} (hencoded : mem.EncodesAt codec base value)
+    (hdisjoint : ∀ write, write ∈ writes →
+      write.region.disjoint (ValueRegion codec base)) :
+    (ElementWrite.applyAll writes mem).EncodesAt codec base value := by
+  induction writes generalizing mem with
+  | nil => exact hencoded
+  | cons write rest ih =>
+      apply ih (hencoded.elementWrite_of_disjoint
+        (hdisjoint write (by simp)))
+      intro tail htail
+      exact hdisjoint tail (by simp [htail])
+
 theorem Memory.EncodesArray.writeBytes_of_disjoint {α : Type}
     {codec : Codec α} {mem : Memory} {base writeBase : Nat}
     {values : List α} {bytes : List Byte}

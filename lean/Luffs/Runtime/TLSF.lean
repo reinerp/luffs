@@ -7363,15 +7363,17 @@ theorem clearPhysicalRow_wp {GF : BundledGFunctors}
     ⊢@{IProp GF} Program.wp
       (clearPhysicalRow offsetsBase sizesBase isFreeBase prevFreeBase
         nextBase previousBase sentinel index) mem
-      (fun final ⇒ ∀ p, mem.mapped p → final.mapped p) := by
+      (fun final => ∀ p, mem.mapped p → final.mapped p) := by
   unfold clearPhysicalRow
   apply Program.writeElements_wp
   · intro write hwrite
-    simp only [clearPhysicalRowWrites, List.mem_cons, List.mem_singleton] at hwrite
+    simp only [clearPhysicalRowWrites, List.mem_cons, List.not_mem_nil,
+      or_false] at hwrite
     rcases hwrite with hwrite | hwrite | hwrite | hwrite | hwrite | hwrite <;>
       subst write <;> simp
   · intro write hwrite i hi
-    simp only [clearPhysicalRowWrites, List.mem_cons, List.mem_singleton] at hwrite
+    simp only [clearPhysicalRowWrites, List.mem_cons, List.not_mem_nil,
+      or_false] at hwrite
     rcases hwrite with hwrite | hwrite | hwrite | hwrite | hwrite | hwrite <;>
       subst write
     · exact hoffsets i hi
@@ -7399,11 +7401,13 @@ theorem clearPhysicalRow_wp_exact {GF : BundledGFunctors}
   unfold clearPhysicalRow
   apply Program.writeElements_wp_exact
   · intro write hwrite
-    simp only [clearPhysicalRowWrites, List.mem_cons, List.mem_singleton] at hwrite
+    simp only [clearPhysicalRowWrites, List.mem_cons, List.not_mem_nil,
+      or_false] at hwrite
     rcases hwrite with hwrite | hwrite | hwrite | hwrite | hwrite | hwrite <;>
       subst write <;> simp
   · intro write hwrite i hi
-    simp only [clearPhysicalRowWrites, List.mem_cons, List.mem_singleton] at hwrite
+    simp only [clearPhysicalRowWrites, List.mem_cons, List.not_mem_nil,
+      or_false] at hwrite
     rcases hwrite with hwrite | hwrite | hwrite | hwrite | hwrite | hwrite <;>
       subst write
     · exact hoffsets i hi
@@ -7427,6 +7431,190 @@ def clearPhysicalMemory (offsetsBase sizesBase isFreeBase prevFreeBase
         (ElementWrite.applyAll
           (clearPhysicalRowWrites offsetsBase sizesBase isFreeBase prevFreeBase
             nextBase previousBase sentinel start) mem)
+
+theorem clearPhysicalRowMemory_offsets_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
+      count sentinel index : Nat) (mem : Memory) (hindex : index < count)
+    (hsizes : (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase count))
+    (hisFree : (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase count))
+    (hprevFree : (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase count))
+    (hnext : (ArrayRegion Luffs.Memory.Scalar.u64 nextBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase count))
+    (hprevious : (ArrayRegion Luffs.Memory.Scalar.u64 previousBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase count)) :
+    (ElementWrite.applyAll
+      (clearPhysicalRowWrites offsetsBase sizesBase isFreeBase prevFreeBase
+        nextBase previousBase sentinel index) mem).EncodesAt
+      Luffs.Memory.Scalar.u64 (offsetsBase + index * 8) (0 : BitVec 64) := by
+  have hfirst :
+      ((⟨offsetsBase, 8, index, usizeBytes 0⟩ : ElementWrite).apply mem).EncodesAt
+        Luffs.Memory.Scalar.u64 (offsetsBase + index * 8) (0 : BitVec 64) := by
+    simpa [ElementWrite.apply, usizeBytes, Luffs.Memory.Scalar.u64] using
+      Memory.writeElement_encodesAt Luffs.Memory.Scalar.u64 mem offsetsBase
+        index (0 : BitVec 64)
+  unfold clearPhysicalRowWrites
+  change (ElementWrite.applyAll
+    [⟨sizesBase, 8, index, usizeBytes 0⟩,
+      ⟨isFreeBase, 1, index, u8Bytes 0⟩,
+      ⟨prevFreeBase, 1, index, u8Bytes 0⟩,
+      ⟨nextBase, 8, index, usizeBytes sentinel⟩,
+      ⟨previousBase, 8, index, usizeBytes sentinel⟩]
+    ((⟨offsetsBase, 8, index, usizeBytes 0⟩ : ElementWrite).apply mem)).EncodesAt
+      Luffs.Memory.Scalar.u64 (offsetsBase + index * 8) (0 : BitVec 64)
+  apply hfirst.applyAll_of_disjoint
+  intro write hwrite
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hwrite
+  rcases hwrite with hwrite | hwrite | hwrite | hwrite | hwrite <;> subst write
+  · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+      ValueRegion] using
+      ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u64
+        Luffs.Memory.Scalar.u64 hindex hindex hsizes
+  · simpa [ElementWrite.region, u8Bytes_length, Luffs.Memory.Scalar.u8,
+      Luffs.Memory.Scalar.u64, ValueRegion] using
+      ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u8
+        Luffs.Memory.Scalar.u64 hindex hindex hisFree
+  · simpa [ElementWrite.region, u8Bytes_length, Luffs.Memory.Scalar.u8,
+      Luffs.Memory.Scalar.u64, ValueRegion] using
+      ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u8
+        Luffs.Memory.Scalar.u64 hindex hindex hprevFree
+  · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+      ValueRegion] using
+      ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u64
+        Luffs.Memory.Scalar.u64 hindex hindex hnext
+  · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+      ValueRegion] using
+      ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u64
+        Luffs.Memory.Scalar.u64 hindex hindex hprevious
+
+theorem clearPhysicalMemory_preserves_offsets
+    (offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
+      totalCount sentinel start count target : Nat) (mem : Memory)
+    (hrows : start + count ≤ totalCount) (htarget : target < totalCount)
+    (houtside : ∀ row, start ≤ row → row < start + count → row ≠ target)
+    (hencoded : mem.EncodesAt Luffs.Memory.Scalar.u64
+      (offsetsBase + target * 8) (0 : BitVec 64))
+    (hsizes : (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase totalCount).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase totalCount))
+    (hisFree : (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase totalCount).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase totalCount))
+    (hprevFree : (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase totalCount).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase totalCount))
+    (hnext : (ArrayRegion Luffs.Memory.Scalar.u64 nextBase totalCount).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase totalCount))
+    (hprevious : (ArrayRegion Luffs.Memory.Scalar.u64 previousBase totalCount).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase totalCount)) :
+    (clearPhysicalMemory offsetsBase sizesBase isFreeBase prevFreeBase nextBase
+      previousBase sentinel start count mem).EncodesAt
+        Luffs.Memory.Scalar.u64 (offsetsBase + target * 8) (0 : BitVec 64) := by
+  induction count generalizing start mem with
+  | zero => exact hencoded
+  | succ count ih =>
+      simp only [clearPhysicalMemory]
+      apply ih (start := start + 1)
+      · omega
+      · intro row hstart hend
+        apply houtside row <;> omega
+      · apply hencoded.applyAll_of_disjoint
+        intro write hwrite
+        simp only [clearPhysicalRowWrites, List.mem_cons, List.not_mem_nil,
+          or_false] at hwrite
+        rcases hwrite with hwrite | hwrite | hwrite | hwrite | hwrite | hwrite <;>
+          subst write
+        · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+            ValueRegion] using
+            ValueRegion.element_disjoint Luffs.Memory.Scalar.u64 offsetsBase
+              start target (houtside start (by omega) (by omega))
+        · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+            ValueRegion] using
+            ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u64
+              Luffs.Memory.Scalar.u64 (by omega) htarget hsizes
+        · simpa [ElementWrite.region, u8Bytes_length, Luffs.Memory.Scalar.u8,
+            Luffs.Memory.Scalar.u64, ValueRegion] using
+            ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u8
+              Luffs.Memory.Scalar.u64 (by omega) htarget hisFree
+        · simpa [ElementWrite.region, u8Bytes_length, Luffs.Memory.Scalar.u8,
+            Luffs.Memory.Scalar.u64, ValueRegion] using
+            ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u8
+              Luffs.Memory.Scalar.u64 (by omega) htarget hprevFree
+        · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+            ValueRegion] using
+            ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u64
+              Luffs.Memory.Scalar.u64 (by omega) htarget hnext
+        · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+            ValueRegion] using
+            ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u64
+              Luffs.Memory.Scalar.u64 (by omega) htarget hprevious
+
+theorem clearPhysicalMemory_offsets_encodesAt
+    (offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
+      totalCount sentinel start count target : Nat) (mem : Memory)
+    (hrows : start + count ≤ totalCount)
+    (htargetStart : start ≤ target) (htargetEnd : target < start + count)
+    (hsizes : (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase totalCount).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase totalCount))
+    (hisFree : (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase totalCount).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase totalCount))
+    (hprevFree : (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase totalCount).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase totalCount))
+    (hnext : (ArrayRegion Luffs.Memory.Scalar.u64 nextBase totalCount).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase totalCount))
+    (hprevious : (ArrayRegion Luffs.Memory.Scalar.u64 previousBase totalCount).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase totalCount)) :
+    (clearPhysicalMemory offsetsBase sizesBase isFreeBase prevFreeBase nextBase
+      previousBase sentinel start count mem).EncodesAt
+        Luffs.Memory.Scalar.u64 (offsetsBase + target * 8) (0 : BitVec 64) := by
+  induction count generalizing start mem with
+  | zero => omega
+  | succ count ih =>
+      simp only [clearPhysicalMemory]
+      by_cases htarget : target = start
+      · subst target
+        apply clearPhysicalMemory_preserves_offsets
+          (totalCount := totalCount) (target := start)
+        · omega
+        · omega
+        · intro row hrowStart _
+          omega
+        · exact clearPhysicalRowMemory_offsets_encodes
+            offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
+            totalCount sentinel start mem (by omega) hsizes hisFree hprevFree hnext
+            hprevious
+        · exact hsizes
+        · exact hisFree
+        · exact hprevFree
+        · exact hnext
+        · exact hprevious
+      · apply ih (start := start + 1)
+        · omega
+        · omega
+        · omega
+
+theorem clearPhysicalMemory_offsets_encodesArray
+    (offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
+      count sentinel : Nat) (mem : Memory)
+    (hsizes : (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase count))
+    (hisFree : (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase count))
+    (hprevFree : (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase count))
+    (hnext : (ArrayRegion Luffs.Memory.Scalar.u64 nextBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase count))
+    (hprevious : (ArrayRegion Luffs.Memory.Scalar.u64 previousBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase count)) :
+    (clearPhysicalMemory offsetsBase sizesBase isFreeBase prevFreeBase nextBase
+      previousBase sentinel 0 count mem).EncodesArray Luffs.Memory.Scalar.u64
+        offsetsBase (List.replicate count (0 : BitVec 64)) := by
+  intro index hindex
+  have hindex' : index < count := by
+    simpa using hindex
+  simpa [Luffs.Memory.Scalar.u64] using
+    clearPhysicalMemory_offsets_encodesAt offsetsBase sizesBase
+    isFreeBase prevFreeBase nextBase previousBase count sentinel 0 count index mem
+    (by omega) (by omega) (by omega) hsizes hisFree hprevFree hnext hprevious
 
 theorem clearPhysicalMemory_mapped (offsetsBase sizesBase isFreeBase prevFreeBase
     nextBase previousBase sentinel start count : Nat) (mem : Memory)
@@ -7456,21 +7644,27 @@ theorem clearPhysical_wp {GF : BundledGFunctors}
     ⊢@{IProp GF} Program.wp
       (clearPhysical offsetsBase sizesBase isFreeBase prevFreeBase nextBase
         previousBase count sentinel) mem
-      (fun final ⇒ ∀ p, mem.mapped p → final.mapped p) := by
+      (fun final => ∀ p, mem.mapped p → final.mapped p) := by
   unfold clearPhysical
   apply Program.wp_forRange_bounded _
-    (fun _ current ⇒ ∀ p, mem.mapped p → current.mapped p)
+    (fun _ current => ∀ p, mem.mapped p → current.mapped p)
     0 count mem (by simp)
   intro index current _ hindex hinvariant
   apply Program.wp_mono
     (clearPhysicalRow_wp offsetsBase sizesBase isFreeBase prevFreeBase
       nextBase previousBase sentinel index current
-      (fun i hi ⇒ hinvariant _ (hoffsets index (by omega) i hi))
-      (fun i hi ⇒ hinvariant _ (hsizes index (by omega) i hi))
-      (fun i hi ⇒ by simpa using hinvariant _ (hisFree index (by omega)))
-      (fun i hi ⇒ by simpa using hinvariant _ (hprevFree index (by omega)))
-      (fun i hi ⇒ hinvariant _ (hnext index (by omega) i hi))
-      (fun i hi ⇒ hinvariant _ (hprevious index (by omega) i hi)))
+      (fun i hi => hinvariant _ (hoffsets index (by omega) i hi))
+      (fun i hi => hinvariant _ (hsizes index (by omega) i hi))
+      (fun i hi => by
+        have : i = 0 := Nat.eq_zero_of_le_zero (Nat.le_of_lt_succ hi)
+        subst i
+        simpa using hinvariant _ (hisFree index (by omega)))
+      (fun i hi => by
+        have : i = 0 := Nat.eq_zero_of_le_zero (Nat.le_of_lt_succ hi)
+        subst i
+        simpa using hinvariant _ (hprevFree index (by omega)))
+      (fun i hi => hinvariant _ (hnext index (by omega) i hi))
+      (fun i hi => hinvariant _ (hprevious index (by omega) i hi)))
   intro final hfinal p hp
   exact hfinal p (hinvariant p hp)
 
@@ -7498,7 +7692,7 @@ theorem clearPhysicalFrom_wp_exact {GF : BundledGFunctors}
         isFreeBase prevFreeBase nextBase previousBase sentinel)) mem
       (fun final => final = clearPhysicalMemory offsetsBase sizesBase isFreeBase
         prevFreeBase nextBase previousBase sentinel start count mem) := by
-  induction count generalizing mem with
+  induction count generalizing start mem with
   | zero =>
       simpa [Program.forRange, clearPhysicalMemory] using
         (Program.wp_done (GF := GF) mem (fun final => final = mem) rfl)
@@ -7509,8 +7703,14 @@ theorem clearPhysicalFrom_wp_exact {GF : BundledGFunctors}
           nextBase previousBase sentinel start mem
           (fun i hi => hoffsets start (by omega) (by omega) i hi)
           (fun i hi => hsizes start (by omega) (by omega) i hi)
-          (fun i hi => by simpa using hisFree start (by omega) (by omega))
-          (fun i hi => by simpa using hprevFree start (by omega) (by omega))
+          (fun i hi => by
+            have : i = 0 := Nat.eq_zero_of_le_zero (Nat.le_of_lt_succ hi)
+            subst i
+            simpa using hisFree start (by omega) (by omega))
+          (fun i hi => by
+            have : i = 0 := Nat.eq_zero_of_le_zero (Nat.le_of_lt_succ hi)
+            subst i
+            simpa using hprevFree start (by omega) (by omega))
           (fun i hi => hnext start (by omega) (by omega) i hi)
           (fun i hi => hprevious start (by omega) (by omega) i hi))
       intro middle hmiddle
@@ -7622,14 +7822,17 @@ theorem clearBinsMemory_encodes (secondBase firstBase headsBase secondCount
   have hsecond1 : afterFirst.EncodesArray Luffs.Memory.Scalar.u32 secondBase
       (List.replicate secondCount (0 : BitVec 32)) := by
     apply hsecond0.writeBytes_of_disjoint
-    simpa [afterFirst, usizeBytes, ValueRegion,
+    simpa [afterFirst, usizeBytes_length, ValueRegion,
       Luffs.Memory.Scalar.u64] using hfirstSecond
   have hsecondFinal := hsecond1.fillElements_of_disjoint
     (writeCodec := Luffs.Memory.Scalar.u64)
-    (value := BitVec.ofNat 64 sentinel) (start := 0) (count := headsCount) (by
+    (writeBase := headsBase) (value := BitVec.ofNat 64 sentinel)
+    (start := 0) (count := headsCount) (by
       intro index _ hindex
-      exact ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hindex
-        hheadsSecond)
+      have hindex' : index < headsCount := by omega
+      simpa only [Nat.zero_add, List.length_replicate] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hindex'
+          hheadsSecond)
   have hfirst0 : afterFirst.EncodesAt Luffs.Memory.Scalar.u64 firstBase
       (0 : BitVec 64) := by
     simpa [afterFirst, usizeBytes, Luffs.Memory.Scalar.u64] using
@@ -7639,8 +7842,9 @@ theorem clearBinsMemory_encodes (secondBase firstBase headsBase secondCount
     (base := headsBase) (width := 8) (bytes := usizeBytes sentinel)
     (start := 0) (count := headsCount) (by
       intro index _ hindex
-      simpa [ValueRegion, usizeBytes, Luffs.Memory.Scalar.u64] using
-        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hindex hheadsFirst)
+      have hindex' : index < headsCount := by omega
+      simpa [ValueRegion, usizeBytes_length, Luffs.Memory.Scalar.u64] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hindex' hheadsFirst)
   have hheadsFinal :
       (Memory.fillElements afterFirst headsBase 8 0 headsCount
         (usizeBytes sentinel)).EncodesArray Luffs.Memory.Scalar.u64 headsBase
@@ -7662,7 +7866,7 @@ theorem clearBins_wp {GF : BundledGFunctors}
       mem.mapped (headsBase + index * 8 + i)) :
     ⊢@{IProp GF} Program.wp
       (clearBins secondBase firstBase headsBase secondCount headsCount sentinel)
-      mem (fun final ⇒ ∀ p, mem.mapped p → final.mapped p) := by
+      mem (fun final => ∀ p, mem.mapped p → final.mapped p) := by
   unfold clearBins
   apply Program.wp_then_preserves_mapped
     (Program.fillElements_wp secondBase 4 0 secondCount (u32Bytes 0) mem
@@ -7682,7 +7886,7 @@ theorem clearBins_wp {GF : BundledGFunctors}
         intro index _ hindex i hi
         exact hmem2 _ (hmem1 _ (hheads index (by omega) i hi))))
   intro final hfinal p hp
-  exact hfinal p (hmem2 p (hmem1 p hp))
+  exact hfinal p hp
 
 theorem clearBins_wp_exact {GF : BundledGFunctors}
     (secondBase firstBase headsBase secondCount headsCount sentinel : Nat)
@@ -7771,7 +7975,7 @@ theorem clearMetadata_wp {GF : BundledGFunctors}
       (clearMetadata offsetsBase sizesBase isFreeBase prevFreeBase nextBase
         previousBase secondBase firstBase headsBase physicalCount secondCount
         headsCount sentinel) mem
-      (fun final ⇒ ∀ p, mem.mapped p → final.mapped p) := by
+      (fun final => ∀ p, mem.mapped p → final.mapped p) := by
   unfold clearMetadata
   apply Program.wp_then_preserves_mapped
     (clearPhysical_wp offsetsBase sizesBase isFreeBase prevFreeBase nextBase
@@ -7781,13 +7985,13 @@ theorem clearMetadata_wp {GF : BundledGFunctors}
   apply Program.wp_mono
     (clearBins_wp secondBase firstBase headsBase secondCount headsCount sentinel
       middle
-      (fun index hindex i hi ⇒
+      (fun index hindex i hi =>
         hmiddle _ (hsecond index hindex i hi))
-      (fun i hi ⇒ hmiddle _ (hfirst i hi))
-      (fun index hindex i hi ⇒
+      (fun i hi => hmiddle _ (hfirst i hi))
+      (fun index hindex i hi =>
         hmiddle _ (hheads index hindex i hi)))
   intro final hfinal p hp
-  exact hfinal p (hmiddle p hp)
+  exact hfinal p hp
 
 theorem clearMetadata_wp_exact {GF : BundledGFunctors}
     (offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
@@ -7880,19 +8084,21 @@ theorem seedInitial_wp {GF : BundledGFunctors}
   unfold seedInitial
   apply Program.writeElements_wp
   · intro write hwrite
-    simp only [seedInitialWrites, List.mem_cons, List.mem_singleton] at hwrite
+    simp only [seedInitialWrites, List.mem_cons, List.not_mem_nil,
+      or_false] at hwrite
     rcases hwrite with hwrite | hwrite | hwrite | hwrite | hwrite | hwrite |
       hwrite | hwrite | hwrite <;> subst write <;> simp
   · intro write hwrite i hi
-    simp only [seedInitialWrites, List.mem_cons, List.mem_singleton] at hwrite
+    simp only [seedInitialWrites, List.mem_cons, List.not_mem_nil,
+      or_false] at hwrite
     rcases hwrite with hwrite | hwrite | hwrite | hwrite | hwrite | hwrite |
       hwrite | hwrite | hwrite <;> subst write
     · simpa using hoffsets i hi
     · simpa using hsizes i hi
-    · have : i = 0 := by omega
+    · simp at hi
       subst i
       simpa using hisFree
-    · have : i = 0 := by omega
+    · simp at hi
       subst i
       simpa using hprevFree
     · simpa using hnext i hi
@@ -7924,19 +8130,21 @@ theorem seedInitial_wp_exact {GF : BundledGFunctors}
   unfold seedInitial
   apply Program.writeElements_wp_exact
   · intro write hwrite
-    simp only [seedInitialWrites, List.mem_cons, List.mem_singleton] at hwrite
+    simp only [seedInitialWrites, List.mem_cons, List.not_mem_nil,
+      or_false] at hwrite
     rcases hwrite with hwrite | hwrite | hwrite | hwrite | hwrite | hwrite |
       hwrite | hwrite | hwrite <;> subst write <;> simp
   · intro write hwrite i hi
-    simp only [seedInitialWrites, List.mem_cons, List.mem_singleton] at hwrite
+    simp only [seedInitialWrites, List.mem_cons, List.not_mem_nil,
+      or_false] at hwrite
     rcases hwrite with hwrite | hwrite | hwrite | hwrite | hwrite | hwrite |
       hwrite | hwrite | hwrite <;> subst write
     · simpa using hoffsets i hi
     · simpa using hsizes i hi
-    · have : i = 0 := by omega
+    · simp at hi
       subst i
       simpa using hisFree
-    · have : i = 0 := by omega
+    · simp at hi
       subst i
       simpa using hprevFree
     · simpa using hnext i hi
@@ -8025,7 +8233,7 @@ theorem initializeProgram_wp {GF : BundledGFunctors}
       (fun i hi => by simpa using hmiddle _ (hnext 0 hphysical i hi))
       (fun i hi => by simpa using hmiddle _ (hprevious 0 hphysical i hi)))
   intro final hfinal p hp
-  exact hfinal p (hmiddle p hp)
+  exact hfinal p hp
 
 theorem initializeProgram_wp_exact {GF : BundledGFunctors}
     (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase

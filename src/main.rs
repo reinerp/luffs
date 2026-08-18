@@ -3880,6 +3880,36 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
             model.name, model.name, model.refines
         ));
     }
+    for model in &module.tlsf_deallocate_uncoalesced_models {
+        out.push_str(&format!(
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (count block returned_offset returned_bytes : Nat) : Option Luffs.Runtime.TLSF.DeallocateUncoalescedResult := do\n  if count ≤ offsets.length ∧ count ≤ sizes.length ∧ count ≤ is_free.length ∧ count ≤ prev_free.length ∧ block < count then\n    let (next_is_free, next_prev_free) ← tlsf_mark_free_model offsets sizes is_free prev_free block returned_offset returned_bytes\n    let bin ← tlsf_classify_size_model returned_bytes\n    let insertion ← tlsf_insert_class_model second first heads next previous bin returned_offset\n    pure {{ isFree := next_is_free, prevFree := next_prev_free, insertion }}\n  else none\n\n",
+            model.name
+        ));
+        out.push_str(&format!(
+            "theorem {}_refines : {}_model = {} := by\n  unfold {}_model\n  rw [tlsf_mark_free_refines, tlsf_classify_size_refines, tlsf_insert_class_refines]\n  rfl\n\n",
+            model.name, model.name, model.refines, model.name
+        ));
+    }
+    for model in &module.tlsf_coalesce_class_models {
+        out.push_str(&format!(
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (count left : Nat) : Option Luffs.Runtime.TLSF.CoalesceClassResult :=\n  {} offsets sizes is_free prev_free second first heads next previous count left\n\n",
+            model.name, model.refines
+        ));
+        out.push_str(&format!(
+            "theorem {}_refines : {}_model = {} := by rfl\n\n",
+            model.name, model.name, model.refines
+        ));
+    }
+    for model in &module.tlsf_coalesce_if_possible_models {
+        out.push_str(&format!(
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (count left : Nat) : Option Luffs.Runtime.TLSF.CoalesceClassResult :=\n  if count > offsets.length ∨ count > sizes.length ∨ count > is_free.length ∨ count > prev_free.length then none\n  else if left = Luffs.Runtime.TLSF.usizeMax then\n    some (Luffs.Runtime.TLSF.allocatorArrays offsets sizes is_free prev_free second first heads next previous count)\n  else\n    let right := left + 1\n    if right ≥ count then\n      some (Luffs.Runtime.TLSF.allocatorArrays offsets sizes is_free prev_free second first heads next previous count)\n    else if is_free[left]? = some 0 then\n      some (Luffs.Runtime.TLSF.allocatorArrays offsets sizes is_free prev_free second first heads next previous count)\n    else if is_free[right]? = some 0 then\n      some (Luffs.Runtime.TLSF.allocatorArrays offsets sizes is_free prev_free second first heads next previous count)\n    else match offsets[left]?, sizes[left]?, offsets[right]? with\n      | some left_offset, some left_size, some right_offset =>\n          if left_offset + left_size ≠ right_offset then\n            some (Luffs.Runtime.TLSF.allocatorArrays offsets sizes is_free prev_free second first heads next previous count)\n          else tlsf_coalesce_class_model offsets sizes is_free prev_free second first heads next previous count left\n      | _, _, _ => none\n\n",
+            model.name
+        ));
+        out.push_str(&format!(
+            "theorem {}_refines : {}_model = {} := by\n  unfold {}_model\n  rw [tlsf_coalesce_class_refines]\n  rfl\n\n",
+            model.name, model.name, model.refines, model.name
+        ));
+    }
     for model in &module.tlsf_remove_class_models {
         out.push_str(&format!(
             "def {}_model (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (bin block : Nat) : Option Luffs.Runtime.TLSF.RemoveClassResult :=\n  {} second first heads next previous bin block\n\n",
@@ -3954,7 +3984,7 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
     }
     if !module.tlsf_box_drop_models.is_empty() && !module.tlsf_deallocate_models.is_empty() {
         out.push_str(
-            "def tlsf_find_offset_index_model : List Nat → Nat → Nat → Option Nat\n  | _, 0, _ => none\n  | [], _ + 1, _ => none\n  | offset :: rest, count + 1, target =>\n      if offset = target then some 0\n      else (tlsf_find_offset_index_model rest count target).map Nat.succ\n\ntheorem tlsf_find_offset_index_refines : tlsf_find_offset_index_model = Luffs.Runtime.TLSF.findOffsetIndex := by\n  funext offsets count target\n  induction offsets generalizing count with\n  | nil => cases count <;> rfl\n  | cons offset rest ih =>\n      cases count with\n      | zero => rfl\n      | succ count => simp only [tlsf_find_offset_index_model, Luffs.Runtime.TLSF.findOffsetIndex, ih]\n\ndef tlsf_deallocate_composed_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (count block returned_offset returned_bytes : Nat) : Option Luffs.Runtime.TLSF.CoalesceClassResult := do\n  let marked ← Luffs.Runtime.TLSF.deallocateUncoalescedArrays offsets sizes is_free prev_free second first heads next previous count block returned_offset returned_bytes\n  let after_right ← Luffs.Runtime.TLSF.coalesceIfPossibleArrays offsets sizes marked.isFree marked.prevFree marked.insertion.second marked.insertion.first marked.insertion.heads marked.insertion.next marked.insertion.previous count block\n  if block = 0 then return after_right\n  Luffs.Runtime.TLSF.coalesceIfPossibleArrays after_right.offsets after_right.sizes after_right.isFree after_right.prevFree after_right.second after_right.first after_right.heads after_right.next after_right.previous after_right.count (block - 1)\n\ntheorem tlsf_deallocate_composed_refines : tlsf_deallocate_composed_model = Luffs.Runtime.TLSF.deallocateArrays := by rfl\n\n",
+            "def tlsf_find_offset_index_model : List Nat → Nat → Nat → Option Nat\n  | _, 0, _ => none\n  | [], _ + 1, _ => none\n  | offset :: rest, count + 1, target =>\n      if offset = target then some 0\n      else (tlsf_find_offset_index_model rest count target).map Nat.succ\n\ntheorem tlsf_find_offset_index_refines : tlsf_find_offset_index_model = Luffs.Runtime.TLSF.findOffsetIndex := by\n  funext offsets count target\n  induction offsets generalizing count with\n  | nil => cases count <;> rfl\n  | cons offset rest ih =>\n      cases count with\n      | zero => rfl\n      | succ count => simp only [tlsf_find_offset_index_model, Luffs.Runtime.TLSF.findOffsetIndex, ih]\n\ndef tlsf_deallocate_composed_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (count block returned_offset returned_bytes : Nat) : Option Luffs.Runtime.TLSF.CoalesceClassResult := do\n  let marked ← tlsf_deallocate_uncoalesced_model offsets sizes is_free prev_free second first heads next previous count block returned_offset returned_bytes\n  let after_right ← tlsf_coalesce_if_possible_model offsets sizes marked.isFree marked.prevFree marked.insertion.second marked.insertion.first marked.insertion.heads marked.insertion.next marked.insertion.previous count block\n  if block = 0 then return after_right\n  tlsf_coalesce_if_possible_model after_right.offsets after_right.sizes after_right.isFree after_right.prevFree after_right.second after_right.first after_right.heads after_right.next after_right.previous after_right.count (block - 1)\n\ntheorem tlsf_deallocate_composed_refines : tlsf_deallocate_composed_model = Luffs.Runtime.TLSF.deallocateArrays := by\n  unfold tlsf_deallocate_composed_model\n  rw [tlsf_deallocate_uncoalesced_refines, tlsf_coalesce_if_possible_refines]\n  rfl\n\n",
         );
     }
     for model in &module.tlsf_box_drop_models {
@@ -4177,39 +4207,9 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
             model.name, model.name, model.name
         ));
     }
-    for model in &module.tlsf_deallocate_uncoalesced_models {
-        out.push_str(&format!(
-            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (count block returned_offset returned_bytes : Nat) : Option Luffs.Runtime.TLSF.DeallocateUncoalescedResult :=\n  {} offsets sizes is_free prev_free second first heads next previous count block returned_offset returned_bytes\n\n",
-            model.name, model.refines
-        ));
-        out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
-            model.name, model.name, model.refines
-        ));
-    }
     for model in &module.tlsf_coalesce_physical_models {
         out.push_str(&format!(
             "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count left : Nat) : Option Luffs.Runtime.TLSF.CoalescePhysicalResult :=\n  {} offsets sizes is_free prev_free count left\n\n",
-            model.name, model.refines
-        ));
-        out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
-            model.name, model.name, model.refines
-        ));
-    }
-    for model in &module.tlsf_coalesce_class_models {
-        out.push_str(&format!(
-            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (count left : Nat) : Option Luffs.Runtime.TLSF.CoalesceClassResult :=\n  {} offsets sizes is_free prev_free second first heads next previous count left\n\n",
-            model.name, model.refines
-        ));
-        out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
-            model.name, model.name, model.refines
-        ));
-    }
-    for model in &module.tlsf_coalesce_if_possible_models {
-        out.push_str(&format!(
-            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (count left : Nat) : Option Luffs.Runtime.TLSF.CoalesceClassResult :=\n  {} offsets sizes is_free prev_free second first heads next previous count left\n\n",
             model.name, model.refines
         ));
         out.push_str(&format!(
@@ -4557,8 +4557,16 @@ mod tests {
         assert!(!generated.contains(
             "Option Luffs.Runtime.TLSF.CoalesceClassResult :=\n  Luffs.Runtime.Containers.boxDropArrays"
         ));
+        assert!(generated.contains(
+            "let marked ← tlsf_deallocate_uncoalesced_model offsets sizes is_free prev_free"
+        ));
+        assert!(generated.contains("let after_right ← tlsf_coalesce_if_possible_model"));
+        assert!(generated.contains("let (next_is_free, next_prev_free) ← tlsf_mark_free_model"));
         assert!(
-            generated.contains("let after_right ← Luffs.Runtime.TLSF.coalesceIfPossibleArrays")
+            generated.contains("else tlsf_coalesce_class_model offsets sizes is_free prev_free")
+        );
+        assert!(
+            !generated.contains("let after_right ← Luffs.Runtime.TLSF.coalesceIfPossibleArrays")
         );
         assert!(generated.contains("if block = 0 then return after_right"));
         assert!(!generated.contains(

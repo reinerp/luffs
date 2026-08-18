@@ -791,6 +791,14 @@ concurrency are later extensions and are not prerequisites for `Box` and
   deallocator was generalized to fixed-capacity arrays represented by an
   active prefix, including framed boundary-tag writes into spare capacity, so
   this composition no longer assumes canonical arrays after allocation.
+  Compiler-generated deallocation now exposes its complete transaction rather
+  than aliasing the handwritten public transformer. The uncoalesced stage
+  composes the generated mark-free, size-classification, and free-list insertion
+  models; conditional right/left coalescing emits its capacity, sentinel,
+  neighbor, free-flag, and adjacency branches directly. Box drop, Vec drop, and
+  Vec growth all sequence these generated stages, with Lean proving the result
+  extensionally equal to the executable allocator semantics. The actual
+  `coalesceClassArrays` commit is still the next source-generation boundary.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

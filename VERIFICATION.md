@@ -1039,6 +1039,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   boundary-tag definitions spell out insertion and the conditional
   following-header write; physical allocation no longer calls any of the three
   handwritten helpers.
+  General free-list insertion now has a byte-level Iris proof as well. The
+  source-ordered `tlsf_insert_class` program writes the new node links, repairs
+  an in-range old head, replaces the class head, and sets both bitmap levels.
+  Five simultaneous representation decoders prove that the resulting memory
+  encodes exactly `insertClassArrays`; split-remainder insertion no longer
+  relies only on initialization's special all-zero seed transaction.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

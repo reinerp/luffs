@@ -13474,6 +13474,643 @@ theorem removeClassProgram_wp_refines {GF : BundledGFunctors}
 
 end RemoveProgram
 
+namespace InsertProgram
+
+open Luffs.Memory
+
+/-- Source-ordered successful stores of `tlsf_insert_class`, beginning after
+the checked loads of the old head and bitmap words. -/
+def insertClassWrites (secondBase firstBase headsBase nextBase previousBase
+    nextLength previousLength bin block fl sl oldHead : Nat)
+    (oldSecond : BitVec 32) (oldFirst : BitVec 64) : List ElementWrite :=
+  [⟨nextBase, 8, block, InitializeProgram.usizeBytes oldHead⟩,
+   ⟨previousBase, 8, block, InitializeProgram.usizeBytes nextLength⟩] ++
+  (if oldHead < previousLength then
+    [⟨previousBase, 8, oldHead, InitializeProgram.usizeBytes block⟩]
+  else []) ++
+  [⟨headsBase, 8, bin, InitializeProgram.usizeBytes block⟩,
+   ⟨secondBase, 4, fl,
+      InitializeProgram.u32Bytes (setSecondBit oldSecond sl).toNat⟩,
+   ⟨firstBase, 8, 0,
+      InitializeProgram.usizeBytes (setWordBit oldFirst fl).toNat⟩]
+
+def insertClassProgram (secondBase firstBase headsBase nextBase previousBase
+    nextLength previousLength bin block fl sl oldHead : Nat)
+    (oldSecond : BitVec 32) (oldFirst : BitVec 64) : Program :=
+  Program.writeElements
+    (insertClassWrites secondBase firstBase headsBase nextBase previousBase
+      nextLength previousLength bin block fl sl oldHead oldSecond oldFirst)
+
+theorem insertClassWrites_width (secondBase firstBase headsBase nextBase
+    previousBase nextLength previousLength bin block fl sl oldHead : Nat)
+    (oldSecond : BitVec 32) (oldFirst : BitVec 64) :
+    ∀ write, write ∈ insertClassWrites secondBase firstBase headsBase nextBase
+      previousBase nextLength previousLength bin block fl sl oldHead oldSecond
+      oldFirst → write.bytes.length = write.width := by
+  intro write hwrite
+  simp [insertClassWrites] at hwrite
+  rcases hwrite with rfl | rfl | hwrite | rfl | rfl | rfl
+  · simp
+  · simp
+  · rcases hwrite with ⟨_, rfl⟩
+    simp
+  · simp
+  · simp
+  · simp
+
+theorem insertClassWrites_mapped
+    (secondBase firstBase headsBase nextBase previousBase nextLength
+      previousLength bin block fl sl oldHead : Nat)
+    (oldSecond : BitVec 32) (oldFirst : BitVec 64) (mem : Memory)
+    (hbin : ∀ i, i < 8 → mem.mapped (headsBase + bin * 8 + i))
+    (hblockNext : ∀ i, i < 8 → mem.mapped (nextBase + block * 8 + i))
+    (hblockPrevious : ∀ i, i < 8 →
+      mem.mapped (previousBase + block * 8 + i))
+    (holdPrevious : oldHead < previousLength → ∀ i, i < 8 →
+      mem.mapped (previousBase + oldHead * 8 + i))
+    (hsecond : ∀ i, i < 4 → mem.mapped (secondBase + fl * 4 + i))
+    (hfirst : ∀ i, i < 8 → mem.mapped (firstBase + i)) :
+    ∀ write, write ∈ insertClassWrites secondBase firstBase headsBase nextBase
+      previousBase nextLength previousLength bin block fl sl oldHead oldSecond
+      oldFirst → ∀ i, i < write.width →
+      mem.mapped (write.base + write.index * write.width + i) := by
+  intro write hwrite i hi
+  simp [insertClassWrites] at hwrite
+  rcases hwrite with rfl | rfl | hwrite | rfl | rfl | rfl
+  · simpa using hblockNext i hi
+  · simpa using hblockPrevious i hi
+  · rcases hwrite with ⟨hold, rfl⟩
+    simpa using holdPrevious hold i hi
+  · simpa using hbin i hi
+  · simpa using hsecond i hi
+  · simpa using hfirst i hi
+
+theorem insertClassProgram_wp_exact {GF : BundledGFunctors}
+    (secondBase firstBase headsBase nextBase previousBase nextLength
+      previousLength bin block fl sl oldHead : Nat)
+    (oldSecond : BitVec 32) (oldFirst : BitVec 64) (mem : Memory)
+    (hbin : ∀ i, i < 8 → mem.mapped (headsBase + bin * 8 + i))
+    (hblockNext : ∀ i, i < 8 → mem.mapped (nextBase + block * 8 + i))
+    (hblockPrevious : ∀ i, i < 8 →
+      mem.mapped (previousBase + block * 8 + i))
+    (holdPrevious : oldHead < previousLength → ∀ i, i < 8 →
+      mem.mapped (previousBase + oldHead * 8 + i))
+    (hsecond : ∀ i, i < 4 → mem.mapped (secondBase + fl * 4 + i))
+    (hfirst : ∀ i, i < 8 → mem.mapped (firstBase + i)) :
+    ⊢@{IProp GF} Program.wp
+      (insertClassProgram secondBase firstBase headsBase nextBase previousBase
+        nextLength previousLength bin block fl sl oldHead oldSecond oldFirst) mem
+      (fun final => final = ElementWrite.applyAll
+        (insertClassWrites secondBase firstBase headsBase nextBase previousBase
+          nextLength previousLength bin block fl sl oldHead oldSecond oldFirst)
+        mem) := by
+  unfold insertClassProgram
+  apply Program.writeElements_wp_exact
+  · exact insertClassWrites_width _ _ _ _ _ _ _ _ _ _ _ _ _ _
+  · exact insertClassWrites_mapped _ _ _ _ _ _ _ _ _ _ _ _ _ _ mem hbin
+      hblockNext hblockPrevious holdPrevious hsecond hfirst
+
+def insertSecondBefore (headsBase nextBase previousBase nextLength previousLength
+    bin block oldHead : Nat) : List ElementWrite :=
+  [⟨nextBase, 8, block, InitializeProgram.usizeBytes oldHead⟩,
+   ⟨previousBase, 8, block, InitializeProgram.usizeBytes nextLength⟩] ++
+  (if oldHead < previousLength then
+    [⟨previousBase, 8, oldHead, InitializeProgram.usizeBytes block⟩]
+  else []) ++
+  [⟨headsBase, 8, bin, InitializeProgram.usizeBytes block⟩]
+
+theorem insertClassWrites_second_decompose
+    (secondBase firstBase headsBase nextBase previousBase nextLength
+      previousLength bin block fl sl oldHead : Nat)
+    (oldSecond : BitVec 32) (oldFirst : BitVec 64) :
+    insertClassWrites secondBase firstBase headsBase nextBase previousBase
+      nextLength previousLength bin block fl sl oldHead oldSecond oldFirst =
+    insertSecondBefore headsBase nextBase previousBase nextLength previousLength
+        bin block oldHead ++
+      [⟨secondBase, 4, fl,
+        InitializeProgram.u32Bytes (setSecondBit oldSecond sl).toNat⟩] ++
+      [⟨firstBase, 8, 0,
+        InitializeProgram.usizeBytes (setWordBit oldFirst fl).toNat⟩] := by
+  simp [insertClassWrites, insertSecondBefore]
+
+theorem insertClassWrites_second_encodes
+    (secondBase firstBase headsBase nextBase previousBase nextLength
+      previousLength headsLength bin block fl sl oldHead : Nat)
+    (oldSecond : BitVec 32) (oldFirst : BitVec 64)
+    (second : List (BitVec 32)) (mem : Memory) (hfl : fl < second.length)
+    (hlayout : RemoveProgram.RemoveClassMetadataDisjoint secondBase firstBase
+      headsBase nextBase previousBase second.length headsLength nextLength
+      previousLength)
+    (hbin : bin < headsLength)
+    (hblockNext : block < nextLength)
+    (hblockPrevious : block < previousLength)
+    (hencoded : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second) :
+    (ElementWrite.applyAll
+      (insertClassWrites secondBase firstBase headsBase nextBase previousBase
+        nextLength previousLength bin block fl sl oldHead oldSecond oldFirst) mem
+      ).EncodesArray Luffs.Memory.Scalar.u32 secondBase
+        (second.set fl (setSecondBit oldSecond sl)) := by
+  have hbefore : ∀ write, write ∈
+      insertSecondBefore headsBase nextBase previousBase nextLength previousLength
+        bin block oldHead →
+      write.region.disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u32 secondBase second.length) := by
+    intro write hwrite
+    simp [insertSecondBefore] at hwrite
+    rcases hwrite with rfl | rfl | hwrite | rfl
+    · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u64] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hblockNext
+          (disjoint_symmetric.mp hlayout.second_next)
+    · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u64] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hblockPrevious
+          (disjoint_symmetric.mp hlayout.second_previous)
+    · rcases hwrite with ⟨hold, rfl⟩
+      simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u64] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hold
+          (disjoint_symmetric.mp hlayout.second_previous)
+    · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u64] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hbin
+          (disjoint_symmetric.mp hlayout.second_heads)
+  have hupdate := hencoded.applyAll_update (index := fl)
+    (value := setSecondBit oldSecond sl)
+    (before := insertSecondBefore headsBase nextBase previousBase nextLength
+      previousLength bin block oldHead)
+    (after := [⟨firstBase, 8, 0,
+      InitializeProgram.usizeBytes (setWordBit oldFirst fl).toNat⟩]) hfl hbefore (by
+      intro write hwrite
+      simp at hwrite
+      subst write
+      simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u64, List.length_set] using
+        disjoint_symmetric.mp hlayout.second_first)
+  rw [insertClassWrites_second_decompose, ElementWrite.applyAll_append,
+    ElementWrite.applyAll_append]
+  simpa [ElementWrite.applyAll, ElementWrite.apply,
+    ElementWrite.applyAll_append, InitializeProgram.u32Bytes,
+    Luffs.Memory.Scalar.u32] using hupdate
+
+theorem insertClassWrites_first_encodes
+    (secondBase firstBase headsBase nextBase previousBase nextLength
+      previousLength bin block fl sl oldHead : Nat)
+    (oldSecond : BitVec 32) (oldFirst : BitVec 64) (mem : Memory) :
+    (ElementWrite.applyAll
+      (insertClassWrites secondBase firstBase headsBase nextBase previousBase
+        nextLength previousLength bin block fl sl oldHead oldSecond oldFirst) mem
+      ).EncodesAt Luffs.Memory.Scalar.u64 firstBase (setWordBit oldFirst fl) := by
+  let before := insertSecondBefore headsBase nextBase previousBase nextLength
+      previousLength bin block oldHead ++
+    [⟨secondBase, 4, fl,
+      InitializeProgram.u32Bytes (setSecondBit oldSecond sl).toNat⟩]
+  have hwrite := Memory.writeElement_encodesAt Luffs.Memory.Scalar.u64
+    (ElementWrite.applyAll before mem) firstBase 0 (setWordBit oldFirst fl)
+  rw [show insertClassWrites secondBase firstBase headsBase nextBase previousBase
+      nextLength previousLength bin block fl sl oldHead oldSecond oldFirst =
+      before ++ [⟨firstBase, 8, 0,
+        InitializeProgram.usizeBytes (setWordBit oldFirst fl).toNat⟩] by
+      simp [before, insertClassWrites_second_decompose],
+    ElementWrite.applyAll_append]
+  simpa [ElementWrite.applyAll, ElementWrite.apply,
+    InitializeProgram.usizeBytes, Luffs.Memory.Scalar.u64] using hwrite
+
+def insertNextAfter (secondBase firstBase headsBase previousBase nextLength
+    previousLength bin block fl sl oldHead : Nat) (oldSecond : BitVec 32)
+    (oldFirst : BitVec 64) : List ElementWrite :=
+  [⟨previousBase, 8, block, InitializeProgram.usizeBytes nextLength⟩] ++
+  (if oldHead < previousLength then
+    [⟨previousBase, 8, oldHead, InitializeProgram.usizeBytes block⟩]
+  else []) ++
+  [⟨headsBase, 8, bin, InitializeProgram.usizeBytes block⟩,
+   ⟨secondBase, 4, fl,
+      InitializeProgram.u32Bytes (setSecondBit oldSecond sl).toNat⟩,
+   ⟨firstBase, 8, 0,
+      InitializeProgram.usizeBytes (setWordBit oldFirst fl).toNat⟩]
+
+theorem insertClassWrites_next_encodes
+    (secondBase firstBase headsBase nextBase previousBase nextLength
+      previousLength headsLength secondLength bin block fl sl oldHead : Nat)
+    (oldSecond : BitVec 32) (oldFirst : BitVec 64) (next : List Nat)
+    (mem : Memory) (hblock : block < next.length)
+    (hnextLength : next.length = nextLength) (hbin : bin < headsLength)
+    (hblockPrevious : block < previousLength) (hfl : fl < secondLength)
+    (hlayout : RemoveProgram.RemoveClassMetadataDisjoint secondBase firstBase
+      headsBase nextBase previousBase secondLength headsLength next.length
+      previousLength)
+    (hencoded : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next)) :
+    (ElementWrite.applyAll
+      (insertClassWrites secondBase firstBase headsBase nextBase previousBase
+        nextLength previousLength bin block fl sl oldHead oldSecond oldFirst) mem
+      ).EncodesArray Luffs.Memory.Scalar.u64 nextBase
+        (InitializeProgram.encodeNats (next.set block oldHead)) := by
+  have hafter : ∀ write, write ∈
+      insertNextAfter secondBase firstBase headsBase previousBase nextLength
+        previousLength bin block fl sl oldHead oldSecond oldFirst →
+      write.region.disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 nextBase next.length) := by
+    intro write hwrite
+    simp [insertNextAfter] at hwrite
+    rcases hwrite with rfl | hwrite | rfl | rfl | rfl
+    · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u64] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hblockPrevious
+          (disjoint_symmetric.mp hlayout.next_previous)
+    · rcases hwrite with ⟨hold, rfl⟩
+      simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u64] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hold
+          (disjoint_symmetric.mp hlayout.next_previous)
+    · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u64] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hbin
+          hlayout.heads_next
+    · simpa [ElementWrite.region, InitializeProgram.u32Bytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u32] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u32 hfl
+          hlayout.second_next
+    · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u64] using hlayout.first_next
+  have hupdate := hencoded.applyAll_update (index := block)
+    (value := BitVec.ofNat 64 oldHead) (before := [])
+    (after := insertNextAfter secondBase firstBase headsBase previousBase
+      nextLength previousLength bin block fl sl oldHead oldSecond oldFirst)
+    (by simpa [InitializeProgram.encodeNats] using hblock) (by simp) (by
+      intro write hwrite
+      simpa [InitializeProgram.encodeNats, List.length_set] using
+        hafter write hwrite)
+  rw [show insertClassWrites secondBase firstBase headsBase nextBase previousBase
+      nextLength previousLength bin block fl sl oldHead oldSecond oldFirst =
+      [⟨nextBase, 8, block, InitializeProgram.usizeBytes oldHead⟩] ++
+        insertNextAfter secondBase firstBase headsBase previousBase nextLength
+          previousLength bin block fl sl oldHead oldSecond oldFirst by
+      simp [insertClassWrites, insertNextAfter],
+    ElementWrite.applyAll_append, AllocateProgram.encodeNats_set]
+  simpa [ElementWrite.applyAll, ElementWrite.apply,
+    ElementWrite.applyAll_append, InitializeProgram.usizeBytes,
+    Luffs.Memory.Scalar.u64] using hupdate
+
+def insertHeadsBefore (nextBase previousBase nextLength previousLength block
+    oldHead : Nat) : List ElementWrite :=
+  [⟨nextBase, 8, block, InitializeProgram.usizeBytes oldHead⟩,
+   ⟨previousBase, 8, block, InitializeProgram.usizeBytes nextLength⟩] ++
+  (if oldHead < previousLength then
+    [⟨previousBase, 8, oldHead, InitializeProgram.usizeBytes block⟩]
+  else [])
+
+theorem insertClassWrites_heads_encodes
+    (secondBase firstBase headsBase nextBase previousBase nextLength
+      previousLength secondLength bin block fl sl oldHead : Nat)
+    (oldSecond : BitVec 32) (oldFirst : BitVec 64) (heads : List Nat)
+    (mem : Memory) (hbin : bin < heads.length) (hblockNext : block < nextLength)
+    (hblockPrevious : block < previousLength) (hfl : fl < secondLength)
+    (hlayout : RemoveProgram.RemoveClassMetadataDisjoint secondBase firstBase
+      headsBase nextBase previousBase secondLength heads.length nextLength
+      previousLength)
+    (hencoded : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads)) :
+    (ElementWrite.applyAll
+      (insertClassWrites secondBase firstBase headsBase nextBase previousBase
+        nextLength previousLength bin block fl sl oldHead oldSecond oldFirst) mem
+      ).EncodesArray Luffs.Memory.Scalar.u64 headsBase
+        (InitializeProgram.encodeNats (heads.set bin block)) := by
+  let before := insertHeadsBefore nextBase previousBase nextLength previousLength
+    block oldHead
+  let after : List ElementWrite :=
+    [⟨secondBase, 4, fl,
+      InitializeProgram.u32Bytes (setSecondBit oldSecond sl).toNat⟩,
+     ⟨firstBase, 8, 0,
+      InitializeProgram.usizeBytes (setWordBit oldFirst fl).toNat⟩]
+  have hbefore : ∀ write, write ∈ before → write.region.disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 headsBase heads.length) := by
+    intro write hwrite
+    simp [before, insertHeadsBefore] at hwrite
+    rcases hwrite with rfl | rfl | hwrite
+    · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u64] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hblockNext
+          (disjoint_symmetric.mp hlayout.heads_next)
+    · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u64] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hblockPrevious
+          (disjoint_symmetric.mp hlayout.heads_previous)
+    · rcases hwrite with ⟨hold, rfl⟩
+      simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u64] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hold
+          (disjoint_symmetric.mp hlayout.heads_previous)
+  have hafter : ∀ write, write ∈ after → write.region.disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 headsBase heads.length) := by
+    intro write hwrite
+    simp [after] at hwrite
+    rcases hwrite with rfl | rfl
+    · simpa [ElementWrite.region, InitializeProgram.u32Bytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u32] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u32 hfl
+          hlayout.second_heads
+    · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u64] using hlayout.first_heads
+  have hupdate := hencoded.applyAll_update (index := bin)
+    (value := BitVec.ofNat 64 block) (before := before) (after := after)
+    (by simpa [InitializeProgram.encodeNats] using hbin) (by
+      simpa [InitializeProgram.encodeNats] using hbefore) (by
+      simpa [InitializeProgram.encodeNats, List.length_set] using hafter)
+  rw [show insertClassWrites secondBase firstBase headsBase nextBase previousBase
+      nextLength previousLength bin block fl sl oldHead oldSecond oldFirst =
+      before ++ [⟨headsBase, 8, bin, InitializeProgram.usizeBytes block⟩] ++
+        after by simp [before, after, insertClassWrites, insertHeadsBefore],
+    AllocateProgram.encodeNats_set]
+  simpa [ElementWrite.applyAll_append, ElementWrite.applyAll,
+    ElementWrite.apply, InitializeProgram.usizeBytes,
+    Luffs.Memory.Scalar.u64] using hupdate
+
+def insertPreviousAfter (secondBase firstBase headsBase bin block fl sl : Nat)
+    (oldSecond : BitVec 32) (oldFirst : BitVec 64) : List ElementWrite :=
+  [⟨headsBase, 8, bin, InitializeProgram.usizeBytes block⟩,
+   ⟨secondBase, 4, fl,
+      InitializeProgram.u32Bytes (setSecondBit oldSecond sl).toNat⟩,
+   ⟨firstBase, 8, 0,
+      InitializeProgram.usizeBytes (setWordBit oldFirst fl).toNat⟩]
+
+theorem insertClassWrites_previous_encodes
+    (secondBase firstBase headsBase nextBase previousBase nextLength
+      previousLength headsLength secondLength bin block fl sl oldHead : Nat)
+    (oldSecond : BitVec 32) (oldFirst : BitVec 64) (previous : List Nat)
+    (mem : Memory) (hblockNext : block < nextLength)
+    (hblock : block < previous.length)
+    (hpreviousLength : previous.length = previousLength)
+    (hbin : bin < headsLength) (hfl : fl < secondLength)
+    (hlayout : RemoveProgram.RemoveClassMetadataDisjoint secondBase firstBase
+      headsBase nextBase previousBase secondLength headsLength nextLength
+      previous.length)
+    (hencoded : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous)) :
+    (ElementWrite.applyAll
+      (insertClassWrites secondBase firstBase headsBase nextBase previousBase
+        nextLength previousLength bin block fl sl oldHead oldSecond oldFirst) mem
+      ).EncodesArray Luffs.Memory.Scalar.u64 previousBase
+        (InitializeProgram.encodeNats
+          (if oldHead < previousLength then
+            (previous.set block nextLength).set oldHead block
+          else previous.set block nextLength)) := by
+  let before : List ElementWrite :=
+    [⟨nextBase, 8, block, InitializeProgram.usizeBytes oldHead⟩]
+  let after := insertPreviousAfter secondBase firstBase headsBase bin block fl sl
+    oldSecond oldFirst
+  have hbefore : ∀ write, write ∈ before → write.region.disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 previousBase previous.length) := by
+    intro write hwrite
+    simp [before] at hwrite
+    subst write
+    simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+      ValueRegion, Luffs.Memory.Scalar.u64] using
+      ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hblockNext
+        hlayout.next_previous
+  have hafter : ∀ write, write ∈ after → write.region.disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 previousBase previous.length) := by
+    intro write hwrite
+    simp [after, insertPreviousAfter] at hwrite
+    rcases hwrite with rfl | rfl | rfl
+    · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u64] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hbin
+          hlayout.heads_previous
+    · simpa [ElementWrite.region, InitializeProgram.u32Bytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u32] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u32 hfl
+          hlayout.second_previous
+    · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u64] using hlayout.first_previous
+  have hbeforeEncoded := hencoded.applyAll_of_disjoint (by
+    simpa [before, InitializeProgram.encodeNats] using hbefore)
+  have hfirstWrite := hbeforeEncoded.writeElement (index := block)
+    (value := BitVec.ofNat 64 nextLength) (by
+      simpa [InitializeProgram.encodeNats] using hblock)
+  by_cases hold : oldHead < previousLength
+  · have holdBound : oldHead < previous.length := by omega
+    have hsecondWrite := hfirstWrite.writeElement (index := oldHead)
+      (value := BitVec.ofNat 64 block) (by
+        simpa [InitializeProgram.encodeNats, List.length_set] using holdBound)
+    have hfinal := hsecondWrite.applyAll_of_disjoint (by
+      intro write hwrite
+      simpa [InitializeProgram.encodeNats, List.length_set] using
+        hafter write hwrite)
+    rw [show insertClassWrites secondBase firstBase headsBase nextBase previousBase
+        nextLength previousLength bin block fl sl oldHead oldSecond oldFirst =
+        before ++ [⟨previousBase, 8, block,
+          InitializeProgram.usizeBytes nextLength⟩] ++
+          [⟨previousBase, 8, oldHead,
+            InitializeProgram.usizeBytes block⟩] ++ after by
+        simp [before, after, insertClassWrites, insertPreviousAfter, hold],
+      ElementWrite.applyAll_append, ElementWrite.applyAll_append,
+      ElementWrite.applyAll_append, if_pos hold,
+      AllocateProgram.encodeNats_set, AllocateProgram.encodeNats_set]
+    simpa [ElementWrite.applyAll, ElementWrite.apply,
+      InitializeProgram.usizeBytes, Luffs.Memory.Scalar.u64] using hfinal
+  · have hfinal := hfirstWrite.applyAll_of_disjoint (by
+      intro write hwrite
+      simpa [InitializeProgram.encodeNats, List.length_set] using
+        hafter write hwrite)
+    rw [show insertClassWrites secondBase firstBase headsBase nextBase previousBase
+        nextLength previousLength bin block fl sl oldHead oldSecond oldFirst =
+        before ++ [⟨previousBase, 8, block,
+          InitializeProgram.usizeBytes nextLength⟩] ++ after by
+        simp [before, after, insertClassWrites, insertPreviousAfter, hold],
+      ElementWrite.applyAll_append, ElementWrite.applyAll_append, if_neg hold,
+      AllocateProgram.encodeNats_set]
+    simpa [ElementWrite.applyAll, ElementWrite.apply,
+      InitializeProgram.usizeBytes, Luffs.Memory.Scalar.u64] using hfinal
+
+theorem insertClassWrites_encodes
+    (secondBase firstBase headsBase nextBase previousBase : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (bin block : Nat) (mem : Memory)
+    (hbin : bin < heads.length) (hfl : bin / 32 < second.length)
+    (hblockNext : block < next.length)
+    (hblockPrevious : block < previous.length)
+    (hlayout : RemoveProgram.RemoveClassMetadataDisjoint secondBase firstBase
+      headsBase nextBase previousBase second.length heads.length next.length
+      previous.length)
+    (hsecond : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous)) :
+    let oldHead := heads[bin]?.getD 0
+    let oldSecond := second[bin / 32]?.getD 0
+    let final := ElementWrite.applyAll
+      (insertClassWrites secondBase firstBase headsBase nextBase previousBase
+        next.length previous.length bin block (bin / 32) (bin % 32) oldHead
+        oldSecond first) mem
+    final.EncodesArray Luffs.Memory.Scalar.u32 secondBase
+        (second.set (bin / 32) (setSecondBit oldSecond (bin % 32))) ∧
+      final.EncodesAt Luffs.Memory.Scalar.u64 firstBase
+        (setWordBit first (bin / 32)) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+        (InitializeProgram.encodeNats (heads.set bin block)) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+        (InitializeProgram.encodeNats (next.set block oldHead)) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+        (InitializeProgram.encodeNats
+          (if oldHead < previous.length then
+            (previous.set block next.length).set oldHead block
+          else previous.set block next.length)) := by
+  dsimp only
+  let oldHead := heads[bin]?.getD 0
+  let oldSecond := second[bin / 32]?.getD 0
+  refine ⟨insertClassWrites_second_encodes secondBase firstBase headsBase
+      nextBase previousBase next.length previous.length heads.length bin block
+      (bin / 32) (bin % 32) oldHead oldSecond first second mem hfl hlayout hbin
+      hblockNext hblockPrevious hsecond,
+    insertClassWrites_first_encodes secondBase firstBase headsBase nextBase
+      previousBase next.length previous.length bin block (bin / 32) (bin % 32)
+      oldHead oldSecond first mem, ?_, ?_, ?_⟩
+  · exact insertClassWrites_heads_encodes secondBase firstBase headsBase nextBase
+      previousBase next.length previous.length second.length bin block (bin / 32)
+      (bin % 32) oldHead oldSecond first heads mem hbin hblockNext
+      hblockPrevious hfl hlayout hheads
+  · exact insertClassWrites_next_encodes secondBase firstBase headsBase nextBase
+      previousBase next.length previous.length heads.length second.length bin block
+      (bin / 32) (bin % 32) oldHead oldSecond first next mem hblockNext rfl hbin
+      hblockPrevious hfl hlayout hnext
+  · exact insertClassWrites_previous_encodes secondBase firstBase headsBase
+      nextBase previousBase next.length previous.length heads.length second.length
+      bin block (bin / 32) (bin % 32) oldHead oldSecond first previous mem
+      hblockNext hblockPrevious rfl hbin hfl hlayout hprevious
+
+theorem insertClassProgram_wp_encodes {GF : BundledGFunctors}
+    (secondBase firstBase headsBase nextBase previousBase : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (bin block : Nat) (mem : Memory)
+    (hbin : bin < heads.length) (hfl : bin / 32 < second.length)
+    (hblockNext : block < next.length)
+    (hblockPrevious : block < previous.length)
+    (hlayout : RemoveProgram.RemoveClassMetadataDisjoint secondBase firstBase
+      headsBase nextBase previousBase second.length heads.length next.length
+      previous.length)
+    (hsecondMapped : ∀ index, index < second.length → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheadsMapped : ∀ index, index < heads.length → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < next.length → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previous.length → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hsecond : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous)) :
+    let oldHead := heads[bin]?.getD 0
+    let oldSecond := second[bin / 32]?.getD 0
+    ⊢@{IProp GF} Program.wp
+      (insertClassProgram secondBase firstBase headsBase nextBase previousBase
+        next.length previous.length bin block (bin / 32) (bin % 32) oldHead
+        oldSecond first) mem
+      (fun final =>
+        final.EncodesArray Luffs.Memory.Scalar.u32 secondBase
+            (second.set (bin / 32) (setSecondBit oldSecond (bin % 32))) ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 firstBase
+            (setWordBit first (bin / 32)) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+            (InitializeProgram.encodeNats (heads.set bin block)) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+            (InitializeProgram.encodeNats (next.set block oldHead)) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+            (InitializeProgram.encodeNats
+              (if oldHead < previous.length then
+                (previous.set block next.length).set oldHead block
+              else previous.set block next.length))) := by
+  dsimp only
+  apply Program.wp_mono
+    (insertClassProgram_wp_exact secondBase firstBase headsBase nextBase
+      previousBase next.length previous.length bin block (bin / 32) (bin % 32)
+      (heads[bin]?.getD 0) (second[bin / 32]?.getD 0) first mem
+      (hheadsMapped bin hbin) (hnextMapped block hblockNext)
+      (hpreviousMapped block hblockPrevious)
+      (fun hold => hpreviousMapped (heads[bin]?.getD 0) hold)
+      (hsecondMapped (bin / 32) hfl) hfirstMapped)
+  intro final hfinal
+  subst final
+  exact insertClassWrites_encodes secondBase firstBase headsBase nextBase
+    previousBase second first heads next previous bin block mem hbin hfl
+    hblockNext hblockPrevious hlayout hsecond hheads hnext hprevious
+
+theorem insertClassArrays_eq_of_bounds
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (bin block : Nat)
+    (hbin : bin < heads.length) (hfl : bin / 32 < second.length)
+    (hnext : block < next.length) (hprevious : block < previous.length) :
+    insertClassArrays second first heads next previous bin block = some
+      ⟨second.set (bin / 32)
+          (setSecondBit (second[bin / 32]?.getD 0) (bin % 32)),
+       setWordBit first (bin / 32), heads.set bin block,
+       next.set block (heads[bin]?.getD 0),
+       if heads[bin]?.getD 0 < previous.length then
+         (previous.set block next.length).set (heads[bin]?.getD 0) block
+       else previous.set block next.length⟩ := by
+  simp [insertClassArrays, insert, Nat.not_le.mpr hbin, Nat.not_le.mpr hfl,
+    Nat.not_le.mpr hnext, Nat.not_le.mpr hprevious]
+
+theorem insertClassProgram_wp_refines {GF : BundledGFunctors}
+    (secondBase firstBase headsBase nextBase previousBase : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (bin block : Nat)
+    (result : InsertClassResult) (mem : Memory)
+    (hinsert : insertClassArrays second first heads next previous bin block =
+      some result)
+    (hlayout : RemoveProgram.RemoveClassMetadataDisjoint secondBase firstBase
+      headsBase nextBase previousBase second.length heads.length next.length
+      previous.length)
+    (hsecondMapped : ∀ index, index < second.length → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheadsMapped : ∀ index, index < heads.length → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < next.length → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previous.length → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hsecond : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous)) :
+    ⊢@{IProp GF} Program.wp
+      (insertClassProgram secondBase firstBase headsBase nextBase previousBase
+        next.length previous.length bin block (bin / 32) (bin % 32)
+        (heads[bin]?.getD 0) (second[bin / 32]?.getD 0) first) mem
+      (fun final =>
+        final.EncodesArray Luffs.Memory.Scalar.u32 secondBase result.second ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 firstBase result.first ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+          (InitializeProgram.encodeNats result.heads) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+          (InitializeProgram.encodeNats result.next) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+          (InitializeProgram.encodeNats result.previous)) := by
+  obtain ⟨hbin, hfl, hblockNext, hblockPrevious, _, _, _⟩ :=
+    insertClassArrays_result hinsert
+  have hformula := insertClassArrays_eq_of_bounds second first heads next previous
+    bin block hbin hfl hblockNext hblockPrevious
+  have hresult := Option.some.inj (hinsert.symm.trans hformula)
+  subst result
+  exact insertClassProgram_wp_encodes secondBase firstBase headsBase nextBase
+    previousBase second first heads next previous bin block mem hbin hfl
+    hblockNext hblockPrevious hlayout hsecondMapped hfirstMapped hheadsMapped
+    hnextMapped hpreviousMapped hsecond hheads hnext hprevious
+
+end InsertProgram
+
 /-- Exact pure state transformer for `tlsf_initialize`. All fixed-capacity
 metadata is reset before the single mmap-backed free block is inserted. -/
 def initializeArrays (offsets sizes : List Nat)

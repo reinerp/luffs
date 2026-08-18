@@ -823,6 +823,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   performs the last-member second- and first-level bitmap clears directly.
   Its refinement theorem reduces the complete transaction to the executable
   reference semantics, and dependency closure requires both lower stages.
+  Pool initialization now generates its complete state transformer: capacity
+  validation, zero/sentinel metadata construction, initial-size/free marking,
+  size classification, and insertion of the sole mmap-backed free extent.
+  Lean reduces it to `initializeArrays`; recognition depends on both generated
+  size classification and class insertion, so no trusted initializer alias
+  remains.
   Public allocation is source-generated as a transaction as well: request
   classification, two-level nonempty-class lookup, selected-offset validation,
   physical-header lookup, split preflight, candidate detachment, physical

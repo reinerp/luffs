@@ -536,6 +536,9 @@ fn parse(source: &str) -> Result<Module, String> {
     if module.tlsf_insert_models.is_empty() {
         module.tlsf_insert_class_models.clear();
     }
+    if module.tlsf_classify_size_models.is_empty() || module.tlsf_insert_class_models.is_empty() {
+        module.tlsf_initialize_models.clear();
+    }
     if module.tlsf_remove_models.is_empty() {
         module.tlsf_remove_class_models.clear();
         module.tlsf_take_candidate_class_models.clear();
@@ -4020,12 +4023,12 @@ rfl\n\n",
     }
     for model in &module.tlsf_initialize_models {
         out.push_str(&format!(
-            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (pool_bytes : Nat) : Option Luffs.Runtime.TLSF.InitializeArraysResult :=\n  {} offsets sizes is_free prev_free second first heads next previous pool_bytes\n\n",
-            model.name, model.refines
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (second : List (BitVec 32)) (_first : BitVec 64) (heads next previous : List Nat) (pool_bytes : Nat) : Option Luffs.Runtime.TLSF.InitializeArraysResult := do\n  if offsets.length = 0 ∨ sizes.length ≠ offsets.length ∨\n      is_free.length ≠ offsets.length ∨ prev_free.length ≠ offsets.length ∨\n      next.length ≠ offsets.length ∨ previous.length ≠ offsets.length then none\n  else if pool_bytes > next.length then none\n  else\n    let bin ← tlsf_classify_size_model pool_bytes\n    let sentinel := next.length\n    let cleared_offsets := List.replicate offsets.length 0\n    let cleared_sizes := (List.replicate sizes.length 0).set 0 pool_bytes\n    let cleared_free := (List.replicate is_free.length (0 : Fin 256)).set 0 1\n    let cleared_prev_free := List.replicate prev_free.length (0 : Fin 256)\n    let cleared_second := List.replicate second.length (0 : BitVec 32)\n    let cleared_heads := List.replicate heads.length sentinel\n    let cleared_next := List.replicate next.length sentinel\n    let cleared_previous := List.replicate previous.length sentinel\n    let inserted ← tlsf_insert_class_model cleared_second 0 cleared_heads cleared_next\n      cleared_previous bin 0\n    pure ⟨cleared_offsets, cleared_sizes, cleared_free, cleared_prev_free, 1,\n      inserted.second, inserted.first, inserted.heads, inserted.next, inserted.previous⟩\n\n",
+            model.name
         ));
         out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
-            model.name, model.name, model.refines
+            "theorem {}_refines : {}_model = {} := by\n  unfold {}_model {}\n  rw [tlsf_classify_size_refines, tlsf_insert_class_refines]\n\n",
+            model.name, model.name, model.refines, model.name, model.refines
         ));
     }
     for model in &module.tlsf_allocate_physical_models {
@@ -4604,6 +4607,13 @@ mod tests {
         ));
         assert!(generated.contains(
             "theorem tlsf_initialize_refines : tlsf_initialize_model = Luffs.Runtime.TLSF.initializeArrays"
+        ));
+        assert!(generated.contains(
+            "let inserted ← tlsf_insert_class_model cleared_second 0 cleared_heads cleared_next"
+        ));
+        assert!(generated.contains("let cleared_offsets := List.replicate offsets.length 0"));
+        assert!(!generated.contains(
+            "Option Luffs.Runtime.TLSF.InitializeArraysResult :=\n  Luffs.Runtime.TLSF.initializeArrays"
         ));
         assert!(generated.contains(
             "theorem tlsf_allocate_physical_refines : tlsf_allocate_physical_model = Luffs.Runtime.TLSF.allocatePhysicalArrays"
@@ -5268,6 +5278,7 @@ mod tests {
         );
         let m = parse(&source).unwrap();
         assert!(m.tlsf_insert_class_models.is_empty());
+        assert!(m.tlsf_initialize_models.is_empty());
         assert!(m.tlsf_allocate_models.is_empty());
         assert!(m.tlsf_box_new_models.is_empty());
         assert!(m.tlsf_vec_new_models.is_empty());

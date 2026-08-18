@@ -4349,6 +4349,18 @@ rfl\n\n",
             "theorem {}_refines : {}_model = {} := by\n  funext storage offset len capacity value\n  rfl\n\n",
             model.name, model.name, model.refines
         ));
+        out.push_str(&format!(
+            "def {}_program (storageBase : Nat) (storage : List (Fin 256)) (offset len capacity : Nat) (value : Fin 256) : Luffs.Memory.Program :=\n  Luffs.Memory.Program.branch (decide (len ≥ capacity)) .done (\n    Luffs.Memory.Program.branch (decide (offset + len ≥ 2 ^ 64)) .done (\n      let index := offset + len\n      Luffs.Memory.Program.branch (decide (index ≥ storage.length)) .done (\n        Luffs.Memory.Program.writeOffsets storageBase [(index, value)])))\n\n",
+            model.name
+        ));
+        out.push_str(&format!(
+            "theorem {}_program_wp {{GF : Iris.BundledGFunctors}}\n    (storageBase : Nat) (storage : List (Fin 256))\n    (offset len capacity : Nat) (value : Fin 256)\n    (before after : Luffs.Memory.Memory)\n    (hcapacity : ¬len ≥ capacity) (hoverflow : ¬offset + len ≥ 2 ^ 64)\n    (hstorage : ¬offset + len ≥ storage.length)\n    (hsteps : Luffs.Memory.WriteOffsetSteps storageBase\n      [(offset + len, value)] before after) :\n    ⊢@{{Iris.IProp GF}} Luffs.Memory.Program.wp\n      ({}_program storageBase storage offset len capacity value) before\n      (fun final => final = after) := by\n  simp only [{}_program, hcapacity, hoverflow, hstorage, decide_false,\n    Luffs.Memory.Program.branch]\n  exact hsteps.program_wp\n\n",
+            model.name, model.name, model.name
+        ));
+        out.push_str(&format!(
+            "theorem {}_program_wp_of_mapped {{GF : Iris.BundledGFunctors}}\n    (storageBase : Nat) (storage : List (Fin 256))\n    (offset len capacity : Nat) (value : Fin 256)\n    (before : Luffs.Memory.Memory)\n    (hcapacity : ¬len ≥ capacity) (hoverflow : ¬offset + len ≥ 2 ^ 64)\n    (hstorage : ¬offset + len ≥ storage.length)\n    (hmapped : before.mapped (storageBase + (offset + len))) :\n    ∃ after, ⊢@{{Iris.IProp GF}} Luffs.Memory.Program.wp\n      ({}_program storageBase storage offset len capacity value) before\n      (fun final => final = after) := by\n  obtain ⟨after, hsteps⟩ := Luffs.Memory.writeOffsetSteps_exists storageBase\n    [(offset + len, value)] before (by simpa using hmapped)\n  exact ⟨after, {}_program_wp storageBase storage offset len capacity value\n    before after hcapacity hoverflow hstorage hsteps⟩\n\n",
+            model.name, model.name, model.name
+        ));
     }
     for model in &module.tlsf_vec_get_models {
         out.push_str(&format!(
@@ -4358,6 +4370,14 @@ rfl\n\n",
         out.push_str(&format!(
             "theorem {}_refines : {}_model = {} := by\n  funext storage offset len index\n  rfl\n\n",
             model.name, model.name, model.refines
+        ));
+        out.push_str(&format!(
+            "def {}_program (storageBase : Nat) (storage : List (Fin 256)) (offset len index : Nat) : Luffs.Memory.Program :=\n  Luffs.Memory.Program.branch (decide (index ≥ len)) .done (\n    Luffs.Memory.Program.branch (decide (offset + index ≥ 2 ^ 64)) .done (\n      let address := offset + index\n      Luffs.Memory.Program.branch (decide (address ≥ storage.length)) .done (\n        Luffs.Memory.Program.readOffsets storageBase [address])))\n\n",
+            model.name
+        ));
+        out.push_str(&format!(
+            "theorem {}_program_wp {{GF : Iris.BundledGFunctors}}\n    (storageBase : Nat) (storage : List (Fin 256))\n    (offset len index : Nat) (mem : Luffs.Memory.Memory)\n    (hindex : ¬index ≥ len) (hoverflow : ¬offset + index ≥ 2 ^ 64)\n    (hstorage : ¬offset + index ≥ storage.length)\n    (hmapped : mem.mapped (storageBase + (offset + index))) :\n    ⊢@{{Iris.IProp GF}} Luffs.Memory.Program.wp\n      ({}_program storageBase storage offset len index) mem\n      (fun final => final = mem) := by\n  simp only [{}_program, hindex, hoverflow, hstorage, decide_false,\n    Luffs.Memory.Program.branch]\n  exact Luffs.Memory.Program.readOffsets_wp_of_mapped storageBase\n    [offset + index] mem (by simpa using hmapped)\n\n",
+            model.name, model.name, model.name
         ));
     }
     for model in &module.tlsf_vec_drop_models {
@@ -5787,7 +5807,7 @@ mod tests {
     }
 
     #[test]
-    fn fixed_array_box_accesses_emit_closed_memory_programs() {
+    fn fixed_pool_box_and_vec_accesses_emit_closed_memory_programs() {
         let module = parse(include_str!("../stdlib/tlsf.luffs")).unwrap();
         validate(&module).unwrap();
         let generated = lean(&module);
@@ -5797,6 +5817,11 @@ mod tests {
         assert!(generated.contains("def tlsf_box_store_u8_program"));
         assert!(generated.contains("theorem tlsf_box_store_u8_program_wp"));
         assert!(generated.contains("theorem tlsf_box_store_u8_program_wp_of_mapped"));
+        assert!(generated.contains("def tlsf_vec_push_u8_program"));
+        assert!(generated.contains("theorem tlsf_vec_push_u8_program_wp"));
+        assert!(generated.contains("theorem tlsf_vec_push_u8_program_wp_of_mapped"));
+        assert!(generated.contains("def tlsf_vec_get_u8_program"));
+        assert!(generated.contains("theorem tlsf_vec_get_u8_program_wp"));
     }
 
     #[test]

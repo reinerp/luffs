@@ -89,7 +89,12 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   generate closed operational WPs directly from their Luffs source; the store
   also has the mapped-address existence corollary. This removes the previous
   discrepancy where their slice-based container counterparts had WPs but the
-  fixed-pool entry points did not.
+  fixed-pool entry points did not. The shape-checked TLSF-backed `Vec<u8>` push
+  and get entry points now emit their closed programs too. Push nests the
+  capacity, checked-address, and pool-bound branches before its exact store and
+  has both trace-based and mapped-address WPs; get emits the symmetric nested
+  read program and unchanged-memory WP. These programs are emitted only when
+  the same complete source shape that enables their refinement is recognized.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

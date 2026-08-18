@@ -232,8 +232,15 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   free flag and optional successor boundary tag, and
   `allocatePhysicalWholeProgram_wp_refines` identifies those bytes with the
   corresponding successful branch of `allocatePhysicalArrays`. The split
-  branch and surrounding bin-removal/insertion transaction remain the next
-  operational composition step.
+  branch now has its complete source-ordered transaction as well:
+  `shiftPhysicalWrites` models the descending four-field header-copy loop,
+  `finishSplitWrites` creates the allocated and remainder headers, updates the
+  following boundary tag when present, and increments the count.
+  `allocateSplitProgram_wp_exact_mapped` proves the exact WP from normal
+  fixed-array mappedness assumptions; heterogeneous write widths and all loop
+  indices are discharged internally. Decoding this exact trace to
+  `expandActive`, then composing the surrounding bin removal and remainder
+  insertion, remains the next operational step.
 - [x] Define the first pure block layout predicates and prove that splitting
   and coalescing preserve byte counts.
 - [x] Implement size-class mapping and prove every `(fl, sl)` index in range.

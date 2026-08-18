@@ -10230,6 +10230,248 @@ theorem allocatePhysicalWholeProgram_wp_refines {GF : BundledGFunctors}
       encodeFlags_set, encodeFlags_allocateWholePrevFree]
     simpa using hencoded
 
+/-- Descending copy loop from the split branch. At `cursor + 1`, the source
+row is still the original row `cursor`, exactly as in the Rust loop. -/
+def shiftPhysicalWrites (offsetsBase sizesBase isFreeBase prevFreeBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (successor : Nat) : Nat → List ElementWrite
+  | 0 => []
+  | cursor + 1 =>
+      if successor < cursor + 1 then
+        [⟨offsetsBase, 8, cursor + 1,
+            InitializeProgram.usizeBytes (offsets[cursor]?.getD 0)⟩,
+         ⟨sizesBase, 8, cursor + 1,
+            InitializeProgram.usizeBytes (sizes[cursor]?.getD 0)⟩,
+         ⟨isFreeBase, 1, cursor + 1,
+            InitializeProgram.u8Bytes (isFree[cursor]?.getD 0)⟩,
+         ⟨prevFreeBase, 1, cursor + 1,
+            InitializeProgram.u8Bytes (prevFree[cursor]?.getD 0)⟩] ++
+          shiftPhysicalWrites offsetsBase sizesBase isFreeBase prevFreeBase
+            offsets sizes isFree prevFree successor cursor
+      else []
+
+/-- All writes after the descending copy loop, in source order. -/
+def finishSplitWrites (offsetsBase sizesBase isFreeBase prevFreeBase countBase
+    block count request remainderOffset remainderSize : Nat) : List ElementWrite :=
+  let successor := block + 1
+  [⟨sizesBase, 8, block, InitializeProgram.usizeBytes request⟩,
+   ⟨isFreeBase, 1, block, InitializeProgram.u8Bytes 0⟩,
+   ⟨offsetsBase, 8, successor, InitializeProgram.usizeBytes remainderOffset⟩,
+   ⟨sizesBase, 8, successor, InitializeProgram.usizeBytes remainderSize⟩,
+   ⟨isFreeBase, 1, successor, InitializeProgram.u8Bytes 1⟩,
+   ⟨prevFreeBase, 1, successor, InitializeProgram.u8Bytes 0⟩] ++
+    (if successor + 1 < count + 1 then
+      [⟨prevFreeBase, 1, successor + 1, InitializeProgram.u8Bytes 1⟩]
+    else []) ++
+    [⟨countBase, 8, 0, InitializeProgram.usizeBytes (count + 1)⟩]
+
+def allocateSplitWrites (offsetsBase sizesBase isFreeBase prevFreeBase countBase
+    block count request remainderOffset remainderSize : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256)) :
+    List ElementWrite :=
+  shiftPhysicalWrites offsetsBase sizesBase isFreeBase prevFreeBase offsets sizes
+      isFree prevFree (block + 1) count ++
+    finishSplitWrites offsetsBase sizesBase isFreeBase prevFreeBase countBase
+      block count request remainderOffset remainderSize
+
+def allocateSplitProgram (offsetsBase sizesBase isFreeBase prevFreeBase countBase
+    block count request remainderOffset remainderSize : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256)) : Program :=
+  Program.writeElements
+    (allocateSplitWrites offsetsBase sizesBase isFreeBase prevFreeBase countBase
+      block count request remainderOffset remainderSize offsets sizes isFree prevFree)
+
+theorem shiftPhysicalWrites_width (offsetsBase sizesBase isFreeBase prevFreeBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (successor cursor : Nat) :
+    ∀ write, write ∈ shiftPhysicalWrites offsetsBase sizesBase isFreeBase
+      prevFreeBase offsets sizes isFree prevFree successor cursor →
+      write.bytes.length = write.width := by
+  induction cursor with
+  | zero => simp [shiftPhysicalWrites]
+  | succ cursor ih =>
+      simp only [shiftPhysicalWrites]
+      split
+      next =>
+        intro write hwrite
+        simp only [List.mem_append, List.mem_cons, List.not_mem_nil,
+          _root_.or_false] at hwrite
+        rcases hwrite with (rfl | rfl | rfl | rfl) | hwrite
+        · exact InitializeProgram.usizeBytes_length _
+        · exact InitializeProgram.usizeBytes_length _
+        · exact InitializeProgram.u8Bytes_length _
+        · exact InitializeProgram.u8Bytes_length _
+        · exact ih write hwrite
+      next => simp
+
+theorem finishSplitWrites_width (offsetsBase sizesBase isFreeBase prevFreeBase
+    countBase block count request remainderOffset remainderSize : Nat) :
+    ∀ write, write ∈ finishSplitWrites offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase block count request remainderOffset remainderSize →
+      write.bytes.length = write.width := by
+  intro write hwrite
+  simp [finishSplitWrites] at hwrite
+  rcases hwrite with rfl | rfl | rfl | rfl | rfl | rfl | hwrite | rfl <;>
+    try simp
+  rcases hwrite with ⟨_, rfl⟩
+  simp
+
+theorem allocateSplitWrites_width (offsetsBase sizesBase isFreeBase prevFreeBase
+    countBase block count request remainderOffset remainderSize : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256)) :
+    ∀ write, write ∈ allocateSplitWrites offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase block count request remainderOffset remainderSize
+      offsets sizes isFree prevFree → write.bytes.length = write.width := by
+  intro write hwrite
+  simp only [allocateSplitWrites, List.mem_append] at hwrite
+  rcases hwrite with hshift | hfinish
+  · exact shiftPhysicalWrites_width _ _ _ _ _ _ _ _ _ _ write hshift
+  · exact finishSplitWrites_width _ _ _ _ _ _ _ _ _ _ write hfinish
+
+theorem allocateSplitProgram_wp_exact {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase block count request
+      remainderOffset remainderSize : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256)) (mem : Memory)
+    (hmapped : ∀ write, write ∈ allocateSplitWrites offsetsBase sizesBase
+      isFreeBase prevFreeBase countBase block count request remainderOffset
+      remainderSize offsets sizes isFree prevFree → ∀ i, i < write.width →
+      mem.mapped (write.base + write.index * write.width + i)) :
+    ⊢@{IProp GF} Program.wp
+      (allocateSplitProgram offsetsBase sizesBase isFreeBase prevFreeBase
+        countBase block count request remainderOffset remainderSize offsets sizes
+        isFree prevFree) mem
+      (fun final => final = ElementWrite.applyAll
+        (allocateSplitWrites offsetsBase sizesBase isFreeBase prevFreeBase
+          countBase block count request remainderOffset remainderSize offsets sizes
+          isFree prevFree) mem) := by
+  unfold allocateSplitProgram
+  apply Program.writeElements_wp_exact
+  · exact allocateSplitWrites_width _ _ _ _ _ _ _ _ _ _ _ _ _ _
+  · exact hmapped
+
+theorem shiftPhysicalWrites_mapped
+    (offsetsBase sizesBase isFreeBase prevFreeBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (successor cursor : Nat) (mem : Memory)
+    (hcursorOffsets : cursor < offsets.length)
+    (hcursorSizes : cursor < sizes.length)
+    (hcursorFree : cursor < isFree.length)
+    (hcursorPrev : cursor < prevFree.length)
+    (hoffsets : ∀ index, index < offsets.length → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizes : ∀ index, index < sizes.length → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hfree : ∀ index, index < isFree.length →
+      mem.mapped (isFreeBase + index))
+    (hprev : ∀ index, index < prevFree.length →
+      mem.mapped (prevFreeBase + index)) :
+    ∀ write, write ∈ shiftPhysicalWrites offsetsBase sizesBase isFreeBase
+      prevFreeBase offsets sizes isFree prevFree successor cursor →
+      ∀ i, i < write.width →
+        mem.mapped (write.base + write.index * write.width + i) := by
+  induction cursor with
+  | zero => simp [shiftPhysicalWrites]
+  | succ cursor ih =>
+      intro write hwrite i hi
+      simp only [shiftPhysicalWrites] at hwrite
+      split at hwrite
+      next =>
+        simp only [List.mem_append, List.mem_cons, List.not_mem_nil,
+          _root_.or_false] at hwrite
+        rcases hwrite with (rfl | rfl | rfl | rfl) | hwrite
+        · simpa using hoffsets (cursor + 1) hcursorOffsets i hi
+        · simpa using hsizes (cursor + 1) hcursorSizes i hi
+        · simp at hi
+          subst i
+          simpa using hfree (cursor + 1) hcursorFree
+        · simp at hi
+          subst i
+          simpa using hprev (cursor + 1) hcursorPrev
+        · apply ih (by omega) (by omega) (by omega) (by omega) write hwrite i hi
+      next => simp at hwrite
+
+theorem finishSplitWrites_mapped
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase block count request
+      remainderOffset remainderSize : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256)) (mem : Memory)
+    (hblock : block < count)
+    (hcountOffsets : count < offsets.length)
+    (hcountSizes : count < sizes.length)
+    (hcountFree : count < isFree.length)
+    (hcountPrev : count < prevFree.length)
+    (hoffsets : ∀ index, index < offsets.length → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizes : ∀ index, index < sizes.length → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hfree : ∀ index, index < isFree.length →
+      mem.mapped (isFreeBase + index))
+    (hprev : ∀ index, index < prevFree.length →
+      mem.mapped (prevFreeBase + index))
+    (hcountMapped : ∀ i, i < 8 → mem.mapped (countBase + i)) :
+    ∀ write, write ∈ finishSplitWrites offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase block count request remainderOffset remainderSize →
+      ∀ i, i < write.width →
+        mem.mapped (write.base + write.index * write.width + i) := by
+  intro write hwrite i hi
+  simp [finishSplitWrites] at hwrite
+  rcases hwrite with rfl | rfl | rfl | rfl | rfl | rfl | hwrite | rfl
+  · simpa using hsizes block (by omega) i hi
+  · simp at hi
+    subst i
+    simpa using hfree block (by omega)
+  · simpa using hoffsets (block + 1) (by omega) i hi
+  · simpa using hsizes (block + 1) (by omega) i hi
+  · simp at hi
+    subst i
+    simpa using hfree (block + 1) (by omega)
+  · simp at hi
+    subst i
+    simpa using hprev (block + 1) (by omega)
+  · rcases hwrite with ⟨hafter, rfl⟩
+    simp at hi
+    subst i
+    simpa using hprev (block + 1 + 1) (by omega)
+  · simpa using hcountMapped i hi
+
+theorem allocateSplitProgram_wp_exact_mapped {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase block count request
+      remainderOffset remainderSize : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256)) (mem : Memory)
+    (hblock : block < count)
+    (hcountOffsets : count < offsets.length)
+    (hcountSizes : count < sizes.length)
+    (hcountFree : count < isFree.length)
+    (hcountPrev : count < prevFree.length)
+    (hoffsets : ∀ index, index < offsets.length → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizes : ∀ index, index < sizes.length → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hfree : ∀ index, index < isFree.length →
+      mem.mapped (isFreeBase + index))
+    (hprev : ∀ index, index < prevFree.length →
+      mem.mapped (prevFreeBase + index))
+    (hcountMapped : ∀ i, i < 8 → mem.mapped (countBase + i)) :
+    ⊢@{IProp GF} Program.wp
+      (allocateSplitProgram offsetsBase sizesBase isFreeBase prevFreeBase
+        countBase block count request remainderOffset remainderSize offsets sizes
+        isFree prevFree) mem
+      (fun final => final = ElementWrite.applyAll
+        (allocateSplitWrites offsetsBase sizesBase isFreeBase prevFreeBase
+          countBase block count request remainderOffset remainderSize offsets sizes
+          isFree prevFree) mem) := by
+  apply allocateSplitProgram_wp_exact
+  intro write hwrite i hi
+  simp only [allocateSplitWrites, List.mem_append] at hwrite
+  rcases hwrite with hshift | hfinish
+  · exact shiftPhysicalWrites_mapped offsetsBase sizesBase isFreeBase
+      prevFreeBase offsets sizes isFree prevFree (block + 1) count mem
+      hcountOffsets hcountSizes hcountFree hcountPrev hoffsets hsizes hfree hprev
+      write hshift i hi
+  · exact finishSplitWrites_mapped offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase block count request remainderOffset remainderSize
+      offsets sizes isFree prevFree mem hblock hcountOffsets hcountSizes
+      hcountFree hcountPrev hoffsets hsizes hfree hprev hcountMapped write hfinish i hi
+
 end AllocateProgram
 
 /-- Exact pure state transformer for `tlsf_initialize`. All fixed-capacity

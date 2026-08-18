@@ -552,6 +552,14 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   the complete allocator invariant for a positive aligned supported-size
   `mmap` region, and uses Iris-Lean to identify ownership of that initial free
   block with the exclusive byte capability returned by `mmap`.
+  The compiler now emits the complete public initializer effect program at the
+  same source-recognized boundary, not only its pure array transformer. The
+  emitted program composes all three clearing loops, the scalar bitmap store,
+  initial header stores, and verified class insertion through the runtime
+  `initializeProgram`; its generated closed WP preserves every initially
+  mapped address. Applying adequacy yields an explicit `Program.Safe` theorem,
+  so successful source classification plus mapped fixed metadata proves that
+  initialization cannot get stuck anywhere in its multi-array mutation trace.
   The public pointer boundary now validates `pointer >= pool.base`, computes
   the pool-relative offset with proved subtraction safety, and rejects offsets
   outside `pool.bytes`. The pointer-facing `Box<u8>` drop is source-refined to

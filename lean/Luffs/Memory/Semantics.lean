@@ -1291,6 +1291,13 @@ theorem Program.wp_adequacy {GF : BundledGFunctors} {program : Program}
   apply pure_soundness (PROP := IProp GF)
   exact hwp
 
+/-- The non-stuck projection of closed weakest-precondition adequacy. -/
+theorem Program.wp_safe {GF : BundledGFunctors} {program : Program}
+    {mem : Memory} {post : Memory → Prop}
+    (hwp : ⊢@{IProp GF} Program.wp program mem post) :
+    Program.Safe program mem :=
+  (Program.wp_adequacy hwp).1
+
 def Program.single (op : Prim) : Program := .call op (fun _ => .done)
 
 theorem Program.single_safe_iff (op : Prim) (mem : Memory) :

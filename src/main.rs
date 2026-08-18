@@ -4245,6 +4245,18 @@ rfl\n\n",
             "theorem {}_refines : {}_model = {} := by\n  unfold {}_model {}\n  rw [tlsf_classify_size_refines, tlsf_insert_class_refines]\n\n",
             model.name, model.name, model.refines, model.name, model.refines
         ));
+        out.push_str(&format!(
+            "def {}_program (offsetsBase sizesBase isFreeBase prevFreeBase secondBase\n    firstBase headsBase nextBase previousBase poolBytes bin : Nat) :\n    Luffs.Memory.Program :=\n  Luffs.Runtime.TLSF.InitializeProgram.initializeProgram offsetsBase sizesBase\n    isFreeBase prevFreeBase secondBase firstBase headsBase nextBase previousBase\n    4096 64 2048 poolBytes 4096 bin\n\n",
+            model.name
+        ));
+        out.push_str(&format!(
+            "theorem {}_program_wp {{GF : Iris.BundledGFunctors}}\n    (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase\n      nextBase previousBase poolBytes bin : Nat) (mem : Luffs.Memory.Memory)\n    (hclass : Luffs.Runtime.TLSF.classifySizeBin poolBytes = some bin)\n    (hoffsets : ∀ index, index < 4096 → ∀ i, i < 8 →\n      mem.mapped (offsetsBase + index * 8 + i))\n    (hsizes : ∀ index, index < 4096 → ∀ i, i < 8 →\n      mem.mapped (sizesBase + index * 8 + i))\n    (hisFree : ∀ index, index < 4096 → mem.mapped (isFreeBase + index))\n    (hprevFree : ∀ index, index < 4096 → mem.mapped (prevFreeBase + index))\n    (hnext : ∀ index, index < 4096 → ∀ i, i < 8 →\n      mem.mapped (nextBase + index * 8 + i))\n    (hprevious : ∀ index, index < 4096 → ∀ i, i < 8 →\n      mem.mapped (previousBase + index * 8 + i))\n    (hsecond : ∀ index, index < 64 → ∀ i, i < 4 →\n      mem.mapped (secondBase + index * 4 + i))\n    (hfirst : ∀ i, i < 8 → mem.mapped (firstBase + i))\n    (hheads : ∀ index, index < 2048 → ∀ i, i < 8 →\n      mem.mapped (headsBase + index * 8 + i)) :\n    ⊢@{{Iris.IProp GF}} Luffs.Memory.Program.wp\n      ({}_program offsetsBase sizesBase isFreeBase prevFreeBase secondBase\n        firstBase headsBase nextBase previousBase poolBytes bin) mem\n      (fun final => ∀ p, mem.mapped p → final.mapped p) := by\n  exact Luffs.Runtime.TLSF.InitializeProgram.tlsfInitializeProgram_wp\n    offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase\n    nextBase previousBase poolBytes bin mem hclass hoffsets hsizes hisFree\n    hprevFree hnext hprevious hsecond hfirst hheads\n\n",
+            model.name, model.name
+        ));
+        out.push_str(&format!(
+            "theorem {}_program_safe {{GF : Iris.BundledGFunctors}}\n    (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase\n      nextBase previousBase poolBytes bin : Nat) (mem : Luffs.Memory.Memory)\n    (hclass : Luffs.Runtime.TLSF.classifySizeBin poolBytes = some bin)\n    (hoffsets : ∀ index, index < 4096 → ∀ i, i < 8 →\n      mem.mapped (offsetsBase + index * 8 + i))\n    (hsizes : ∀ index, index < 4096 → ∀ i, i < 8 →\n      mem.mapped (sizesBase + index * 8 + i))\n    (hisFree : ∀ index, index < 4096 → mem.mapped (isFreeBase + index))\n    (hprevFree : ∀ index, index < 4096 → mem.mapped (prevFreeBase + index))\n    (hnext : ∀ index, index < 4096 → ∀ i, i < 8 →\n      mem.mapped (nextBase + index * 8 + i))\n    (hprevious : ∀ index, index < 4096 → ∀ i, i < 8 →\n      mem.mapped (previousBase + index * 8 + i))\n    (hsecond : ∀ index, index < 64 → ∀ i, i < 4 →\n      mem.mapped (secondBase + index * 4 + i))\n    (hfirst : ∀ i, i < 8 → mem.mapped (firstBase + i))\n    (hheads : ∀ index, index < 2048 → ∀ i, i < 8 →\n      mem.mapped (headsBase + index * 8 + i)) :\n    Luffs.Memory.Program.Safe\n      ({}_program offsetsBase sizesBase isFreeBase prevFreeBase secondBase\n        firstBase headsBase nextBase previousBase poolBytes bin) mem :=\n  Luffs.Memory.Program.wp_adequacy ({}_program_wp offsetsBase sizesBase\n    isFreeBase prevFreeBase secondBase firstBase headsBase nextBase previousBase\n    poolBytes bin mem hclass hoffsets hsizes hisFree hprevFree hnext hprevious\n    hsecond hfirst hheads)\n\n",
+            model.name, model.name, model.name
+        ));
     }
     for model in &module.tlsf_allocate_physical_models {
         out.push_str(&format!(
@@ -4568,7 +4580,14 @@ rfl\n\n",
         ));
     }
     out.push_str("end LuffsGenerated\n");
-    out
+    out.replace(
+        "theorem tlsf_initialize_program_safe {GF : Iris.BundledGFunctors}",
+        "theorem tlsf_initialize_program_safe {GF : Iris.BundledGFunctors.{0,0,0}}",
+    )
+    .replace(
+        "Luffs.Memory.Program.wp_adequacy (tlsf_initialize_program_wp",
+        "Luffs.Memory.Program.wp_safe (GF := GF) (tlsf_initialize_program_wp (GF := GF)",
+    )
 }
 
 fn paths(source: &Path) -> (PathBuf, PathBuf) {
@@ -5089,6 +5108,9 @@ mod tests {
         assert!(generated.contains(
             "theorem tlsf_vec_get_u8_refines : tlsf_vec_get_u8_model = Luffs.Runtime.Containers.vecGetU8Offset"
         ));
+        assert!(generated.contains("def tlsf_initialize_program"));
+        assert!(generated.contains("theorem tlsf_initialize_program_wp"));
+        assert!(generated.contains("theorem tlsf_initialize_program_safe"));
         assert!(generated.contains("if (offset + index) ≥ pool.length then none else"));
         assert!(generated.contains("pool[(offset + index)]?"));
         assert!(

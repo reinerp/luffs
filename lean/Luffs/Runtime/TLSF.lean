@@ -22918,6 +22918,73 @@ def compactLoopState {α : Type} [Inhabited α] (source state : List α)
         (state.set cursor (source[cursor + 1]?.getD default))
         (cursor + 1) remaining
 
+theorem compactLoopState_eq_take_drop {α : Type} [Inhabited α]
+    (source state : List α) (cursor remaining : Nat)
+    (hstate : cursor + remaining ≤ state.length)
+    (hsource : cursor + remaining < source.length) :
+    compactLoopState source state cursor remaining =
+      state.take cursor ++ (source.drop (cursor + 1)).take remaining ++
+        state.drop (cursor + remaining) := by
+  induction remaining generalizing cursor state with
+  | zero =>
+      simpa [compactLoopState] using (List.take_append_drop cursor state).symm
+  | succ remaining ih =>
+      rw [compactLoopState]
+      rw [ih (cursor := cursor + 1)
+        (state := state.set cursor (source[cursor + 1]?.getD default))]
+      · have hcursorState : cursor < state.length := by omega
+        have hcursorSource : cursor + 1 < source.length := by omega
+        rw [List.take_set]
+        have htake :
+            (state.take (cursor + 1)).set cursor
+                (source[cursor + 1]?.getD default) =
+              state.take cursor ++ [source[cursor + 1]?.getD default] := by
+          rw [List.take_succ_eq_append_getElem hcursorState]
+          have htakeLength : (state.take cursor).length = cursor := by
+            simp [Nat.min_eq_left (Nat.le_of_lt hcursorState)]
+          rw [List.set_append]
+          simp [htakeLength]
+        rw [htake,
+          List.drop_set_of_lt (by omega : cursor < cursor + 1 + remaining)]
+        have hdrop : source.drop (cursor + 1) =
+            source[cursor + 1] :: source.drop (cursor + 1 + 1) :=
+          List.drop_eq_getElem_cons hcursorSource
+        have htakeSource :
+            (source.drop (cursor + 1)).take (remaining + 1) =
+              source[cursor + 1] ::
+                (source.drop (cursor + 1 + 1)).take remaining := by
+          calc
+            _ = (source[cursor + 1] ::
+                source.drop (cursor + 1 + 1)).take (remaining + 1) :=
+              congrArg (List.take (remaining + 1)) hdrop
+            _ = _ := by
+              rw [show remaining + 1 = Nat.succ remaining by omega]
+              rfl
+        have harith : cursor + 1 + remaining = cursor + (remaining + 1) := by
+          omega
+        rw [harith, htakeSource]
+        simp [hcursorSource, List.append_assoc]
+      · rw [List.length_set]
+        omega
+      · omega
+
+theorem compactLoopState_eq_compactActive {α : Type} [Inhabited α]
+    (values : List α) (count removed : Nat)
+    (hremoved : removed < count) (hcount : count ≤ values.length) :
+    compactLoopState values values removed (count - removed - 1) =
+      compactActive values count removed := by
+  have harith : removed + (count - removed - 1) = count - 1 := by omega
+  rw [compactLoopState_eq_take_drop values values removed
+    (count - removed - 1) (by omega) (by omega)]
+  simp only [compactActive]
+  rw [harith]
+
+theorem map_compactActive {α β : Type} [Inhabited α] [Inhabited β]
+    (f : α → β) (values : List α) (count removed : Nat) :
+    (compactActive values count removed).map f =
+      compactActive (values.map f) count removed := by
+  simp [compactActive]
+
 /-- Source-ordered stores of the left-compacting physical-header loop.  The
 source values are the preflight snapshot; copying toward lower indices means a
 source slot is never overwritten before it is read. -/
@@ -23276,6 +23343,260 @@ theorem compactPhysicalWrites_sizes_encodes
       · omega
       · omega
       · exact hframe
+
+/-- Projection of the forward loop onto the current-free flags. -/
+theorem compactPhysicalWrites_isFree_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (cursor remaining : Nat) (state : List (BitVec 8)) (mem : Memory)
+    (hstateLength : state.length = isFree.length)
+    (hoffsetsBound : cursor + remaining < offsets.length)
+    (hsizesBound : cursor + remaining < sizes.length)
+    (hfreeBound : cursor + remaining < isFree.length)
+    (hprevBound : cursor + remaining < prevFree.length)
+    (hfreeOffsets :
+      (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase isFree.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase offsets.length))
+    (hfreeSizes :
+      (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase isFree.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase sizes.length))
+    (hfreePrev :
+      (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase isFree.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase prevFree.length))
+    (hencoded : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase state) :
+    (ElementWrite.applyAll
+      (compactPhysicalWrites offsetsBase sizesBase isFreeBase prevFreeBase
+        offsets sizes isFree prevFree cursor remaining) mem).EncodesArray
+      Luffs.Memory.Scalar.u8 isFreeBase
+      (compactLoopState (AllocateProgram.encodeFlags isFree) state cursor
+        remaining) := by
+  induction remaining generalizing cursor state mem with
+  | zero =>
+      simp only [compactPhysicalWrites, compactLoopState]
+      exact hencoded
+  | succ remaining ih =>
+      simp only [compactPhysicalWrites, compactLoopState]
+      have htarget : cursor < state.length := by omega
+      have hoffsetTarget : cursor < offsets.length := by omega
+      have hsizeTarget : cursor < sizes.length := by omega
+      have hsource : cursor + 1 < isFree.length := by omega
+      have hprevTarget : cursor < prevFree.length := by omega
+      have hsourceValue :
+          (AllocateProgram.encodeFlags isFree)[cursor + 1]?.getD default =
+            BitVec.ofNat 8 (isFree[cursor + 1]?.getD 0) := by
+        simp [AllocateProgram.encodeFlags, hsource, BitVec.ofFin]
+      have hbefore := hencoded.applyAll_of_disjoint
+        (writes :=
+          [⟨offsetsBase, 8, cursor,
+              InitializeProgram.usizeBytes (offsets[cursor + 1]?.getD 0)⟩,
+           ⟨sizesBase, 8, cursor,
+              InitializeProgram.usizeBytes (sizes[cursor + 1]?.getD 0)⟩]) (by
+          intro write hmember
+          simp only [List.mem_cons, List.not_mem_nil, _root_.or_false] at hmember
+          rcases hmember with rfl | rfl
+          · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+              hstateLength, ValueRegion, Luffs.Memory.Scalar.u64] using
+              ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64
+                hoffsetTarget (disjoint_symmetric.mp hfreeOffsets)
+          · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+              hstateLength, ValueRegion, Luffs.Memory.Scalar.u64] using
+              ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hsizeTarget
+                (disjoint_symmetric.mp hfreeSizes))
+      have hwrite := hbefore.writeElement (index := cursor)
+        (value := BitVec.ofNat 8 (isFree[cursor + 1]?.getD 0)) htarget
+      have hframe := hwrite.applyAll_of_disjoint
+        (writes := [⟨prevFreeBase, 1, cursor,
+          InitializeProgram.u8Bytes (prevFree[cursor + 1]?.getD 0)⟩]) (by
+          intro write hmember
+          simp at hmember
+          subst write
+          simpa [ElementWrite.region, InitializeProgram.u8Bytes_length,
+            List.length_set, hstateLength, ValueRegion,
+            Luffs.Memory.Scalar.u8] using
+            ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8 hprevTarget
+              (disjoint_symmetric.mp hfreePrev))
+      rw [ElementWrite.applyAll_append, hsourceValue]
+      apply ih (cursor := cursor + 1)
+        (state := state.set cursor
+          (BitVec.ofNat 8 (isFree[cursor + 1]?.getD 0)))
+        (mem := ElementWrite.applyAll
+          [⟨offsetsBase, 8, cursor,
+              InitializeProgram.usizeBytes (offsets[cursor + 1]?.getD 0)⟩,
+           ⟨sizesBase, 8, cursor,
+              InitializeProgram.usizeBytes (sizes[cursor + 1]?.getD 0)⟩,
+           ⟨isFreeBase, 1, cursor,
+              InitializeProgram.u8Bytes (isFree[cursor + 1]?.getD 0)⟩,
+           ⟨prevFreeBase, 1, cursor,
+              InitializeProgram.u8Bytes (prevFree[cursor + 1]?.getD 0)⟩] mem)
+      · simpa using hstateLength
+      · omega
+      · omega
+      · omega
+      · omega
+      · exact hframe
+
+/-- Projection of the forward loop onto the predecessor-free boundary tags. -/
+theorem compactPhysicalWrites_prevFree_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (cursor remaining : Nat) (state : List (BitVec 8)) (mem : Memory)
+    (hstateLength : state.length = prevFree.length)
+    (hoffsetsBound : cursor + remaining < offsets.length)
+    (hsizesBound : cursor + remaining < sizes.length)
+    (hfreeBound : cursor + remaining < isFree.length)
+    (hprevBound : cursor + remaining < prevFree.length)
+    (hprevOffsets :
+      (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase prevFree.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase offsets.length))
+    (hprevSizes :
+      (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase prevFree.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase sizes.length))
+    (hprevFree :
+      (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase prevFree.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase isFree.length))
+    (hencoded : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase state) :
+    (ElementWrite.applyAll
+      (compactPhysicalWrites offsetsBase sizesBase isFreeBase prevFreeBase
+        offsets sizes isFree prevFree cursor remaining) mem).EncodesArray
+      Luffs.Memory.Scalar.u8 prevFreeBase
+      (compactLoopState (AllocateProgram.encodeFlags prevFree) state cursor
+        remaining) := by
+  induction remaining generalizing cursor state mem with
+  | zero =>
+      simp only [compactPhysicalWrites, compactLoopState]
+      exact hencoded
+  | succ remaining ih =>
+      simp only [compactPhysicalWrites, compactLoopState]
+      have htarget : cursor < state.length := by omega
+      have hoffsetTarget : cursor < offsets.length := by omega
+      have hsizeTarget : cursor < sizes.length := by omega
+      have hfreeTarget : cursor < isFree.length := by omega
+      have hsource : cursor + 1 < prevFree.length := by omega
+      have hsourceValue :
+          (AllocateProgram.encodeFlags prevFree)[cursor + 1]?.getD default =
+            BitVec.ofNat 8 (prevFree[cursor + 1]?.getD 0) := by
+        simp [AllocateProgram.encodeFlags, hsource, BitVec.ofFin]
+      have hbefore := hencoded.applyAll_of_disjoint
+        (writes :=
+          [⟨offsetsBase, 8, cursor,
+              InitializeProgram.usizeBytes (offsets[cursor + 1]?.getD 0)⟩,
+           ⟨sizesBase, 8, cursor,
+              InitializeProgram.usizeBytes (sizes[cursor + 1]?.getD 0)⟩,
+           ⟨isFreeBase, 1, cursor,
+              InitializeProgram.u8Bytes (isFree[cursor + 1]?.getD 0)⟩]) (by
+          intro write hmember
+          simp only [List.mem_cons, List.not_mem_nil, _root_.or_false] at hmember
+          rcases hmember with rfl | rfl | rfl
+          · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+              hstateLength, ValueRegion, Luffs.Memory.Scalar.u64] using
+              ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64
+                hoffsetTarget (disjoint_symmetric.mp hprevOffsets)
+          · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+              hstateLength, ValueRegion, Luffs.Memory.Scalar.u64] using
+              ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hsizeTarget
+                (disjoint_symmetric.mp hprevSizes)
+          · simpa [ElementWrite.region, InitializeProgram.u8Bytes_length,
+              hstateLength, ValueRegion, Luffs.Memory.Scalar.u8] using
+              ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8 hfreeTarget
+                (disjoint_symmetric.mp hprevFree))
+      have hwrite := hbefore.writeElement (index := cursor)
+        (value := BitVec.ofNat 8 (prevFree[cursor + 1]?.getD 0)) htarget
+      rw [ElementWrite.applyAll_append, hsourceValue]
+      apply ih (cursor := cursor + 1)
+        (state := state.set cursor
+          (BitVec.ofNat 8 (prevFree[cursor + 1]?.getD 0)))
+        (mem := ElementWrite.applyAll
+          [⟨offsetsBase, 8, cursor,
+              InitializeProgram.usizeBytes (offsets[cursor + 1]?.getD 0)⟩,
+           ⟨sizesBase, 8, cursor,
+              InitializeProgram.usizeBytes (sizes[cursor + 1]?.getD 0)⟩,
+           ⟨isFreeBase, 1, cursor,
+              InitializeProgram.u8Bytes (isFree[cursor + 1]?.getD 0)⟩,
+           ⟨prevFreeBase, 1, cursor,
+              InitializeProgram.u8Bytes (prevFree[cursor + 1]?.getD 0)⟩] mem)
+      · simpa using hstateLength
+      · omega
+      · omega
+      · omega
+      · omega
+      · simpa [ElementWrite.applyAll, ElementWrite.apply,
+          InitializeProgram.u8Bytes, Luffs.Memory.Scalar.u8] using hwrite
+
+/-- Joint decoder for the complete four-field forward compaction loop. -/
+theorem compactPhysicalWrites_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (count removed : Nat) (mem : Memory)
+    (hremoved : removed < count)
+    (hcountOffsets : count ≤ offsets.length)
+    (hcountSizes : count ≤ sizes.length)
+    (hcountFree : count ≤ isFree.length)
+    (hcountPrev : count ≤ prevFree.length)
+    (layout : AllocateProgram.SplitMetadataDisjoint offsetsBase sizesBase
+      isFreeBase prevFreeBase countBase offsets.length sizes.length isFree.length
+      prevFree.length)
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree)) :
+    let final := ElementWrite.applyAll
+      (compactPhysicalWrites offsetsBase sizesBase isFreeBase prevFreeBase
+        offsets sizes isFree prevFree removed (count - removed - 1)) mem
+    final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+        (InitializeProgram.encodeNats (compactActive offsets count removed)) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+        (InitializeProgram.encodeNats (compactActive sizes count removed)) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+        (AllocateProgram.encodeFlags (compactActive isFree count removed)) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+        (AllocateProgram.encodeFlags (compactActive prevFree count removed)) := by
+  dsimp only
+  have hboundOffsets : removed + (count - removed - 1) < offsets.length := by
+    omega
+  have hboundSizes : removed + (count - removed - 1) < sizes.length := by omega
+  have hboundFree : removed + (count - removed - 1) < isFree.length := by omega
+  have hboundPrev : removed + (count - removed - 1) < prevFree.length := by omega
+  have hoffsetsFinal := compactPhysicalWrites_offsets_encodes offsetsBase
+    sizesBase isFreeBase prevFreeBase offsets sizes isFree prevFree removed
+    (count - removed - 1) (InitializeProgram.encodeNats offsets) mem
+    (by simp [InitializeProgram.encodeNats]) hboundOffsets hboundSizes
+    hboundFree hboundPrev layout.offsets_sizes layout.offsets_isFree
+    layout.offsets_prevFree hoffsets
+  have hsizesFinal := compactPhysicalWrites_sizes_encodes offsetsBase sizesBase
+    isFreeBase prevFreeBase offsets sizes isFree prevFree removed
+    (count - removed - 1) (InitializeProgram.encodeNats sizes) mem
+    (by simp [InitializeProgram.encodeNats]) hboundOffsets hboundSizes
+    hboundFree hboundPrev (disjoint_symmetric.mp layout.offsets_sizes)
+    layout.sizes_isFree layout.sizes_prevFree hsizes
+  have hfreeFinal := compactPhysicalWrites_isFree_encodes offsetsBase sizesBase
+    isFreeBase prevFreeBase offsets sizes isFree prevFree removed
+    (count - removed - 1) (AllocateProgram.encodeFlags isFree) mem
+    (by simp [AllocateProgram.encodeFlags]) hboundOffsets hboundSizes hboundFree
+    hboundPrev (disjoint_symmetric.mp layout.offsets_isFree)
+    (disjoint_symmetric.mp layout.sizes_isFree) layout.isFree_prevFree hfree
+  have hprevFinal := compactPhysicalWrites_prevFree_encodes offsetsBase sizesBase
+    isFreeBase prevFreeBase offsets sizes isFree prevFree removed
+    (count - removed - 1) (AllocateProgram.encodeFlags prevFree) mem
+    (by simp [AllocateProgram.encodeFlags]) hboundOffsets hboundSizes hboundFree
+    hboundPrev (disjoint_symmetric.mp layout.offsets_prevFree)
+    (disjoint_symmetric.mp layout.sizes_prevFree)
+    (disjoint_symmetric.mp layout.isFree_prevFree) hprev
+  rw [compactLoopState_eq_compactActive _ count removed hremoved (by
+        simpa [InitializeProgram.encodeNats] using hcountOffsets)] at hoffsetsFinal
+  rw [compactLoopState_eq_compactActive _ count removed hremoved (by
+        simpa [InitializeProgram.encodeNats] using hcountSizes)] at hsizesFinal
+  rw [compactLoopState_eq_compactActive _ count removed hremoved (by
+        simpa [AllocateProgram.encodeFlags] using hcountFree)] at hfreeFinal
+  rw [compactLoopState_eq_compactActive _ count removed hremoved (by
+        simpa [AllocateProgram.encodeFlags] using hcountPrev)] at hprevFinal
+  simpa [InitializeProgram.encodeNats, AllocateProgram.encodeFlags,
+    map_compactActive] using
+    And.intro hoffsetsFinal (And.intro hsizesFinal
+      (And.intro hfreeFinal hprevFinal))
 
 end DeallocateProgram
 

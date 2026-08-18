@@ -1215,11 +1215,13 @@ concurrency are later extensions and are not prerequisites for `Box` and
   next step is decoding this trace to `coalescePhysicalArrays`, then composing
   it between the two class removals and the merged-class insertion.
   The forward compaction loop now also has a typed state transformer and
-  byte-to-array projection proofs for both native-width offset and size arrays.
-  Each proof follows the actual interleaved row order and frames the other
-  three stores using region disjointness. Flag projections and the final
-  identification with `compactActive` remain before the physical decoder is
-  complete.
+  byte-to-array projection proofs for all four physical arrays. Each proof
+  follows the actual interleaved row order and frames the other three stores
+  using region disjointness. The loop transformer is proved equal to
+  `compactActive` under the CFG-derived active-prefix bounds, and the joint
+  decoder returns all four compacted encodings from one byte execution. It
+  remains to prepend and decode the merged-size store, then identify the joint
+  result with `coalescePhysicalArrays`.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

@@ -954,6 +954,49 @@ theorem Program.fillElements_wp {GF : BundledGFunctors}
   intro final hpreserves p hp
   exact hpreserves p (hinvariant p hp)
 
+/-- Deterministic memory result of the consecutive scalar-store loop. -/
+def Memory.fillElements (mem : Memory) (base width start : Nat) :
+    Nat → List Byte → Memory
+  | 0, _ => mem
+  | count + 1, bytes =>
+      Memory.fillElements
+        (mem.writeBytes (base + start * width) bytes)
+        base width (start + 1) count bytes
+
+theorem Memory.mapped_fillElements (mem : Memory) (base width start count : Nat)
+    (bytes : List Byte) {p : Addr} (hmapped : mem.mapped p) :
+    (Memory.fillElements mem base width start count bytes).mapped p := by
+  induction count generalizing mem start with
+  | zero => exact hmapped
+  | succ count ih =>
+      exact ih _ _ (Memory.mapped_writeBytes hmapped)
+
+theorem Program.fillElements_wp_exact {GF : BundledGFunctors}
+    (base width start count : Nat) (bytes : List Byte) (mem : Memory)
+    (hwidth : bytes.length = width)
+    (hmapped : ∀ index, start ≤ index → index < start + count →
+      ∀ i, i < width → mem.mapped (base + index * width + i)) :
+    ⊢@{IProp GF} Program.wp
+      (Program.fillElements base width start count bytes) mem
+      (fun final => final =
+        Memory.fillElements mem base width start count bytes) := by
+  induction count generalizing start mem with
+  | zero =>
+      simpa [Program.fillElements, Program.forRange, Memory.fillElements] using
+        (Program.wp_done (GF := GF) mem (fun final => final = mem) rfl)
+  | succ count ih =>
+      simp only [Program.fillElements, Program.forRange, Memory.fillElements]
+      apply Program.wp_then
+        (Program.writeElement_wp_exact base width start bytes mem hwidth (by
+          intro i hi
+          exact hmapped start (by omega) (by omega) i hi))
+      intro middle hmiddle
+      subst middle
+      apply ih (start + 1) _
+      intro index hstart hend i hi
+      apply Memory.mapped_writeBytes
+      exact hmapped index (by omega) (by omega) i hi
+
 /-- One scalar-array assignment in an ordered metadata transaction. Keeping
 the byte representation explicit makes the transaction usable for mixed Rust
 integer widths without adding a trusted native-value operation. -/
@@ -972,6 +1015,14 @@ def ElementWrite.apply (write : ElementWrite) (mem : Memory) : Memory :=
 def ElementWrite.applyAll : List ElementWrite → Memory → Memory
   | [], mem => mem
   | write :: rest, mem => ElementWrite.applyAll rest (write.apply mem)
+
+theorem ElementWrite.applyAll_mapped (writes : List ElementWrite)
+    (mem : Memory) {p : Addr} (hmapped : mem.mapped p) :
+    (ElementWrite.applyAll writes mem).mapped p := by
+  induction writes generalizing mem with
+  | nil => exact hmapped
+  | cons write rest ih =>
+      exact ih _ (Memory.mapped_writeBytes hmapped)
 
 /-- A finite sequence of heterogeneous native-element assignments, in source
 execution order. -/

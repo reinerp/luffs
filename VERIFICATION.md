@@ -137,6 +137,12 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   block/bin seeding transaction has this exact WP, preparing the refinement
   link from operational bytes to `initializeArrays` rather than stopping at
   no-stuck safety.
+  Exactness now covers the clearing loops as well. Deterministic memory
+  transformers mirror the physical-row loop, both bitmap/head loops, their
+  composition, and final seeding. `tlsfInitializeProgram_wp_exact` therefore
+  identifies the unique final extensional memory for every store in the
+  successful fixed-array initializer, with all dynamic indices justified by
+  its successful classifier edge.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

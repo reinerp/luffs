@@ -797,8 +797,15 @@ concurrency are later extensions and are not prerequisites for `Box` and
   models; conditional right/left coalescing emits its capacity, sentinel,
   neighbor, free-flag, and adjacency branches directly. Box drop, Vec drop, and
   Vec growth all sequence these generated stages, with Lean proving the result
-  extensionally equal to the executable allocator semantics. The actual
-  `coalesceClassArrays` commit is still the next source-generation boundary.
+  extensionally equal to the executable allocator semantics. Class coalescing
+  is now source-generated too: it reads both adjacent headers, classifies and
+  detaches both old free-list nodes in order, invokes generated physical
+  compaction, reclassifies the merged size, and inserts the merged node. Shape
+  recognition is dependency-closed, so invalidating any lower stage also
+  invalidates conditional/public deallocation and every dependent Box/Vec drop
+  or growth model instead of leaving a dangling generated theorem. The
+  recursive `coalescePhysicalArrays` compaction is the next source-generation
+  boundary.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

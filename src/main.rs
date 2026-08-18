@@ -496,7 +496,7 @@ fn parse(source: &str) -> Result<Module, String> {
             }
         }
     }
-    Ok(Module {
+    let mut module = Module {
         rust,
         proofs,
         accesses,
@@ -532,7 +532,35 @@ fn parse(source: &str) -> Result<Module, String> {
         tlsf_coalesce_class_models: parse_tlsf_coalesce_class_models(source),
         tlsf_coalesce_if_possible_models: parse_tlsf_coalesce_if_possible_models(source),
         tlsf_deallocate_models: parse_tlsf_deallocate_models(source),
-    })
+    };
+    if module.tlsf_mark_free_models.is_empty()
+        || module.tlsf_classify_size_models.is_empty()
+        || module.tlsf_insert_class_models.is_empty()
+    {
+        module.tlsf_deallocate_uncoalesced_models.clear();
+    }
+    if module.tlsf_classify_size_models.is_empty()
+        || module.tlsf_remove_class_models.is_empty()
+        || module.tlsf_coalesce_physical_models.is_empty()
+        || module.tlsf_insert_class_models.is_empty()
+    {
+        module.tlsf_coalesce_class_models.clear();
+    }
+    if module.tlsf_coalesce_class_models.is_empty() {
+        module.tlsf_coalesce_if_possible_models.clear();
+    }
+    if module.tlsf_deallocate_uncoalesced_models.is_empty()
+        || module.tlsf_coalesce_if_possible_models.is_empty()
+    {
+        module.tlsf_deallocate_models.clear();
+    }
+    if module.tlsf_deallocate_models.is_empty() {
+        module.tlsf_box_drop_models.clear();
+        module.tlsf_box_drop_ptr_models.clear();
+        module.tlsf_vec_drop_models.clear();
+        module.tlsf_vec_grow_models.clear();
+    }
+    Ok(module)
 }
 
 fn parse_scalar_models(source: &str) -> Vec<ScalarModel> {
@@ -3890,14 +3918,34 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
             model.name, model.name, model.refines, model.name
         ));
     }
-    for model in &module.tlsf_coalesce_class_models {
+    for model in &module.tlsf_remove_class_models {
         out.push_str(&format!(
-            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (count left : Nat) : Option Luffs.Runtime.TLSF.CoalesceClassResult :=\n  {} offsets sizes is_free prev_free second first heads next previous count left\n\n",
+            "def {}_model (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (bin block : Nat) : Option Luffs.Runtime.TLSF.RemoveClassResult :=\n  {} second first heads next previous bin block\n\n",
             model.name, model.refines
         ));
         out.push_str(&format!(
             "theorem {}_refines : {}_model = {} := by rfl\n\n",
             model.name, model.name, model.refines
+        ));
+    }
+    for model in &module.tlsf_coalesce_physical_models {
+        out.push_str(&format!(
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count left : Nat) : Option Luffs.Runtime.TLSF.CoalescePhysicalResult :=\n  {} offsets sizes is_free prev_free count left\n\n",
+            model.name, model.refines
+        ));
+        out.push_str(&format!(
+            "theorem {}_refines : {}_model = {} := by rfl\n\n",
+            model.name, model.name, model.refines
+        ));
+    }
+    for model in &module.tlsf_coalesce_class_models {
+        out.push_str(&format!(
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (count left : Nat) : Option Luffs.Runtime.TLSF.CoalesceClassResult := do\n  let right := left + 1\n  let left_offset ← offsets[left]?\n  let right_offset ← offsets[right]?\n  let left_size ← sizes[left]?\n  let right_size ← sizes[right]?\n  let left_bin ← tlsf_classify_size_model left_size\n  let right_bin ← tlsf_classify_size_model right_size\n  let without_left ← tlsf_remove_class_model second first heads next previous left_bin left_offset\n  let without_right ← tlsf_remove_class_model without_left.second without_left.first without_left.heads without_left.next without_left.previous right_bin right_offset\n  let physical ← tlsf_coalesce_physical_model offsets sizes is_free prev_free count left\n  let merged_size ← physical.sizes[left]?\n  let merged_bin ← tlsf_classify_size_model merged_size\n  let inserted ← tlsf_insert_class_model without_right.second without_right.first without_right.heads without_right.next without_right.previous merged_bin left_offset\n  pure {{\n    offsets := physical.offsets, sizes := physical.sizes,\n    isFree := physical.isFree, prevFree := physical.prevFree,\n    count := physical.count, second := inserted.second, first := inserted.first,\n    heads := inserted.heads, next := inserted.next, previous := inserted.previous }}\n\n",
+            model.name
+        ));
+        out.push_str(&format!(
+            "theorem {}_refines : {}_model = {} := by\n  unfold {}_model\n  rw [tlsf_classify_size_refines, tlsf_remove_class_refines, tlsf_coalesce_physical_refines, tlsf_insert_class_refines]\n  rfl\n\n",
+            model.name, model.name, model.refines, model.name
         ));
     }
     for model in &module.tlsf_coalesce_if_possible_models {
@@ -3908,16 +3956,6 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
         out.push_str(&format!(
             "theorem {}_refines : {}_model = {} := by\n  unfold {}_model\n  rw [tlsf_coalesce_class_refines]\n  rfl\n\n",
             model.name, model.name, model.refines, model.name
-        ));
-    }
-    for model in &module.tlsf_remove_class_models {
-        out.push_str(&format!(
-            "def {}_model (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (bin block : Nat) : Option Luffs.Runtime.TLSF.RemoveClassResult :=\n  {} second first heads next previous bin block\n\n",
-            model.name, model.refines
-        ));
-        out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
-            model.name, model.name, model.refines
         ));
     }
     for model in &module.tlsf_initialize_models {
@@ -4205,16 +4243,6 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
         out.push_str(&format!(
             "theorem {}_copy_program_wp_exact {{GF : Iris.BundledGFunctors}}\n    (oldBase newBase len : Nat) (values : List (Fin 256))\n    (before after : Luffs.Memory.Memory)\n    (hlen : values.length = {copied_len})\n    (hsteps : Luffs.Memory.CopySteps oldBase newBase values before after) :\n    ⊢@{{Iris.IProp GF}} Luffs.Memory.Program.wp\n      ({}_copy_program oldBase newBase len) before\n      (fun final => final = after) := by\n  unfold {}_copy_program\n  rw [← hlen]\n  exact hsteps.copyLoop_wp_exact\n\n",
             model.name, model.name, model.name
-        ));
-    }
-    for model in &module.tlsf_coalesce_physical_models {
-        out.push_str(&format!(
-            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count left : Nat) : Option Luffs.Runtime.TLSF.CoalescePhysicalResult :=\n  {} offsets sizes is_free prev_free count left\n\n",
-            model.name, model.refines
-        ));
-        out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
-            model.name, model.name, model.refines
         ));
     }
     for model in &module.tlsf_deallocate_models {
@@ -4713,6 +4741,18 @@ mod tests {
             "theorem tlsf_coalesce_class_refines : tlsf_coalesce_class_model = Luffs.Runtime.TLSF.coalesceClassArrays"
         ));
         assert!(generated.contains(
+            "let without_left ← tlsf_remove_class_model second first heads next previous left_bin left_offset"
+        ));
+        assert!(generated.contains(
+            "let physical ← tlsf_coalesce_physical_model offsets sizes is_free prev_free count left"
+        ));
+        assert!(generated.contains(
+            "let inserted ← tlsf_insert_class_model without_right.second without_right.first"
+        ));
+        assert!(!generated.contains(
+            "Option Luffs.Runtime.TLSF.CoalesceClassResult :=\n  Luffs.Runtime.TLSF.coalesceClassArrays"
+        ));
+        assert!(generated.contains(
             "theorem tlsf_coalesce_if_possible_refines : tlsf_coalesce_if_possible_model = Luffs.Runtime.TLSF.coalesceIfPossibleArrays"
         ));
         assert!(generated.contains(
@@ -4725,6 +4765,18 @@ mod tests {
         let source = include_str!("../stdlib/tlsf.luffs")
             .replace("let left: usize = block - 1;", "let left: usize = block;");
         let m = parse(&source).unwrap();
+        assert!(m.tlsf_deallocate_models.is_empty());
+    }
+
+    #[test]
+    fn tlsf_coalesce_class_refinement_rejects_missing_second_detach() {
+        let source = include_str!("../stdlib/tlsf.luffs").replace(
+            "tlsf_remove_class(second_nonempty, first_nonempty, heads, next, previous, right_bin, right_offset)?;",
+            "tlsf_remove_class(second_nonempty, first_nonempty, heads, next, previous, left_bin, left_offset)?;",
+        );
+        let m = parse(&source).unwrap();
+        assert!(m.tlsf_coalesce_class_models.is_empty());
+        assert!(m.tlsf_coalesce_if_possible_models.is_empty());
         assert!(m.tlsf_deallocate_models.is_empty());
     }
 

@@ -226,6 +226,14 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   arbitrary client frame, and transfers the sole `OwnsBytes` capability for
   the returned region. This connects the user-facing array implementation to
   the API theorem that prevents allocator writes into live client storage.
+  The byte-level operational layer now covers the no-split commit of
+  `tlsf_allocate_physical`: `allocateWholeProgram_wp_exact` proves the precise
+  source-ordered stores, `allocateWholeProgram_wp_encodes` decodes the selected
+  free flag and optional successor boundary tag, and
+  `allocatePhysicalWholeProgram_wp_refines` identifies those bytes with the
+  corresponding successful branch of `allocatePhysicalArrays`. The split
+  branch and surrounding bin-removal/insertion transaction remain the next
+  operational composition step.
 - [x] Define the first pure block layout predicates and prove that splitting
   and coalescing preserve byte counts.
 - [x] Implement size-class mapping and prove every `(fl, sl)` index in range.

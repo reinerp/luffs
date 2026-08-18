@@ -10043,6 +10043,195 @@ theorem tlsfInitializeProgram_wp_encodes {GF : BundledGFunctors}
 
 end InitializeProgram
 
+namespace AllocateProgram
+
+open Luffs.Memory
+
+/-- Exact source-ordered writes in the no-split branch of
+`tlsf_allocate_physical`. -/
+def allocateWholeWrites (isFreeBase prevFreeBase block count : Nat) :
+    List ElementWrite :=
+  [⟨isFreeBase, 1, block, InitializeProgram.u8Bytes 0⟩] ++
+    if block + 1 < count then
+      [⟨prevFreeBase, 1, block + 1, InitializeProgram.u8Bytes 0⟩]
+    else []
+
+def allocateWholeProgram (isFreeBase prevFreeBase block count : Nat) : Program :=
+  Program.writeElements (allocateWholeWrites isFreeBase prevFreeBase block count)
+
+def encodeFlags (values : List (Fin 256)) : List (BitVec 8) :=
+  values.map BitVec.ofFin
+
+theorem encodeFlags_set (values : List (Fin 256)) (index : Nat)
+    (value : Fin 256) :
+    encodeFlags (values.set index value) =
+      (encodeFlags values).set index (BitVec.ofFin value) := by
+  simp [encodeFlags]
+
+theorem encodeFlags_allocateWholePrevFree (prevFree : List (Fin 256))
+    (count block : Nat) :
+    encodeFlags (allocateWholePrevFree prevFree count block) =
+      if block + 1 < count then
+        (encodeFlags prevFree).set (block + 1) 0
+      else encodeFlags prevFree := by
+  by_cases hsuccessor : block + 1 < count
+  · simp [allocateWholePrevFree, hsuccessor, encodeFlags_set]
+  · simp [allocateWholePrevFree, hsuccessor]
+
+theorem allocateWholeProgram_wp_exact {GF : BundledGFunctors}
+    (isFreeBase prevFreeBase block count : Nat) (mem : Memory)
+    (hfree : mem.mapped (isFreeBase + block))
+    (hprev : block + 1 < count → mem.mapped (prevFreeBase + (block + 1))) :
+    ⊢@{IProp GF} Program.wp
+      (allocateWholeProgram isFreeBase prevFreeBase block count) mem
+      (fun final => final = ElementWrite.applyAll
+        (allocateWholeWrites isFreeBase prevFreeBase block count) mem) := by
+  unfold allocateWholeProgram
+  apply Program.writeElements_wp_exact
+  · intro write hwrite
+    simp [allocateWholeWrites] at hwrite
+    rcases hwrite with rfl | hwrite
+    · simp
+    · rcases hwrite with ⟨_, rfl⟩
+      simp
+  · intro write hwrite i hi
+    simp [allocateWholeWrites] at hwrite
+    rcases hwrite with rfl | hwrite
+    · simp at hi
+      subst i
+      simpa using hfree
+    · rcases hwrite with ⟨hsuccessor, rfl⟩
+      simp at hi
+      subst i
+      simpa using hprev hsuccessor
+
+theorem allocateWholeMemory_encodes
+    (isFreeBase prevFreeBase block count : Nat) (mem : Memory)
+    (isFree prevFree : List (BitVec 8))
+    (hblock : block < isFree.length)
+    (hprevLength : count ≤ prevFree.length)
+    (hdisjoint : (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase isFree.length).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase prevFree.length))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase isFree)
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase prevFree) :
+    let final := ElementWrite.applyAll
+      (allocateWholeWrites isFreeBase prevFreeBase block count) mem
+    final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase (isFree.set block 0) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+        (if block + 1 < count then prevFree.set (block + 1) 0 else prevFree) := by
+  dsimp only
+  by_cases hsuccessor : block + 1 < count
+  · have hsuccessorBound : block + 1 < prevFree.length := by omega
+    have hfreeUpdate := hfree.applyAll_update (index := block)
+      (value := (0 : BitVec 8)) (before := [])
+      (after := [⟨prevFreeBase, 1, block + 1, InitializeProgram.u8Bytes 0⟩])
+      hblock (by simp) (by
+        intro write hwrite
+        simp at hwrite
+        subst write
+        exact ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8 hsuccessorBound
+          (disjoint_symmetric.mp hdisjoint))
+    have hprevUpdate := hprev.applyAll_update (index := block + 1)
+      (value := (0 : BitVec 8))
+      (before := [⟨isFreeBase, 1, block, InitializeProgram.u8Bytes 0⟩])
+      (after := []) hsuccessorBound (by
+        intro write hwrite
+        simp at hwrite
+        subst write
+        exact ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8 hblock hdisjoint)
+      (by simp)
+    constructor
+    · simpa [allocateWholeWrites, hsuccessor, InitializeProgram.u8Bytes,
+        Luffs.Memory.Scalar.u8] using hfreeUpdate
+    · simpa [allocateWholeWrites, hsuccessor, InitializeProgram.u8Bytes,
+        Luffs.Memory.Scalar.u8] using hprevUpdate
+  · have hfreeUpdate := hfree.writeElement (index := block)
+      (value := (0 : BitVec 8)) hblock
+    have hprevPreserved := hprev.applyAll_of_disjoint
+      (writes := [⟨isFreeBase, 1, block, InitializeProgram.u8Bytes 0⟩]) (by
+        intro write hwrite
+        simp at hwrite
+        subst write
+        exact ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8 hblock hdisjoint)
+    constructor
+    · simpa [allocateWholeWrites, hsuccessor, ElementWrite.applyAll,
+        ElementWrite.apply,
+        InitializeProgram.u8Bytes, Luffs.Memory.Scalar.u8] using hfreeUpdate
+    · simpa [allocateWholeWrites, hsuccessor, ElementWrite.apply,
+        InitializeProgram.u8Bytes, Luffs.Memory.Scalar.u8] using hprevPreserved
+
+theorem allocateWholeProgram_wp_encodes {GF : BundledGFunctors}
+    (isFreeBase prevFreeBase block count : Nat) (mem : Memory)
+    (isFree prevFree : List (BitVec 8))
+    (hblock : block < isFree.length)
+    (hprevLength : count ≤ prevFree.length)
+    (hdisjoint : (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase isFree.length).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase prevFree.length))
+    (hfreeMapped : mem.mapped (isFreeBase + block))
+    (hprevMapped : block + 1 < count →
+      mem.mapped (prevFreeBase + (block + 1)))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase isFree)
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase prevFree) :
+    ⊢@{IProp GF} Program.wp
+      (allocateWholeProgram isFreeBase prevFreeBase block count) mem
+      (fun final =>
+        final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+            (isFree.set block 0) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+          (if block + 1 < count then prevFree.set (block + 1) 0 else prevFree)) := by
+  apply Program.wp_mono
+    (allocateWholeProgram_wp_exact isFreeBase prevFreeBase block count mem
+      hfreeMapped hprevMapped)
+  intro final hfinal
+  subst final
+  exact allocateWholeMemory_encodes isFreeBase prevFreeBase block count mem
+    isFree prevFree hblock hprevLength hdisjoint hfree hprev
+
+theorem allocatePhysicalWholeProgram_wp_refines {GF : BundledGFunctors}
+    (isFreeBase prevFreeBase block count request : Nat) (mem : Memory)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (result : AllocatePhysicalResult)
+    (hsuccess : allocatePhysicalArrays offsets sizes isFree prevFree count block
+      request = some result)
+    (hwhole : result.remainderOffset = none)
+    (hdisjoint :
+      (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase isFree.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase prevFree.length))
+    (hfreeMapped : mem.mapped (isFreeBase + block))
+    (hprevMapped : block + 1 < count →
+      mem.mapped (prevFreeBase + (block + 1)))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (encodeFlags prevFree)) :
+    ⊢@{IProp GF} Program.wp
+      (allocateWholeProgram isFreeBase prevFreeBase block count) mem
+      (fun final =>
+        final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+            (encodeFlags result.isFree) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+            (encodeFlags result.prevFree)) := by
+  obtain ⟨_, _, _, hfreeLength, hprevLength, hblock, _, selectedOffset, selectedSize,
+      _, _, _, _, _, hcase⟩ := allocatePhysicalArrays_result hsuccess
+  rcases hcase with hsplit | hnosplit
+  · rcases hsplit with ⟨_, _, _, _, _, _, _, hremainder, _, _, _, _, _⟩
+    rw [hremainder] at hwhole
+    contradiction
+  · rcases hnosplit with ⟨_, _, _, _, _, _, _, hresultFree, hresultPrev⟩
+    have hblockFree : block < isFree.length := by omega
+    apply Program.wp_mono
+      (allocateWholeProgram_wp_encodes isFreeBase prevFreeBase block count mem
+        (encodeFlags isFree) (encodeFlags prevFree) (by
+          simpa [encodeFlags] using hblockFree) (by
+          simpa [encodeFlags] using hprevLength) (by
+          simpa [encodeFlags] using hdisjoint) hfreeMapped hprevMapped hfree hprev)
+    intro final hencoded
+    rw [hresultFree, hresultPrev,
+      encodeFlags_set, encodeFlags_allocateWholePrevFree]
+    simpa using hencoded
+
+end AllocateProgram
+
 /-- Exact pure state transformer for `tlsf_initialize`. All fixed-capacity
 metadata is reset before the single mmap-backed free block is inserted. -/
 def initializeArrays (offsets sizes : List Nat)

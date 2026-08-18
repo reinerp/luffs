@@ -13883,7 +13883,7 @@ theorem insertClassWrites_previous_encodes
           hlayout.second_previous
     · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
         ValueRegion, Luffs.Memory.Scalar.u64] using hlayout.first_previous
-  have hbeforeEncoded := hencoded.applyAll_of_disjoint (by
+  have hbeforeEncoded := hencoded.applyAll_of_disjoint (writes := before) (by
     simpa [before, InitializeProgram.encodeNats] using hbefore)
   have hfirstWrite := hbeforeEncoded.writeElement (index := block)
     (value := BitVec.ofNat 64 nextLength) (by
@@ -14010,7 +14010,10 @@ theorem insertClassProgram_wp_encodes {GF : BundledGFunctors}
       (InitializeProgram.encodeNats previous)) :
     let oldHead := heads[bin]?.getD 0
     let oldSecond := second[bin / 32]?.getD 0
-    ⊢@{IProp GF} Program.wp
+    let expectedPrevious := if oldHead < previous.length then
+      (previous.set block next.length).set oldHead block
+    else previous.set block next.length
+    (⊢@{IProp GF} Program.wp
       (insertClassProgram secondBase firstBase headsBase nextBase previousBase
         next.length previous.length bin block (bin / 32) (bin % 32) oldHead
         oldSecond first) mem
@@ -14024,10 +14027,7 @@ theorem insertClassProgram_wp_encodes {GF : BundledGFunctors}
         final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
             (InitializeProgram.encodeNats (next.set block oldHead)) ∧
         final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
-            (InitializeProgram.encodeNats
-              (if oldHead < previous.length then
-                (previous.set block next.length).set oldHead block
-              else previous.set block next.length))) := by
+            (InitializeProgram.encodeNats expectedPrevious))) := by
   dsimp only
   apply Program.wp_mono
     (insertClassProgram_wp_exact secondBase firstBase headsBase nextBase

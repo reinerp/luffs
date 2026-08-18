@@ -1078,6 +1078,13 @@ concurrency are later extensions and are not prerequisites for `Box` and
   mapped-address facts from the exact first two write lists, reconstructs the
   combined layout using proved fixed-capacity equalities, and establishes a
   final memory encoding both `AllocatePhysicalResult` and `InsertClassResult`.
+  Both mutation branches are now connected directly to the result of the
+  public two-level candidate search. A representation theorem proves that the
+  selected offset is the intrusive-list head and therefore has the sentinel as
+  its predecessor. Consequently the whole and split Iris WPs require only the
+  allocator's bitmap, bin-validity, and bin-representation invariants; callers
+  no longer supply a raw predecessor inequality or separately restate the
+  candidate as an arbitrary class removal.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

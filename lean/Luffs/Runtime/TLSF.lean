@@ -14115,6 +14115,74 @@ namespace AllocateComposition
 
 open Luffs.Memory
 
+def classCandidateRemoveResult (result : ClassCandidateResult) :
+    RemoveClassResult :=
+  ⟨result.second, result.first, result.heads, result.next, result.previous⟩
+
+/-- A candidate is removed from the head of its selected class. Under the
+well-formed intrusive-list fact that the head has the sentinel predecessor,
+the candidate-specific bitmap update is exactly arbitrary class removal. -/
+theorem takeCandidateClassArrays_eq_removeClassArrays
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {startFl startSl : Nat}
+    {result : ClassCandidateResult}
+    (htake : takeCandidateClassArrays second first heads next previous startFl
+      startSl = some result)
+    (hpredecessor : previous[result.block]?.getD next.length ≥ next.length) :
+    removeClassArrays second first heads next previous result.bin result.block =
+      some (classCandidateRemoveResult result) := by
+  obtain ⟨_, hbin, hfl, _, hnext, hprevious, hremove, hclass⟩ :=
+    takeCandidateClassArrays_result htake
+  unfold removeClassArrays
+  simp only [Nat.not_le.mpr hbin, if_false, Nat.not_le.mpr hfl,
+    Nat.not_le.mpr hnext, Nat.not_le.mpr hprevious, hremove]
+  by_cases hsuccessor : next[result.block]?.getD next.length ≥ next.length
+  · simp only [hsuccessor, hpredecessor, _root_.and_self, if_true] at hclass ⊢
+    rcases hclass with ⟨hsecond, hfirst⟩
+    cases result
+    simp_all [classCandidateRemoveResult, clearClassBit]
+  · simp only [hsuccessor, if_false] at hclass
+    simp only [hpredecessor, _root_.true_and, hsuccessor, if_false]
+    rcases hclass with ⟨hsecond, hfirst⟩
+    cases result
+    simp_all [classCandidateRemoveResult]
+
+/-- The representation invariant discharges the only extra condition needed
+to view candidate removal as ordinary class removal: a selected candidate is
+the head of its intrusive list, so its predecessor is the list sentinel. -/
+theorem takeCandidateClassArrays_head_predecessor
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {startFl startSl : Nat}
+    {result : ClassCandidateResult} {state : Bins.State}
+    (hsecond : RepresentsSecondBitmap second state)
+    (hvalid : Bins.Valid state)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (htake : takeCandidateClassArrays second first heads next previous startFl
+      startSl = some result) :
+    previous[result.block]?.getD next.length >= next.length := by
+  have hresult := takeCandidateClassArrays_result htake
+  obtain ⟨cls, _, hbin, hnonempty⟩ :=
+    findNonemptyClassLowered_selects_nonempty hsecond hvalid hresult.1
+  have hrep := hbins cls
+  rw [← hbin] at hrep
+  cases hchain : state.chains cls with
+  | nil => simp [hchain] at hnonempty
+  | cons block rest =>
+      have hblock : result.block = block.offset := by
+        have hheadsGet : heads[result.bin]? = some heads[result.bin] := by
+          simp [hrep.1]
+        have hhead := hrep.2.2.1
+        rw [hchain] at hhead
+        simp only [List.map_cons, List.head?_cons, Option.getD_some] at hhead
+        rw [hheadsGet] at hhead
+        simp only [Option.getD_some] at hhead
+        rw [hresult.2.2.2.1, hheadsGet]
+        exact hhead
+      rw [hchain] at hrep
+      simp only [List.map_cons, linked] at hrep
+      rw [hblock, hrep.2.2.2.1.2.2.1]
+      simp
+
 /-- The physical-header fields touched while carving a selected TLSF block. -/
 inductive PhysicalField where
   | offsets | sizes | isFree | prevFree | count
@@ -15454,6 +15522,186 @@ theorem allocateWholeFromClassProgram_wp_refines {GF : BundledGFunctors}
     (fun hsuccessor => ElementWrite.applyAll_mapped _ _ (hprevMapped hsuccessor))
     hfreeMiddle hprevMiddle hclass.1 hclass.2.1 hclass.2.2.1
     hclass.2.2.2.1 hclass.2.2.2.2
+
+theorem allocateWholeFromCandidateProgram_wp_refines {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase offsetsLength sizesLength : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (state : Bins.State)
+    (heads next previous : List Nat) (startFl startSl physicalBlock count request : Nat)
+    (candidate : ClassCandidateResult) (allocated : AllocatePhysicalResult)
+    (mem : Memory)
+    (htake : takeCandidateClassArrays second first heads next previous startFl
+      startSl = some candidate)
+    (hbitmapRep : RepresentsSecondBitmap second state)
+    (hbinsValid : Bins.Valid state)
+    (hbinsRep : RepresentsBins { heads, next, previous } state)
+    (hallocate : allocatePhysicalArrays offsets sizes isFree prevFree count
+      physicalBlock request = some allocated)
+    (hwhole : allocated.remainderOffset = none)
+    (layout : MetadataLayout offsetsBase sizesBase isFreeBase prevFreeBase
+      countBase secondBase firstBase headsBase nextBase previousBase offsetsLength
+      sizesLength isFree.length prevFree.length second.length heads.length
+      next.length previous.length)
+    (hsecondMapped : ∀ index, index < second.length → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheadsMapped : ∀ index, index < heads.length → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < next.length → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previous.length → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hfreeMapped : mem.mapped (isFreeBase + physicalBlock))
+    (hprevMapped : physicalBlock + 1 < count →
+      mem.mapped (prevFreeBase + (physicalBlock + 1)))
+    (hsecond : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hfirst : mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase first)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree)) :
+    ⊢@{IProp GF} Program.wp
+      (allocateWholeFromClassProgram secondBase firstBase headsBase nextBase
+        previousBase isFreeBase prevFreeBase heads.length next.length
+        previous.length candidate.bin candidate.block physicalBlock
+        (next[candidate.block]?.getD next.length)
+        (previous[candidate.block]?.getD next.length) (candidate.bin / 32)
+        (candidate.bin % 32) count (second[candidate.bin / 32]?.getD 0) first) mem
+      (fun final =>
+        (final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+           (AllocateProgram.encodeFlags allocated.isFree) ∧
+         final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+           (AllocateProgram.encodeFlags allocated.prevFree)) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u32 secondBase candidate.second ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 firstBase candidate.first ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+          (InitializeProgram.encodeNats candidate.heads) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+          (InitializeProgram.encodeNats candidate.next) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+          (InitializeProgram.encodeNats candidate.previous)) := by
+  have hpredecessor := takeCandidateClassArrays_head_predecessor hbitmapRep
+    hbinsValid hbinsRep htake
+  have hremove := takeCandidateClassArrays_eq_removeClassArrays htake hpredecessor
+  simpa [classCandidateRemoveResult] using
+    allocateWholeFromClassProgram_wp_refines offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsetsLength sizesLength offsets sizes isFree prevFree second first heads next
+      previous candidate.bin candidate.block physicalBlock count request
+      (classCandidateRemoveResult candidate) allocated mem hremove hallocate hwhole
+      layout hsecondMapped hfirstMapped hheadsMapped hnextMapped hpreviousMapped
+      hfreeMapped hprevMapped hsecond hfirst hheads hnext hprevious hfree hprev
+
+theorem allocateSplitFromCandidateProgram_wp_refines {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (state : Bins.State)
+    (heads next previous : List Nat) (startFl startSl physicalBlock count request
+      remainderBin remainderOffset remainderSize : Nat)
+    (candidate : ClassCandidateResult) (allocated : AllocatePhysicalResult)
+    (inserted : InsertClassResult) (mem : Memory)
+    (htake : takeCandidateClassArrays second first heads next previous startFl
+      startSl = some candidate)
+    (hbitmapRep : RepresentsSecondBitmap second state)
+    (hbinsValid : Bins.Valid state)
+    (hbinsRep : RepresentsBins { heads, next, previous } state)
+    (hallocate : allocatePhysicalArrays offsets sizes isFree prevFree count
+      physicalBlock request = some allocated)
+    (hremainderOffset : allocated.remainderOffset = some remainderOffset)
+    (hremainderSize : allocated.remainderBytes = some remainderSize)
+    (hinsert : insertClassArrays candidate.second candidate.first candidate.heads
+      candidate.next candidate.previous remainderBin remainderOffset = some inserted)
+    (layout : MetadataLayout offsetsBase sizesBase isFreeBase prevFreeBase
+      countBase secondBase firstBase headsBase nextBase previousBase offsets.length
+      sizes.length isFree.length prevFree.length second.length heads.length
+      next.length previous.length)
+    (hsecondMapped : ∀ index, index < second.length → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheadsMapped : ∀ index, index < heads.length → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < next.length → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previous.length → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hoffsetsMapped : ∀ index, index < offsets.length → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizesMapped : ∀ index, index < sizes.length → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hfreeMapped : ∀ index, index < isFree.length →
+      mem.mapped (isFreeBase + index))
+    (hprevMapped : ∀ index, index < prevFree.length →
+      mem.mapped (prevFreeBase + index))
+    (hcountMapped : ∀ i, i < 8 → mem.mapped (countBase + i))
+    (hsecond : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hfirst : mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase first)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous))
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree))
+    (hcount : mem.EncodesAt Luffs.Memory.Scalar.u64 countBase
+      (BitVec.ofNat 64 count)) :
+    ⊢@{IProp GF} Program.wp
+      (allocateSplitAndInsertProgram secondBase firstBase headsBase nextBase
+        previousBase offsetsBase sizesBase isFreeBase prevFreeBase countBase
+        heads.length next.length previous.length candidate.bin candidate.block
+        physicalBlock (next[candidate.block]?.getD next.length)
+        (previous[candidate.block]?.getD next.length) (candidate.bin / 32)
+        (candidate.bin % 32) count request remainderBin remainderOffset
+        remainderSize (second[candidate.bin / 32]?.getD 0) first offsets sizes
+        isFree prevFree candidate.second candidate.first candidate.heads) mem
+      (fun final =>
+        (final.EncodesArray Luffs.Memory.Scalar.u32 secondBase inserted.second ∧
+         final.EncodesAt Luffs.Memory.Scalar.u64 firstBase inserted.first ∧
+         final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+           (InitializeProgram.encodeNats inserted.heads) ∧
+         final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+           (InitializeProgram.encodeNats inserted.next) ∧
+         final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+           (InitializeProgram.encodeNats inserted.previous)) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+          (InitializeProgram.encodeNats allocated.offsets) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+          (InitializeProgram.encodeNats allocated.sizes) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+          (AllocateProgram.encodeFlags allocated.isFree) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+          (AllocateProgram.encodeFlags allocated.prevFree) ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 countBase
+          (BitVec.ofNat 64 allocated.count)) := by
+  have hpredecessor := takeCandidateClassArrays_head_predecessor hbitmapRep
+    hbinsValid hbinsRep htake
+  have hremove := takeCandidateClassArrays_eq_removeClassArrays htake hpredecessor
+  simpa [classCandidateRemoveResult] using
+    allocateSplitAndInsertProgram_wp_refines offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets sizes isFree prevFree second first heads next previous candidate.bin
+      candidate.block physicalBlock count request remainderBin remainderOffset
+      remainderSize (classCandidateRemoveResult candidate) allocated inserted mem
+      hremove hallocate hremainderOffset hremainderSize hinsert layout hsecondMapped
+      hfirstMapped hheadsMapped hnextMapped hpreviousMapped hoffsetsMapped
+      hsizesMapped hfreeMapped hprevMapped hcountMapped hsecond hfirst hheads hnext
+      hprevious hoffsets hsizes hfree hprev hcount
 
 end AllocateComposition
 

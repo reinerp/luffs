@@ -10087,11 +10087,31 @@ theorem shiftActive_set_inserted_length {α : Type} [Inhabited α]
   rw [shiftActive_set_inserted values count inserted value hinserted hcapacity,
     expandActive_length values count inserted value hinserted hcapacity]
 
+theorem shiftActive_set_before {α : Type} [Inhabited α]
+    (values : List α) (count inserted before : Nat) (value : α)
+    (hbefore : before < inserted) (hinserted : inserted ≤ count)
+    (hcapacity : count < values.length) :
+    (shiftActive values count inserted).set before value =
+      shiftActive (values.set before value) count inserted := by
+  have hinserted : inserted ≤ values.length := by omega
+  have htakeLength : (values.take inserted).length = inserted := by
+    rw [List.length_take, Nat.min_eq_left hinserted]
+  have hget : (values.set before value)[inserted]? = values[inserted]? :=
+    List.getElem?_set_ne (by omega)
+  simp only [shiftActive, List.take_set, List.drop_set_of_lt hbefore,
+    List.drop_set_of_lt (by omega : before < count + 1), hget]
+  simp [List.set_append, htakeLength, hbefore]
+
 theorem encodeNats_expandActive (values : List Nat) (count inserted value : Nat) :
     InitializeProgram.encodeNats (expandActive values count inserted value) =
       expandActive (InitializeProgram.encodeNats values) count inserted
         (BitVec.ofNat 64 value) := by
   simp [InitializeProgram.encodeNats, expandActive]
+
+theorem encodeNats_set (values : List Nat) (index value : Nat) :
+    InitializeProgram.encodeNats (values.set index value) =
+      (InitializeProgram.encodeNats values).set index (BitVec.ofNat 64 value) := by
+  simp [InitializeProgram.encodeNats]
 
 /-- Recursive typed state transformer matching the descending source loop.
 `source` remains fixed because descending copies never overwrite a later
@@ -10198,6 +10218,12 @@ theorem encodeFlags_set (values : List (Fin 256)) (index : Nat)
       (encodeFlags values).set index (BitVec.ofFin value) := by
   simp [encodeFlags]
 
+theorem encodeFlags_expandActive (values : List (Fin 256))
+    (count inserted : Nat) (value : Fin 256) :
+    encodeFlags (expandActive values count inserted value) =
+      expandActive (encodeFlags values) count inserted (BitVec.ofFin value) := by
+  simp [encodeFlags, expandActive]
+
 theorem encodeFlags_allocateWholePrevFree (prevFree : List (Fin 256))
     (count block : Nat) :
     encodeFlags (allocateWholePrevFree prevFree count block) =
@@ -10207,6 +10233,18 @@ theorem encodeFlags_allocateWholePrevFree (prevFree : List (Fin 256))
   by_cases hsuccessor : block + 1 < count
   · simp [allocateWholePrevFree, hsuccessor, encodeFlags_set]
   · simp [allocateWholePrevFree, hsuccessor]
+
+theorem encodeFlags_allocateSplitPrevFree (prevFree : List (Fin 256))
+    (count block : Nat) :
+    encodeFlags (allocateSplitPrevFree prevFree count block) =
+      let successor := block + 1
+      let shifted := expandActive (encodeFlags prevFree) count successor 0
+      if successor + 1 < count + 1 then shifted.set (successor + 1) 1
+      else shifted := by
+  by_cases hfollowing : block + 1 < count
+  · simp [allocateSplitPrevFree, hfollowing, encodeFlags_expandActive,
+      encodeFlags_set]
+  · simp [allocateSplitPrevFree, hfollowing, encodeFlags_expandActive]
 
 theorem allocateWholeProgram_wp_exact {GF : BundledGFunctors}
     (isFreeBase prevFreeBase block count : Nat) (mem : Memory)
@@ -10943,6 +10981,235 @@ theorem finishSplitWrites_offsets_encodes
     hencoded.applyAll_update (index := block + 1)
       (value := BitVec.ofNat 64 remainderOffset) hsuccessor hbefore hafter
 
+def finishSizesMiddle (offsetsBase isFreeBase block remainderOffset : Nat) :
+    List ElementWrite :=
+  [⟨isFreeBase, 1, block, InitializeProgram.u8Bytes 0⟩,
+   ⟨offsetsBase, 8, block + 1,
+      InitializeProgram.usizeBytes remainderOffset⟩]
+
+def finishSizesAfter (isFreeBase prevFreeBase countBase block count : Nat) :
+    List ElementWrite :=
+  let successor := block + 1
+  [⟨isFreeBase, 1, successor, InitializeProgram.u8Bytes 1⟩,
+   ⟨prevFreeBase, 1, successor, InitializeProgram.u8Bytes 0⟩] ++
+    (if successor + 1 < count + 1 then
+      [⟨prevFreeBase, 1, successor + 1, InitializeProgram.u8Bytes 1⟩]
+    else []) ++
+    [⟨countBase, 8, 0, InitializeProgram.usizeBytes (count + 1)⟩]
+
+theorem finishSplitWrites_sizes_decompose
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase block count request
+      remainderOffset remainderSize : Nat) :
+    finishSplitWrites offsetsBase sizesBase isFreeBase prevFreeBase countBase
+      block count request remainderOffset remainderSize =
+    [⟨sizesBase, 8, block, InitializeProgram.usizeBytes request⟩] ++
+      finishSizesMiddle offsetsBase isFreeBase block remainderOffset ++
+      [⟨sizesBase, 8, block + 1,
+        InitializeProgram.usizeBytes remainderSize⟩] ++
+      finishSizesAfter isFreeBase prevFreeBase countBase block count := by
+  simp [finishSplitWrites, finishSizesMiddle, finishSizesAfter]
+
+theorem finishSplitWrites_sizes_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase block count request
+      remainderOffset remainderSize : Nat)
+    (state : List (BitVec 64)) (mem : Memory)
+    (hblock : block < state.length)
+    (hsuccessor : block + 1 < state.length)
+    (hmiddle : ∀ write,
+      write ∈ finishSizesMiddle offsetsBase isFreeBase block remainderOffset →
+        write.region.disjoint
+          (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase state.length))
+    (hafter : ∀ write,
+      write ∈ finishSizesAfter isFreeBase prevFreeBase countBase block count →
+        write.region.disjoint
+          (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase state.length))
+    (hencoded : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase state) :
+    (ElementWrite.applyAll
+      (finishSplitWrites offsetsBase sizesBase isFreeBase prevFreeBase countBase
+        block count request remainderOffset remainderSize) mem).EncodesArray
+      Luffs.Memory.Scalar.u64 sizesBase
+        ((state.set block (BitVec.ofNat 64 request)).set (block + 1)
+          (BitVec.ofNat 64 remainderSize)) := by
+  have hfirst := hencoded.writeElement (index := block)
+    (value := BitVec.ofNat 64 request) hblock
+  have hmiddleEncoded := hfirst.applyAll_of_disjoint (writes :=
+    finishSizesMiddle offsetsBase isFreeBase block remainderOffset) (by
+      intro write hwrite
+      simpa [List.length_set] using hmiddle write hwrite)
+  have hsecond := hmiddleEncoded.writeElement (index := block + 1)
+    (value := BitVec.ofNat 64 remainderSize) (by simpa using hsuccessor)
+  have hfinal := hsecond.applyAll_of_disjoint (writes :=
+    finishSizesAfter isFreeBase prevFreeBase countBase block count) (by
+      intro write hwrite
+      simpa [List.length_set] using hafter write hwrite)
+  rw [finishSplitWrites_sizes_decompose,
+    ElementWrite.applyAll_append, ElementWrite.applyAll_append,
+    ElementWrite.applyAll_append]
+  simpa [ElementWrite.applyAll, ElementWrite.apply,
+    InitializeProgram.usizeBytes, Luffs.Memory.Scalar.u64] using hfinal
+
+def finishIsFreeBefore (sizesBase block request : Nat) : List ElementWrite :=
+  [⟨sizesBase, 8, block, InitializeProgram.usizeBytes request⟩]
+
+def finishIsFreeMiddle (offsetsBase sizesBase block remainderOffset
+    remainderSize : Nat) : List ElementWrite :=
+  [⟨offsetsBase, 8, block + 1,
+      InitializeProgram.usizeBytes remainderOffset⟩,
+   ⟨sizesBase, 8, block + 1,
+      InitializeProgram.usizeBytes remainderSize⟩]
+
+def finishIsFreeAfter (prevFreeBase countBase block count : Nat) :
+    List ElementWrite :=
+  let successor := block + 1
+  [⟨prevFreeBase, 1, successor, InitializeProgram.u8Bytes 0⟩] ++
+    (if successor + 1 < count + 1 then
+      [⟨prevFreeBase, 1, successor + 1, InitializeProgram.u8Bytes 1⟩]
+    else []) ++
+    [⟨countBase, 8, 0, InitializeProgram.usizeBytes (count + 1)⟩]
+
+theorem finishSplitWrites_isFree_decompose
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase block count request
+      remainderOffset remainderSize : Nat) :
+    finishSplitWrites offsetsBase sizesBase isFreeBase prevFreeBase countBase
+      block count request remainderOffset remainderSize =
+    finishIsFreeBefore sizesBase block request ++
+      [⟨isFreeBase, 1, block, InitializeProgram.u8Bytes 0⟩] ++
+      finishIsFreeMiddle offsetsBase sizesBase block remainderOffset
+        remainderSize ++
+      [⟨isFreeBase, 1, block + 1, InitializeProgram.u8Bytes 1⟩] ++
+      finishIsFreeAfter prevFreeBase countBase block count := by
+  simp [finishSplitWrites, finishIsFreeBefore, finishIsFreeMiddle,
+    finishIsFreeAfter]
+
+theorem finishSplitWrites_isFree_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase block count request
+      remainderOffset remainderSize : Nat)
+    (state : List (BitVec 8)) (mem : Memory)
+    (hblock : block < state.length)
+    (hsuccessor : block + 1 < state.length)
+    (hbefore : ∀ write,
+      write ∈ finishIsFreeBefore sizesBase block request →
+        write.region.disjoint
+          (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase state.length))
+    (hmiddle : ∀ write,
+      write ∈ finishIsFreeMiddle offsetsBase sizesBase block remainderOffset
+        remainderSize →
+        write.region.disjoint
+          (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase state.length))
+    (hafter : ∀ write,
+      write ∈ finishIsFreeAfter prevFreeBase countBase block count →
+        write.region.disjoint
+          (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase state.length))
+    (hencoded : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase state) :
+    (ElementWrite.applyAll
+      (finishSplitWrites offsetsBase sizesBase isFreeBase prevFreeBase countBase
+        block count request remainderOffset remainderSize) mem).EncodesArray
+      Luffs.Memory.Scalar.u8 isFreeBase
+        ((state.set block 0).set (block + 1) 1) := by
+  have hbeforeEncoded := hencoded.applyAll_of_disjoint
+    (writes := finishIsFreeBefore sizesBase block request) hbefore
+  have hfirst := hbeforeEncoded.writeElement (index := block)
+    (value := (0 : BitVec 8)) hblock
+  have hmiddleEncoded := hfirst.applyAll_of_disjoint (writes :=
+    finishIsFreeMiddle offsetsBase sizesBase block remainderOffset remainderSize)
+    (by
+      intro write hwrite
+      simpa [List.length_set] using hmiddle write hwrite)
+  have hsecond := hmiddleEncoded.writeElement (index := block + 1)
+    (value := (1 : BitVec 8)) (by simpa using hsuccessor)
+  have hfinal := hsecond.applyAll_of_disjoint (writes :=
+    finishIsFreeAfter prevFreeBase countBase block count) (by
+      intro write hwrite
+      simpa [List.length_set] using hafter write hwrite)
+  rw [finishSplitWrites_isFree_decompose,
+    ElementWrite.applyAll_append, ElementWrite.applyAll_append,
+    ElementWrite.applyAll_append, ElementWrite.applyAll_append]
+  simpa [ElementWrite.applyAll, ElementWrite.apply,
+    InitializeProgram.u8Bytes, Luffs.Memory.Scalar.u8] using hfinal
+
+def finishPrevBefore (offsetsBase sizesBase isFreeBase block request
+    remainderOffset remainderSize : Nat) : List ElementWrite :=
+  [⟨sizesBase, 8, block, InitializeProgram.usizeBytes request⟩,
+   ⟨isFreeBase, 1, block, InitializeProgram.u8Bytes 0⟩,
+   ⟨offsetsBase, 8, block + 1,
+      InitializeProgram.usizeBytes remainderOffset⟩,
+   ⟨sizesBase, 8, block + 1,
+      InitializeProgram.usizeBytes remainderSize⟩,
+   ⟨isFreeBase, 1, block + 1, InitializeProgram.u8Bytes 1⟩]
+
+def finishPrevAfter (countBase count : Nat) : List ElementWrite :=
+  [⟨countBase, 8, 0, InitializeProgram.usizeBytes (count + 1)⟩]
+
+theorem finishSplitWrites_prevFree_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase block count request
+      remainderOffset remainderSize : Nat)
+    (state : List (BitVec 8)) (mem : Memory)
+    (hsuccessor : block + 1 < state.length)
+    (hcount : count < state.length)
+    (hbefore : ∀ write,
+      write ∈ finishPrevBefore offsetsBase sizesBase isFreeBase block request
+        remainderOffset remainderSize →
+        write.region.disjoint
+          (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase state.length))
+    (hafter : ∀ write, write ∈ finishPrevAfter countBase count →
+      write.region.disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase state.length))
+    (hencoded : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase state) :
+    (ElementWrite.applyAll
+      (finishSplitWrites offsetsBase sizesBase isFreeBase prevFreeBase countBase
+        block count request remainderOffset remainderSize) mem).EncodesArray
+      Luffs.Memory.Scalar.u8 prevFreeBase
+        (let successor := block + 1
+         let state := state.set successor 0
+         if successor + 1 < count + 1 then state.set (successor + 1) 1
+         else state) := by
+  have hbeforeEncoded := hencoded.applyAll_of_disjoint
+    (writes := finishPrevBefore offsetsBase sizesBase isFreeBase block request
+      remainderOffset remainderSize) hbefore
+  have hfirst := hbeforeEncoded.writeElement (index := block + 1)
+    (value := (0 : BitVec 8)) hsuccessor
+  by_cases hfollowing : block + 1 + 1 < count + 1
+  · have hfollowingBound : block + 1 + 1 < state.length := by omega
+    have hsecond := hfirst.writeElement (index := block + 1 + 1)
+      (value := (1 : BitVec 8)) (by simpa using hfollowingBound)
+    have hfinal := hsecond.applyAll_of_disjoint
+      (writes := finishPrevAfter countBase count) (by
+        intro write hwrite
+        simpa [List.length_set] using hafter write hwrite)
+    simpa [finishSplitWrites, finishPrevBefore, finishPrevAfter, hfollowing,
+      ElementWrite.applyAll, ElementWrite.apply, InitializeProgram.u8Bytes,
+      Luffs.Memory.Scalar.u8] using hfinal
+  · have hfinal := hfirst.applyAll_of_disjoint
+      (writes := finishPrevAfter countBase count) (by
+        intro write hwrite
+        simpa [List.length_set] using hafter write hwrite)
+    simpa [finishSplitWrites, finishPrevBefore, finishPrevAfter, hfollowing,
+      ElementWrite.applyAll, ElementWrite.apply, InitializeProgram.u8Bytes,
+      Luffs.Memory.Scalar.u8] using hfinal
+
+def finishCountBefore (offsetsBase sizesBase isFreeBase prevFreeBase block count
+    request remainderOffset remainderSize : Nat) : List ElementWrite :=
+  let successor := block + 1
+  [⟨sizesBase, 8, block, InitializeProgram.usizeBytes request⟩,
+   ⟨isFreeBase, 1, block, InitializeProgram.u8Bytes 0⟩,
+   ⟨offsetsBase, 8, successor, InitializeProgram.usizeBytes remainderOffset⟩,
+   ⟨sizesBase, 8, successor, InitializeProgram.usizeBytes remainderSize⟩,
+   ⟨isFreeBase, 1, successor, InitializeProgram.u8Bytes 1⟩,
+   ⟨prevFreeBase, 1, successor, InitializeProgram.u8Bytes 0⟩] ++
+    if successor + 1 < count + 1 then
+      [⟨prevFreeBase, 1, successor + 1, InitializeProgram.u8Bytes 1⟩]
+    else []
+
+theorem finishSplitWrites_count_decompose
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase block count request
+      remainderOffset remainderSize : Nat) :
+    finishSplitWrites offsetsBase sizesBase isFreeBase prevFreeBase countBase
+      block count request remainderOffset remainderSize =
+    finishCountBefore offsetsBase sizesBase isFreeBase prevFreeBase block count
+      request remainderOffset remainderSize ++
+      [⟨countBase, 8, 0, InitializeProgram.usizeBytes (count + 1)⟩] := by
+  simp [finishSplitWrites, finishCountBefore]
+
 def allocateSplitWrites (offsetsBase sizesBase isFreeBase prevFreeBase countBase
     block count request remainderOffset remainderSize : Nat)
     (offsets sizes : List Nat) (isFree prevFree : List (Fin 256)) :
@@ -10951,6 +11218,23 @@ def allocateSplitWrites (offsetsBase sizesBase isFreeBase prevFreeBase countBase
       isFree prevFree (block + 1) count ++
     finishSplitWrites offsetsBase sizesBase isFreeBase prevFreeBase countBase
       block count request remainderOffset remainderSize
+
+/-- The count store is last, so its exact typed postcondition is independent of
+all preceding header writes. -/
+theorem allocateSplitWrites_count_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase block count request
+      remainderOffset remainderSize : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256)) (mem : Memory) :
+    (ElementWrite.applyAll
+      (allocateSplitWrites offsetsBase sizesBase isFreeBase prevFreeBase
+        countBase block count request remainderOffset remainderSize offsets sizes
+        isFree prevFree) mem).EncodesAt Luffs.Memory.Scalar.u64 countBase
+          (BitVec.ofNat 64 (count + 1)) := by
+  rw [allocateSplitWrites, ElementWrite.applyAll_append,
+    finishSplitWrites_count_decompose, ElementWrite.applyAll_append]
+  simp only [ElementWrite.applyAll, ElementWrite.apply, Nat.zero_mul, Nat.add_zero]
+  exact Memory.writeBytes_encodesAt Luffs.Memory.Scalar.u64 _ countBase
+    (BitVec.ofNat 64 (count + 1))
 
 /-- End-to-end offsets projection for the split transaction: the descending
 copy loop followed by the remainder-offset store is exactly the pure model's
@@ -11026,6 +11310,241 @@ theorem allocateSplitWrites_offsets_encodes
   · rw [encodeNats_expandActive offsets count (block + 1) remainderOffset]
     exact hfinish
   · simpa [InitializeProgram.encodeNats] using hcountOffsets
+
+theorem allocateSplitWrites_sizes_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase block count request
+      remainderOffset remainderSize : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256)) (mem : Memory)
+    (hblock : block < count)
+    (hcountOffsets : count < offsets.length)
+    (hcountSizes : count < sizes.length)
+    (hcountFree : count < isFree.length)
+    (hcountPrev : count < prevFree.length)
+    (hsizesOffsets :
+      (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase sizes.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase offsets.length))
+    (hsizesFree :
+      (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase sizes.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase isFree.length))
+    (hsizesPrev :
+      (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase sizes.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase prevFree.length))
+    (hfinishMiddle : ∀ write,
+      write ∈ finishSizesMiddle offsetsBase isFreeBase block remainderOffset →
+        write.region.disjoint
+          (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase sizes.length))
+    (hfinishAfter : ∀ write,
+      write ∈ finishSizesAfter isFreeBase prevFreeBase countBase block count →
+        write.region.disjoint
+          (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase sizes.length))
+    (hencoded : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes)) :
+    (ElementWrite.applyAll
+      (allocateSplitWrites offsetsBase sizesBase isFreeBase prevFreeBase
+        countBase block count request remainderOffset remainderSize offsets sizes
+        isFree prevFree) mem).EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats
+        (expandActive (sizes.set block request) count (block + 1)
+          remainderSize)) := by
+  rw [allocateSplitWrites, ElementWrite.applyAll_append]
+  have hloop := shiftPhysicalWrites_sizes_encodes offsetsBase sizesBase
+    isFreeBase prevFreeBase offsets sizes isFree prevFree (block + 1) count
+    (InitializeProgram.encodeNats sizes) mem
+    (by simp [InitializeProgram.encodeNats]) hcountOffsets hcountSizes
+    hcountFree hcountPrev hsizesOffsets hsizesFree hsizesPrev hencoded
+  change Memory.EncodesArray Luffs.Memory.Scalar.u64
+    (ElementWrite.applyAll
+      (shiftPhysicalWrites offsetsBase sizesBase isFreeBase prevFreeBase
+        offsets sizes isFree prevFree (block + 1) count) mem) sizesBase
+    (shiftLoopState (InitializeProgram.encodeNats sizes)
+      (InitializeProgram.encodeNats sizes) (block + 1) count) at hloop
+  rw [shiftLoopState_self_eq_shiftActive (InitializeProgram.encodeNats sizes)
+    count (block + 1) (by omega)
+    (by simpa [InitializeProgram.encodeNats] using hcountSizes)] at hloop
+  have hshiftLength :
+      (shiftActive (InitializeProgram.encodeNats sizes) count
+        (block + 1)).length = sizes.length := by
+    rw [shiftActive_length (InitializeProgram.encodeNats sizes) count
+      (block + 1) (by omega)]
+    · simp [InitializeProgram.encodeNats]
+    · simpa [InitializeProgram.encodeNats] using hcountSizes
+  have hfinish := finishSplitWrites_sizes_encodes offsetsBase sizesBase
+    isFreeBase prevFreeBase countBase block count request remainderOffset
+    remainderSize (shiftActive (InitializeProgram.encodeNats sizes) count
+      (block + 1))
+    (ElementWrite.applyAll
+      (shiftPhysicalWrites offsetsBase sizesBase isFreeBase prevFreeBase
+        offsets sizes isFree prevFree (block + 1) count) mem)
+    (by rw [hshiftLength]; omega) (by rw [hshiftLength]; omega)
+    (by
+      intro write hwrite
+      rw [hshiftLength]
+      exact hfinishMiddle write hwrite)
+    (by
+      intro write hwrite
+      rw [hshiftLength]
+      exact hfinishAfter write hwrite)
+    hloop
+  rw [shiftActive_set_before (InitializeProgram.encodeNats sizes) count
+    (block + 1) block (BitVec.ofNat 64 request) (by omega) (by omega)] at hfinish
+  · rw [shiftActive_set_inserted
+      ((InitializeProgram.encodeNats sizes).set block (BitVec.ofNat 64 request))
+      count (block + 1) (BitVec.ofNat 64 remainderSize) (by omega)] at hfinish
+    · rw [encodeNats_expandActive (sizes.set block request) count (block + 1)
+        remainderSize, encodeNats_set]
+      exact hfinish
+    · simpa [InitializeProgram.encodeNats] using hcountSizes
+  · simpa [InitializeProgram.encodeNats] using hcountSizes
+
+theorem allocateSplitWrites_isFree_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase block count request
+      remainderOffset remainderSize : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256)) (mem : Memory)
+    (hblock : block < count)
+    (hcountOffsets : count < offsets.length)
+    (hcountSizes : count < sizes.length)
+    (hcountFree : count < isFree.length)
+    (hcountPrev : count < prevFree.length)
+    (hfreeOffsets :
+      (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase isFree.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase offsets.length))
+    (hfreeSizes :
+      (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase isFree.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase sizes.length))
+    (hfreePrev :
+      (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase isFree.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase prevFree.length))
+    (hfinishBefore : ∀ write,
+      write ∈ finishIsFreeBefore sizesBase block request →
+        write.region.disjoint
+          (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase isFree.length))
+    (hfinishMiddle : ∀ write,
+      write ∈ finishIsFreeMiddle offsetsBase sizesBase block remainderOffset
+        remainderSize →
+        write.region.disjoint
+          (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase isFree.length))
+    (hfinishAfter : ∀ write,
+      write ∈ finishIsFreeAfter prevFreeBase countBase block count →
+        write.region.disjoint
+          (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase isFree.length))
+    (hencoded : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (encodeFlags isFree)) :
+    (ElementWrite.applyAll
+      (allocateSplitWrites offsetsBase sizesBase isFreeBase prevFreeBase
+        countBase block count request remainderOffset remainderSize offsets sizes
+        isFree prevFree) mem).EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (encodeFlags (expandActive (isFree.set block 0) count (block + 1) 1)) := by
+  rw [allocateSplitWrites, ElementWrite.applyAll_append]
+  have hloop := shiftPhysicalWrites_isFree_encodes offsetsBase sizesBase
+    isFreeBase prevFreeBase offsets sizes isFree prevFree (block + 1) count
+    (encodeFlags isFree) mem (by simp [encodeFlags]) hcountOffsets hcountSizes
+    hcountFree hcountPrev hfreeOffsets hfreeSizes hfreePrev hencoded
+  rw [shiftLoopState_self_eq_shiftActive (encodeFlags isFree) count (block + 1)
+    (by omega) (by simpa [encodeFlags] using hcountFree)] at hloop
+  have hshiftLength :
+      (shiftActive (encodeFlags isFree) count (block + 1)).length =
+        isFree.length := by
+    rw [shiftActive_length (encodeFlags isFree) count (block + 1) (by omega)]
+    · simp [encodeFlags]
+    · simpa [encodeFlags] using hcountFree
+  have hfinish := finishSplitWrites_isFree_encodes offsetsBase sizesBase
+    isFreeBase prevFreeBase countBase block count request remainderOffset
+    remainderSize (shiftActive (encodeFlags isFree) count (block + 1))
+    (ElementWrite.applyAll
+      (shiftPhysicalWrites offsetsBase sizesBase isFreeBase prevFreeBase
+        offsets sizes isFree prevFree (block + 1) count) mem)
+    (by rw [hshiftLength]; omega) (by rw [hshiftLength]; omega)
+    (by
+      intro write hwrite
+      rw [hshiftLength]
+      exact hfinishBefore write hwrite)
+    (by
+      intro write hwrite
+      rw [hshiftLength]
+      exact hfinishMiddle write hwrite)
+    (by
+      intro write hwrite
+      rw [hshiftLength]
+      exact hfinishAfter write hwrite)
+    hloop
+  rw [shiftActive_set_before (encodeFlags isFree) count (block + 1) block
+    (0 : BitVec 8) (by omega) (by omega)] at hfinish
+  · rw [shiftActive_set_inserted ((encodeFlags isFree).set block 0) count
+      (block + 1) (1 : BitVec 8) (by omega)] at hfinish
+    · rw [encodeFlags_expandActive (isFree.set block 0) count (block + 1) 1,
+        encodeFlags_set]
+      exact hfinish
+    · simpa [encodeFlags] using hcountFree
+  · simpa [encodeFlags] using hcountFree
+
+theorem allocateSplitWrites_prevFree_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase block count request
+      remainderOffset remainderSize : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256)) (mem : Memory)
+    (hblock : block < count)
+    (hcountOffsets : count < offsets.length)
+    (hcountSizes : count < sizes.length)
+    (hcountFree : count < isFree.length)
+    (hcountPrev : count < prevFree.length)
+    (hprevOffsets :
+      (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase prevFree.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase offsets.length))
+    (hprevSizes :
+      (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase prevFree.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase sizes.length))
+    (hprevFree :
+      (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase prevFree.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase isFree.length))
+    (hfinishBefore : ∀ write,
+      write ∈ finishPrevBefore offsetsBase sizesBase isFreeBase block request
+        remainderOffset remainderSize →
+        write.region.disjoint
+          (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase prevFree.length))
+    (hfinishAfter : ∀ write, write ∈ finishPrevAfter countBase count →
+      write.region.disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase prevFree.length))
+    (hencoded : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (encodeFlags prevFree)) :
+    (ElementWrite.applyAll
+      (allocateSplitWrites offsetsBase sizesBase isFreeBase prevFreeBase
+        countBase block count request remainderOffset remainderSize offsets sizes
+        isFree prevFree) mem).EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (encodeFlags (allocateSplitPrevFree prevFree count block)) := by
+  rw [allocateSplitWrites, ElementWrite.applyAll_append]
+  have hloop := shiftPhysicalWrites_prevFree_encodes offsetsBase sizesBase
+    isFreeBase prevFreeBase offsets sizes isFree prevFree (block + 1) count
+    (encodeFlags prevFree) mem (by simp [encodeFlags]) hcountOffsets hcountSizes
+    hcountFree hcountPrev hprevOffsets hprevSizes hprevFree hencoded
+  rw [shiftLoopState_self_eq_shiftActive (encodeFlags prevFree) count
+    (block + 1) (by omega) (by simpa [encodeFlags] using hcountPrev)] at hloop
+  have hshiftLength :
+      (shiftActive (encodeFlags prevFree) count (block + 1)).length =
+        prevFree.length := by
+    rw [shiftActive_length (encodeFlags prevFree) count (block + 1) (by omega)]
+    · simp [encodeFlags]
+    · simpa [encodeFlags] using hcountPrev
+  have hfinish := finishSplitWrites_prevFree_encodes offsetsBase sizesBase
+    isFreeBase prevFreeBase countBase block count request remainderOffset
+    remainderSize (shiftActive (encodeFlags prevFree) count (block + 1))
+    (ElementWrite.applyAll
+      (shiftPhysicalWrites offsetsBase sizesBase isFreeBase prevFreeBase
+        offsets sizes isFree prevFree (block + 1) count) mem)
+    (by rw [hshiftLength]; omega) (by rw [hshiftLength]; exact hcountPrev)
+    (by
+      intro write hwrite
+      rw [hshiftLength]
+      exact hfinishBefore write hwrite)
+    (by
+      intro write hwrite
+      rw [hshiftLength]
+      exact hfinishAfter write hwrite)
+    hloop
+  dsimp only at hfinish
+  rw [shiftActive_set_inserted (encodeFlags prevFree) count (block + 1)
+    (0 : BitVec 8) (by omega)] at hfinish
+  · rw [encodeFlags_allocateSplitPrevFree]
+    exact hfinish
+  · simpa [encodeFlags] using hcountPrev
 
 def allocateSplitProgram (offsetsBase sizesBase isFreeBase prevFreeBase countBase
     block count request remainderOffset remainderSize : Nat)

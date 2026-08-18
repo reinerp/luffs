@@ -247,11 +247,17 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   byte execution. Length preservation and replacement of the insertion slot
   by exactly `expandActive` are proved for arbitrary element types. The first
   finishing-store projection is now closed end to end as well:
-  `allocateSplitWrites_offsets_encodes` proves that the descending loop plus
-  the remainder-offset store encodes precisely the pure split result's
-  expanded offsets array. The analogous sizes/flag/count finishing
-  projections, then composition with surrounding bin removal and remainder
-  insertion, remain the next operational steps.
+  `allocateSplitWrites_offsets_encodes`, `allocateSplitWrites_sizes_encodes`,
+  `allocateSplitWrites_isFree_encodes`, and
+  `allocateSplitWrites_prevFree_encodes` prove that the descending loop plus
+  finishing stores encode precisely all four arrays in the pure split result,
+  including the conditional following-header boundary tag. The selected-block
+  update is proved to commute with insertion rather than assumed.
+  `allocateSplitWrites_count_encodes` closes the final count store directly;
+  because that store is last, its typed postcondition is independent of all
+  preceding writes. Packaging these projections under the concrete metadata
+  layout and composing surrounding bin removal/remainder insertion remain the
+  next operational steps.
 - [x] Define the first pure block layout predicates and prove that splitting
   and coalescing preserve byte counts.
 - [x] Implement size-class mapping and prove every `(fl, sl)` index in range.

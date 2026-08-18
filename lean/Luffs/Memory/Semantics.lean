@@ -376,6 +376,70 @@ def Program.then : Program → Program → Program
   | .done, tail => tail
   | .call op next, tail => .call op (fun result => (next result).then tail)
 
+/-- Syntactic effect property used when composing allocator and container
+programs: the trace may read, store, or extend mappings, but never release one. -/
+def Prim.DoesNotUnmap : Prim → Prop
+  | .munmap _ => False
+  | _ => True
+
+def Program.DoesNotUnmap : Program → Prop
+  | .done => True
+  | .call op next => op.DoesNotUnmap ∧ ∀ result, (next result).DoesNotUnmap
+
+@[simp] theorem Program.done_doesNotUnmap : Program.done.DoesNotUnmap := trivial
+
+theorem Program.DoesNotUnmap.then {first tail : Program}
+    (hfirst : first.DoesNotUnmap) (htail : tail.DoesNotUnmap) :
+    (first.then tail).DoesNotUnmap := by
+  induction first with
+  | done => exact htail
+  | call op next ih =>
+      exact ⟨hfirst.1, fun result => ih result (hfirst.2 result)⟩
+
+@[simp] theorem Program.doesNotUnmap_then_iff (first tail : Program) :
+    (first.then tail).DoesNotUnmap ↔
+      first.DoesNotUnmap ∧ tail.DoesNotUnmap := by
+  constructor
+  · intro h
+    induction first with
+    | done => exact ⟨trivial, h⟩
+    | call op next ih =>
+        have hnext : ∀ result, (next result).DoesNotUnmap ∧
+            tail.DoesNotUnmap := fun result => ih result (h.2 result)
+        exact ⟨⟨h.1, fun result => (hnext result).1⟩, (hnext .unit).2⟩
+  · rintro ⟨hfirst, htail⟩
+    exact hfirst.then htail
+
+theorem PrimStep.mapped_preserved_of_doesNotUnmap
+    {op : Prim} {before after : Memory} {result : Result}
+    (hstep : PrimStep op before result after) (hop : op.DoesNotUnmap) :
+    ∀ p, before.mapped p → after.mapped p := by
+  intro p hp
+  cases hstep with
+  | offset => exact hp
+  | load => exact hp
+  | store => exact Memory.mapped_write hp
+  | @mmap mem bytes align base hbytes halign hbase hfresh =>
+      by_cases hin : ({ base := base, bytes := bytes } : Region).contains p
+      · simp [Memory.mapZeroed, Memory.mapped, hin]
+      · unfold Memory.mapped at hp ⊢
+        rw [Memory.mapZeroed_preserves_outside hin]
+        exact hp
+  | munmap => contradiction
+
+/-- Every execution of a no-unmap program monotonically preserves the mapped
+domain, independently of the concrete reads and stores it performs. -/
+theorem Program.DoesNotUnmap.exec_mapped_preserved {program : Program}
+    (hprogram : program.DoesNotUnmap) {before after : Memory}
+    (hexec : Program.Exec program before after) :
+    ∀ p, before.mapped p → after.mapped p := by
+  induction hexec with
+  | done => exact fun _ hp => hp
+  | @call op next mem result middle final hstep htail ih =>
+      intro p hp
+      exact ih (hprogram.2 result) p
+        (hstep.mapped_preserved_of_doesNotUnmap hprogram.1 p hp)
+
 theorem Program.exec_then {first tail : Program} {before middle after : Memory}
     (hfirst : Program.Exec first before middle)
     (htail : Program.Exec tail middle after) :
@@ -702,6 +766,13 @@ def Program.readBytes (base : Addr) : Nat → Program
   | 0 => .done
   | count + 1 => .call (.load base) (fun _ => readBytes (base + 1) count)
 
+@[simp] theorem Program.readBytes_doesNotUnmap (base count : Nat) :
+    (Program.readBytes base count).DoesNotUnmap := by
+  induction count generalizing base with
+  | zero => simp [Program.readBytes, Program.DoesNotUnmap]
+  | succ count ih =>
+      simp [Program.readBytes, Program.DoesNotUnmap, Prim.DoesNotUnmap, ih]
+
 theorem Program.readBytes_wp {GF : BundledGFunctors} (base count : Nat)
     (mem : Memory)
     (hmapped : ∀ i, i < count → mem.mapped (base + i)) :
@@ -727,6 +798,14 @@ def Program.readOffsets (base : Addr) : List Nat → Program
   | [] => .done
   | offset :: rest =>
       .call (.load (base + offset)) (fun _ => readOffsets base rest)
+
+@[simp] theorem Program.readOffsets_doesNotUnmap (base : Nat)
+    (offsets : List Nat) :
+    (Program.readOffsets base offsets).DoesNotUnmap := by
+  induction offsets with
+  | nil => simp [Program.readOffsets, Program.DoesNotUnmap]
+  | cons offset rest ih =>
+      simp [Program.readOffsets, Program.DoesNotUnmap, Prim.DoesNotUnmap, ih]
 
 inductive ReadOffsetSteps (base : Addr) :
     List Nat → Memory → Prop where
@@ -858,6 +937,13 @@ def Program.writeBytes (base : Addr) : List Byte → Program
   | value :: rest =>
       .call (.store base value) (fun _ => writeBytes (base + 1) rest)
 
+@[simp] theorem Program.writeBytes_doesNotUnmap (base : Addr)
+    (values : List Byte) : (Program.writeBytes base values).DoesNotUnmap := by
+  induction values generalizing base with
+  | nil => simp [Program.writeBytes, Program.DoesNotUnmap]
+  | cons value rest ih =>
+      simp [Program.writeBytes, Program.DoesNotUnmap, Prim.DoesNotUnmap, ih]
+
 theorem WriteSteps.program_exec {base : Addr} {values : List Byte}
     {before after : Memory}
     (hsteps : WriteSteps base values before after) :
@@ -912,6 +998,11 @@ The scalar codec supplies `bytes`; this layer is deliberately agnostic about
 the value representation and records only its proved width and address. -/
 def Program.writeElement (base width index : Nat) (bytes : List Byte) : Program :=
   Program.writeBytes (base + index * width) bytes
+
+@[simp] theorem Program.writeElement_doesNotUnmap (base width index : Nat)
+    (bytes : List Byte) :
+    (Program.writeElement base width index bytes).DoesNotUnmap := by
+  simp [Program.writeElement]
 
 /-- A mapped native element range is sufficient for a closed store program.
 The exact final memory is existential because later source statements compose
@@ -1072,6 +1163,13 @@ def Program.writeElements : List ElementWrite → Program
   | [] => .done
   | write :: rest => write.program.then (Program.writeElements rest)
 
+@[simp] theorem Program.writeElements_doesNotUnmap (writes : List ElementWrite) :
+    (Program.writeElements writes).DoesNotUnmap := by
+  induction writes with
+  | nil => simp [Program.writeElements, Program.DoesNotUnmap]
+  | cons write rest ih =>
+      exact Program.DoesNotUnmap.then (by simp [ElementWrite.program]) ih
+
 theorem Program.writeElements_wp {GF : BundledGFunctors}
     (writes : List ElementWrite) (mem : Memory)
     (hwidth : ∀ write, write ∈ writes → write.bytes.length = write.width)
@@ -1201,6 +1299,13 @@ def Program.copyBytes (src dst : Addr) : List Byte → Program
         .call (.store dst value) (fun _ =>
           copyBytes (src + 1) (dst + 1) rest))
 
+@[simp] theorem Program.copyBytes_doesNotUnmap (src dst : Addr)
+    (values : List Byte) : (Program.copyBytes src dst values).DoesNotUnmap := by
+  induction values generalizing src dst with
+  | nil => simp [Program.copyBytes, Program.DoesNotUnmap]
+  | cons value rest ih =>
+      simp [Program.copyBytes, Program.DoesNotUnmap, Prim.DoesNotUnmap, ih]
+
 theorem CopySteps.program_exec {src dst : Addr} {values : List Byte}
     {before after : Memory}
     (hsteps : CopySteps src dst values before after) :
@@ -1299,6 +1404,10 @@ theorem Program.wp_safe {GF : BundledGFunctors} {program : Program}
   (Program.wp_adequacy hwp).1
 
 def Program.single (op : Prim) : Program := .call op (fun _ => .done)
+
+theorem Program.single_doesNotUnmap {op : Prim} (hop : op.DoesNotUnmap) :
+    (Program.single op).DoesNotUnmap := by
+  simp [Program.single, Program.DoesNotUnmap, hop]
 
 theorem Program.single_safe_iff (op : Prim) (mem : Memory) :
     (Program.single op).Safe mem ↔ op.safe mem := by

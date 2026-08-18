@@ -496,6 +496,87 @@ theorem boxNewArrays_result {α : Type} {codec : Codec α}
         subst result
         exact ⟨allocated, rfl, Nat.le_of_not_gt hbound, rfl, rfl⟩
 
+/-- Closed operational Box construction: the exact source-selected allocator
+trace is followed by the codec's initialization stores. Allocator execution
+preserves the pool mapping, so every initialization byte is proved writable. -/
+theorem boxNewArrays_successfulProgram_safe
+    {GF : Iris.BundledGFunctors.{0, 0, 0}}
+    {α : Type} {codec : Codec α} {pool : Region} {state : Bins.State}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    {storage : List Byte} {offsets sizes : List Nat}
+    {isFree prevFree : List (Fin 256)} {count : Nat}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {value : α}
+    {result : BoxNewU8ArraysResult} {mem : Memory}
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hbinsValid : Bins.Valid state)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins { heads, next, previous } state)
+    (hsuccess : boxNewArrays codec storage offsets sizes isFree prevFree count
+      second first heads next previous value = some result)
+    (hmem : Luffs.Runtime.TLSF.AllocateComposition.EncodedMetadata offsetsBase
+      sizesBase isFreeBase prevFreeBase countBase secondBase firstBase headsBase
+      nextBase previousBase offsets sizes isFree prevFree second first heads next
+      previous count mem)
+    (hpoolMapped : ∀ i, i < storage.length → mem.mapped (pool.base + i)) :
+    ∃ program,
+      Program.Safe program mem ∧
+      ∀ final, Program.Exec program mem final →
+        ∃ middle,
+          Luffs.Runtime.TLSF.AllocateComposition.EncodesAllocateArraysResult
+            offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase
+            firstBase headsBase nextBase previousBase
+            result.toAllocateArraysResult middle ∧
+          final = middle.writeBytes (pool.base + result.allocatedOffset)
+            (codec.encode value) ∧
+          result.storage = writeBytes storage result.allocatedOffset
+            (codec.encode value) := by
+  obtain ⟨allocated, halloc, hbound, hresult, hstorage⟩ :=
+    boxNewArrays_result hsuccess
+  obtain ⟨allocateProgram, hshape, hnoUnmap, hsafe, hpost⟩ :=
+    Luffs.Runtime.TLSF.AllocateComposition.allocateArrays_successfulProgram_safe_of_encoded_metadata
+      (GF := GF)
+        offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase
+        firstBase headsBase nextBase previousBase offsets sizes isFree prevFree
+        second first state heads next previous count
+        (Luffs.Containers.Box.requestBytes codec.size) allocated mem halloc hsecond
+        hbinsValid hbins hmem
+  let initializeProgram := Program.writeBytes
+    (pool.base + allocated.allocatedOffset) (codec.encode value)
+  let program := allocateProgram.then initializeProgram
+  have hinitializeMapped : ∀ middle,
+      Program.Exec allocateProgram mem middle → ∀ i, i < (codec.encode value).length →
+        middle.mapped (pool.base + allocated.allocatedOffset + i) := by
+    intro middle hexec i hi
+    apply hnoUnmap.exec_mapped_preserved hexec
+    have hmapped := hpoolMapped (allocated.allocatedOffset + i) (by
+      rw [codec.encode_length] at hi
+      omega)
+    simpa [Nat.add_assoc] using hmapped
+  refine ⟨program, ?_, ?_⟩
+  · obtain ⟨middle, hmiddle⟩ := hsafe
+    obtain ⟨final, hsteps⟩ := writeSteps_exists
+      (pool.base + allocated.allocatedOffset) (codec.encode value) middle
+      (hinitializeMapped middle hmiddle)
+    exact ⟨final, Program.exec_then hmiddle hsteps.program_exec⟩
+  · intro final hexec
+    obtain ⟨middle, hallocateExec, hinitializeExec⟩ :=
+      (Program.exec_then_iff allocateProgram initializeProgram mem final).1 hexec
+    have hencoded := hpost middle hallocateExec
+    obtain ⟨expectedFinal, hsteps⟩ := writeSteps_exists
+      (pool.base + allocated.allocatedOffset) (codec.encode value) middle
+      (hinitializeMapped middle hallocateExec)
+    have hfinal : final = middle.writeBytes
+        (pool.base + allocated.allocatedOffset) (codec.encode value) := by
+      have heq := hsteps.program_exec_unique hinitializeExec
+      rw [hsteps.final_eq_writeBytes] at heq
+      exact heq
+    rw [← hresult] at hencoded
+    have hoffset := congrArg
+      Luffs.Runtime.TLSF.AllocateArraysResult.allocatedOffset hresult
+    rw [← hoffset] at hfinal
+    exact ⟨middle, hencoded, hfinal, by simpa [hoffset] using hstorage⟩
+
 set_option maxHeartbeats 1200000 in
 theorem boxNewArrays_refines_box {GF : Iris.BundledGFunctors}
     [Luffs.Memory.ByteRegionGS GF] {α : Type} {codec : Codec α}
@@ -738,6 +819,50 @@ theorem boxNewU8Arrays_eq_generic
         exact ⟨by omega, by
           simpa only [List.cons_append, List.nil_append, List.append_assoc] using
             hwrite.symm⟩
+
+/-- Public `Box<u8>` constructor adequacy, inherited from the codec-generic
+allocator-plus-initialization program. -/
+theorem boxNewU8Arrays_successfulProgram_safe
+    {GF : Iris.BundledGFunctors.{0, 0, 0}}
+    {pool : Region} {state : Bins.State}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    {storage : List Byte} {offsets sizes : List Nat}
+    {isFree prevFree : List (Fin 256)} {count : Nat}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {value : Byte}
+    {result : BoxNewU8ArraysResult} {mem : Memory}
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hbinsValid : Bins.Valid state)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins { heads, next, previous } state)
+    (hsuccess : boxNewU8Arrays storage offsets sizes isFree prevFree count second
+      first heads next previous value = some result)
+    (hmem : Luffs.Runtime.TLSF.AllocateComposition.EncodedMetadata offsetsBase
+      sizesBase isFreeBase prevFreeBase countBase secondBase firstBase headsBase
+      nextBase previousBase offsets sizes isFree prevFree second first heads next
+      previous count mem)
+    (hpoolMapped : ∀ i, i < storage.length → mem.mapped (pool.base + i)) :
+    ∃ program,
+      Program.Safe program mem ∧
+      ∀ final, Program.Exec program mem final →
+        ∃ middle,
+          Luffs.Runtime.TLSF.AllocateComposition.EncodesAllocateArraysResult
+            offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase
+            firstBase headsBase nextBase previousBase
+            result.toAllocateArraysResult middle ∧
+          final = middle.writeBytes (pool.base + result.allocatedOffset) [value] ∧
+          result.storage = writeBytes storage result.allocatedOffset [value] := by
+  have hgeneric : boxNewArrays Scalar.u8 storage offsets sizes isFree prevFree
+      count second first heads next previous (Scalar.bv8OfByte value) =
+      some result := by
+    rw [← boxNewU8Arrays_eq_generic]
+    exact hsuccess
+  have hsafety := boxNewArrays_successfulProgram_safe (GF := GF)
+    offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+    headsBase nextBase previousBase hsecond hbinsValid hbins hgeneric hmem
+    hpoolMapped
+  simpa [Scalar.u8, Scalar.encode8, Scalar.bv8OfByte,
+    Scalar.byteOfBV8] using hsafety
 
 /-- Exact allocator-backed `Box<u16>` semantics. Unlike the historical byte
 specialization, this is just the generic verified constructor instantiated

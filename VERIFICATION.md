@@ -836,7 +836,13 @@ concurrency are later extensions and are not prerequisites for `Box` and
   and establish the exact ten-field returned allocator state. A reusable
   encoded-metadata contract and matching bundled allocation adequacy theorem
   provide the corresponding foundation for constructor and Vec-growth
-  composition.
+  composition. Constructor composition is now closed as well: successful
+  codec-generic construction selects the exact source-shaped allocation trace,
+  proves that trace preserves every mapped pool byte, and then executes the
+  codec's initialization stores. The resulting combined program is non-stuck;
+  every execution exposes the exact ten-field allocation state and the exact
+  final `Memory.writeBytes` effect. The public `Box<u8>` entry point inherits
+  this theorem with its one-byte initialization trace.
   Constructor and drop refinement now accept the actual fixed-capacity header
   arrays through `RepresentsPhysicalArrays`; they no longer require canonical
   arrays with no spare slots, so splitting allocation is included in the

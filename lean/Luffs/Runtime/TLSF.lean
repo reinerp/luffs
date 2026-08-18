@@ -10431,6 +10431,11 @@ def allocateWholeWrites (isFreeBase prevFreeBase block count : Nat) :
 def allocateWholeProgram (isFreeBase prevFreeBase block count : Nat) : Program :=
   Program.writeElements (allocateWholeWrites isFreeBase prevFreeBase block count)
 
+@[simp] theorem allocateWholeProgram_doesNotUnmap
+    (isFreeBase prevFreeBase block count : Nat) :
+    (allocateWholeProgram isFreeBase prevFreeBase block count).DoesNotUnmap := by
+  simp [allocateWholeProgram]
+
 def encodeFlags (values : List (Fin 256)) : List (BitVec 8) :=
   values.map BitVec.ofFin
 
@@ -16479,6 +16484,14 @@ def findNonemptyClassReadProgram (secondBase firstBase startFl startSl found : N
        (Program.readBytes firstBase 8).then
          (Program.readBytes (secondBase + (found / 32) * 4) 4))
 
+@[simp] theorem findNonemptyClassReadProgram_doesNotUnmap
+    (secondBase firstBase startFl startSl found : Nat)
+    (second : List (BitVec 32)) :
+    (findNonemptyClassReadProgram secondBase firstBase startFl startSl found
+      second).DoesNotUnmap := by
+  unfold findNonemptyClassReadProgram
+  split <;> simp
+
 theorem findNonemptyClassReadProgram_wp {GF : BundledGFunctors}
     (secondBase firstBase startFl startSl found : Nat)
     (second : List (BitVec 32)) (first : BitVec 64) (mem : Memory)
@@ -16523,6 +16536,12 @@ def readUsizePrefix (base : Nat) : Nat → Program
   | 0 => .done
   | count + 1 =>
       (Program.readBytes base 8).then (readUsizePrefix (base + 8) count)
+
+@[simp] theorem readUsizePrefix_doesNotUnmap (base count : Nat) :
+    (readUsizePrefix base count).DoesNotUnmap := by
+  induction count generalizing base with
+  | zero => simp [readUsizePrefix, Program.DoesNotUnmap]
+  | succ count ih => simp [readUsizePrefix, ih]
 
 theorem readUsizePrefix_wp {GF : BundledGFunctors}
     (base count : Nat) (mem : Memory)
@@ -16757,6 +16776,17 @@ def removeClassBitmapInterleavedProgram
        else .done))
   else .done
 
+@[simp] theorem removeClassBitmapInterleavedProgram_doesNotUnmap
+    (secondBase firstBase nextLength predecessor successor fl sl : Nat)
+    (oldSecond : BitVec 32) (oldFirst : BitVec 64) :
+    (removeClassBitmapInterleavedProgram secondBase firstBase nextLength
+      predecessor successor fl sl oldSecond oldFirst).DoesNotUnmap := by
+  unfold removeClassBitmapInterleavedProgram
+  split
+  · dsimp only
+    split <;> simp
+  · simp [Program.DoesNotUnmap]
+
 theorem removeClassBitmapInterleavedProgram_wp_exact
     {GF : BundledGFunctors}
     (secondBase firstBase nextLength predecessor successor fl sl : Nat)
@@ -16846,6 +16876,15 @@ def removeClassCoreInterleavedProgram
     nextLength previousLength bin block successor predecessor).then
   (removeClassBitmapInterleavedProgram secondBase firstBase nextLength
     predecessor successor fl sl oldSecond oldFirst)
+
+@[simp] theorem removeClassCoreInterleavedProgram_doesNotUnmap
+    (secondBase firstBase headsBase nextBase previousBase headsLength nextLength
+      previousLength bin block successor predecessor fl sl : Nat)
+    (oldSecond : BitVec 32) (oldFirst : BitVec 64) :
+    (removeClassCoreInterleavedProgram secondBase firstBase headsBase nextBase
+      previousBase headsLength nextLength previousLength bin block successor
+      predecessor fl sl oldSecond oldFirst).DoesNotUnmap := by
+  simp [removeClassCoreInterleavedProgram, RemoveProgram.removeProgram]
 
 theorem removeClassCoreInterleavedProgram_wp_exact
     {GF : BundledGFunctors}
@@ -17741,6 +17780,12 @@ def allocatePhysicalHeaderReadProgram
   ((Program.readBytes (offsetsBase + block * 8) 8).then
     (Program.readBytes (sizesBase + block * 8) 8)))
 
+@[simp] theorem allocatePhysicalHeaderReadProgram_doesNotUnmap
+    (countBase offsetsBase sizesBase isFreeBase block : Nat) :
+    (allocatePhysicalHeaderReadProgram countBase offsetsBase sizesBase isFreeBase
+      block).DoesNotUnmap := by
+  simp [allocatePhysicalHeaderReadProgram]
+
 theorem allocatePhysicalHeaderReadProgram_wp {GF : BundledGFunctors}
     (countBase offsetsBase sizesBase isFreeBase block : Nat) (mem : Memory)
     (hcount : ∀ i, i < 8 → mem.mapped (countBase + i))
@@ -17818,6 +17863,13 @@ def shiftPhysicalRowInterleavedProgram
   ((Program.readBytes (prevFreeBase + cursor) 1).then
     (Program.writeElements [⟨prevFreeBase, 1, cursor + 1,
       InitializeProgram.u8Bytes prevValue⟩])))))))
+
+@[simp] theorem shiftPhysicalRowInterleavedProgram_doesNotUnmap
+    (offsetsBase sizesBase isFreeBase prevFreeBase cursor : Nat)
+    (offsetValue sizeValue : Nat) (freeValue prevValue : Fin 256) :
+    (shiftPhysicalRowInterleavedProgram offsetsBase sizesBase isFreeBase
+      prevFreeBase cursor offsetValue sizeValue freeValue prevValue).DoesNotUnmap := by
+  simp [shiftPhysicalRowInterleavedProgram]
 
 theorem shiftPhysicalRowInterleavedProgram_wp_exact
     {GF : BundledGFunctors}
@@ -17954,6 +18006,18 @@ def shiftPhysicalInterleavedProgram
         (shiftPhysicalInterleavedProgram offsetsBase sizesBase isFreeBase
           prevFreeBase offsets sizes isFree prevFree successor cursor)
       else .done
+
+@[simp] theorem shiftPhysicalInterleavedProgram_doesNotUnmap
+    (offsetsBase sizesBase isFreeBase prevFreeBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (successor count : Nat) :
+    (shiftPhysicalInterleavedProgram offsetsBase sizesBase isFreeBase
+      prevFreeBase offsets sizes isFree prevFree successor count).DoesNotUnmap := by
+  induction count with
+  | zero => simp [shiftPhysicalInterleavedProgram, Program.DoesNotUnmap]
+  | succ count ih =>
+      simp only [shiftPhysicalInterleavedProgram]
+      split <;> simp_all
 
 theorem shiftPhysicalInterleavedProgram_wp_exact
     {GF : BundledGFunctors}
@@ -19386,6 +19450,34 @@ def IsSuccessfulAllocateFullyInterleavedTopLevelProgram
       countBase offsets sizes isFree prevFree second first heads next previous
       count request result mutation
 
+/-- Successful source-selected allocator programs never release mappings. -/
+theorem IsSuccessfulAllocateFullyInterleavedTopLevelProgram.doesNotUnmap
+    {secondBase firstBase headsBase countBase offsetsBase isFreeBase sizesBase
+      nextBase previousBase prevFreeBase : Nat}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {count request : Nat}
+    {result : AllocateArraysResult} {program : Program}
+    (hprogram : IsSuccessfulAllocateFullyInterleavedTopLevelProgram secondBase
+      firstBase headsBase countBase offsetsBase isFreeBase sizesBase nextBase
+      previousBase prevFreeBase offsets sizes isFree prevFree second first heads
+      next previous count request result program) :
+    program.DoesNotUnmap := by
+  rcases hprogram with ⟨startBin, foundBin, block, mutation, rfl, hmutation⟩
+  apply Program.DoesNotUnmap.then
+  · simp [allocatePreflightReadProgram]
+  · rcases hmutation with ⟨_, _, _, _, _, _, _, _, _, _, _, _, hbranch⟩
+    rcases hbranch with ⟨_, _, _, _, rfl⟩ | ⟨_, _, rfl⟩
+    · simp [allocateSplitFullyInterleavedProgram,
+        allocateSplitFromCandidateFullyInterleavedProgram,
+        takeCandidateClassInterleavedProgram,
+        allocatePhysicalSplitInterleavedProgram, insertClassInterleavedProgram,
+        Program.DoesNotUnmap, Prim.DoesNotUnmap]
+    · simp [allocateWholeFullyInterleavedProgram,
+        takeCandidateClassInterleavedProgram,
+        allocatePhysicalWholeInterleavedProgram, Program.DoesNotUnmap,
+        Prim.DoesNotUnmap]
+
 /-- Closed successful public allocator trace: exact top-level preflight reads
 follow the fully source-interleaved helper trace selected by the public branch. -/
 theorem allocateArrays_successfulFullyInterleavedTopLevelProgram_wp
@@ -19497,12 +19589,13 @@ theorem IsSuccessfulAllocateFullyInterleavedTopLevelProgram.adequate
         headsBase countBase offsetsBase isFreeBase sizesBase nextBase
         previousBase prevFreeBase offsets sizes isFree prevFree second first
         heads next previous count request result program ∧
+      program.DoesNotUnmap ∧
       Program.Safe program mem ∧
       ∀ final, Program.Exec program mem final →
         EncodesAllocateArraysResult offsetsBase sizesBase isFreeBase prevFreeBase
           countBase secondBase firstBase headsBase nextBase previousBase result
           final := by
-  exact ⟨hprogram, Program.wp_adequacy hwp⟩
+  exact ⟨hprogram, hprogram.doesNotUnmap, Program.wp_adequacy hwp⟩
 
 /-- Bundled-memory public allocation adequacy, suitable for Box and Vec
 composition. It preserves the exact source-shaped trace witness in addition to
@@ -19528,6 +19621,7 @@ theorem allocateArrays_successfulProgram_safe_of_encoded_metadata
         headsBase countBase offsetsBase isFreeBase sizesBase nextBase
         previousBase prevFreeBase offsets sizes isFree prevFree second first
         heads next previous count request result program ∧
+      program.DoesNotUnmap ∧
       Program.Safe program mem ∧
       ∀ final, Program.Exec program mem final →
         EncodesAllocateArraysResult offsetsBase sizesBase isFreeBase prevFreeBase
@@ -19544,7 +19638,7 @@ theorem allocateArrays_successfulProgram_safe_of_encoded_metadata
       hmem.secondEncoded hmem.firstEncoded hmem.headsEncoded hmem.nextEncoded
       hmem.previousEncoded hmem.offsetsEncoded hmem.sizesEncoded hmem.freeEncoded
       hmem.prevEncoded hmem.countEncoded
-  exact ⟨program, hprogram, Program.wp_adequacy hwp⟩
+  exact ⟨program, hprogram, hprogram.doesNotUnmap, Program.wp_adequacy hwp⟩
 
 end AllocateComposition
 

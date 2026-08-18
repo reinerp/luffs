@@ -97,7 +97,10 @@ The Luffs Vec growth loop has checked addresses and an exact generated
 allocation/copy/deallocation model, now composed with abstract `Vec.grow`, its
 Iris ownership update, and an operational byte-copy trace. Remaining work
 includes generic lowering, weakest-precondition integration, borrowing syntax,
-and the allocator's O(1) link-update refinement. See
+and clean-checkout end-to-end gates. The allocator's public two-level O(1)
+candidate-removal path is already refined through its intrusive link and
+bitmap updates; a separate legacy flat-bin fallback remains only as frontend
+coverage, not as the allocator path used by `Box` or `Vec`. See
 [`VERIFICATION.md`](VERIFICATION.md) for the precise proof boundary and
 completion criteria.
 

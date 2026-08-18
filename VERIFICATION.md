@@ -453,9 +453,11 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   also proved complete: for a valid pool smaller than the supported TLSF size
   range, returning the exact live region cannot fail at classification,
   arbitrary unlink, or either conditional coalescing step. The O(1)
-  predecessor/successor link-update refinement and the rest of the Luffs
-  lowering remain. The first concrete deallocation stage is now lowered from
-  Luffs: before mutation it rejects out-of-range headers, double-free, and any
+  predecessor/successor link-update refinement described here is completed by
+  the later two-level candidate and arbitrary-class removal theorems; the rest
+  of the Luffs lowering remains. The first concrete deallocation stage is now
+  lowered from Luffs: before mutation it rejects out-of-range headers,
+  double-free, and any
   returned `(offset, bytes)` pair that differs from the authoritative physical
   header. It then marks the selected allocation free and updates the
   successor's `prev_free` boundary tag. Its generated Lean semantics is
@@ -752,7 +754,9 @@ size satisfies the request; conversely, any such entry proves lookup cannot
 fail. The compiler now recognizes the corresponding Luffs loop, generates its
 typed recursive Lean semantics, and checks equality to `findFit`; changes to
 the loop's guards, access order, suitability test, or increment invalidate this
-refinement. Eventual replacement by the two-level O(1) bitmap path remains.
+refinement. This flat fallback remains as language/frontend coverage; the
+public allocator and its Box/Vec clients use the separately verified two-level
+O(1) bitmap path above.
 The four-word bitmap path now has a flat little-endian bit semantics as well.
 Its reference search is proved sound, complete, and minimal from `start_bin`;
 for at most four words every success is below 256. Refinement of the Luffs
@@ -1279,6 +1283,13 @@ concurrency are later extensions and are not prerequisites for `Box` and
   precisely the abstract successor's `OwnsFree`; the operational WP and the
   allocator API law therefore share one public-execution witness rather than
   relying on separately associated reference transitions.
+  Applying `Program.wp_adequacy` at this same public boundary now yields an
+  explicit `Program.Safe` witness: the selected complete deallocation program
+  has a terminating execution, and every possible execution ends with exactly
+  those ten returned metadata encodings. This closes non-stuck adequacy for
+  successful public deallocation, while the unchecked semantic-layer item
+  still records the missing general translation of arbitrary nested control
+  flow.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

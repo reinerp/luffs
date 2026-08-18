@@ -231,6 +231,78 @@ fn is_mut_slice_reference(ty: &str) -> bool {
     ty.starts_with("&mut [") && ty.ends_with(']')
 }
 
+fn native_slice_type(call: &str, mutable: bool) -> Option<&str> {
+    let prefix = if mutable {
+        "native_slice_mut::<"
+    } else {
+        "native_slice::<"
+    };
+    call.trim()
+        .strip_prefix(prefix)?
+        .split_once('>')
+        .map(|(ty, _)| ty)
+}
+
+fn supported_native_scalar(ty: &str) -> bool {
+    matches!(
+        ty,
+        "u8" | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+    )
+}
+
+fn validate_native_slice_intrinsics(source: &str) -> Result<(), String> {
+    if source.contains("__luffs_native_slice") {
+        return Err("`__luffs_native_slice` is a reserved compiler symbol".to_owned());
+    }
+    for (index, line) in source.lines().enumerate() {
+        let trimmed = line.trim();
+        for mutable in [false, true] {
+            let marker = if mutable {
+                "native_slice_mut::<"
+            } else {
+                "native_slice::<"
+            };
+            if !trimmed.contains(marker) {
+                continue;
+            }
+            let call = trimmed
+                .strip_prefix("Some(")
+                .and_then(|rest| rest.strip_suffix(')'))
+                .ok_or_else(|| {
+                    format!(
+                        "line {}: native slice intrinsic is only allowed as the returned `Some` value",
+                        index + 1
+                    )
+                })?;
+            let ty = native_slice_type(call, mutable)
+                .ok_or_else(|| format!("line {}: malformed native slice intrinsic", index + 1))?;
+            if !supported_native_scalar(ty) {
+                return Err(format!(
+                    "line {}: `{ty}` is not a supported native scalar",
+                    index + 1
+                ));
+            }
+            if !call.ends_with(')') || !call.contains('[') || !call.contains("..<") {
+                return Err(format!(
+                    "line {}: native slice intrinsic requires a proved begin/end byte slice",
+                    index + 1
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn function_base_name(name: &str) -> &str {
     name.split_once('<').map_or(name, |(base, _)| base)
 }
@@ -309,9 +381,20 @@ fn run() -> Result<(), String> {
 }
 
 fn parse(source: &str) -> Result<Module, String> {
+    validate_native_slice_intrinsics(source)?;
     let mut rust = String::from(
         "#[cfg(not(target_pointer_width = \"64\"))]\ncompile_error!(\"Luffs currently supports only 64-bit Rust targets\");\n#[cfg(not(target_endian = \"little\"))]\ncompile_error!(\"Luffs scalar representations currently require a little-endian Rust target\");\n\n",
     );
+    if source.contains("native_slice::<") {
+        rust.push_str(
+            "#[inline]\nfn __luffs_native_slice<T>(bytes: &[u8]) -> &[T] {\n    let width = std::mem::size_of::<T>();\n    assert!(width != 0 && bytes.len() % width == 0);\n    assert!(bytes.as_ptr().align_offset(std::mem::align_of::<T>()) == 0);\n    // SAFETY: the checks above make the helper safe for the compiler's\n    // integer-only instantiations. Lean proves they are redundant at verified\n    // Vec call sites, plus native representation and borrow ownership.\n    unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<T>(), bytes.len() / width) }\n}\n\n",
+        );
+    }
+    if source.contains("native_slice_mut::<") {
+        rust.push_str(
+            "#[inline]\nfn __luffs_native_slice_mut<T>(bytes: &mut [u8]) -> &mut [T] {\n    let width = std::mem::size_of::<T>();\n    assert!(width != 0 && bytes.len() % width == 0);\n    assert!(bytes.as_ptr().align_offset(std::mem::align_of::<T>()) == 0);\n    // SAFETY: the checks above make the helper safe for the compiler's\n    // integer-only instantiations. Iris additionally proves this is the sole\n    // live capability for the returned mutable region.\n    unsafe { std::slice::from_raw_parts_mut(bytes.as_mut_ptr().cast::<T>(), bytes.len() / width) }\n}\n\n",
+        );
+    }
     let mut proofs = Vec::new();
     let mut accesses = Vec::new();
     let mut facts = Vec::new();
@@ -450,7 +533,10 @@ fn parse(source: &str) -> Result<Module, String> {
         // extraction. In Rust, however, an unsuffixed 255 is out of range when
         // the operand is `i8`; the direct cast has exactly the same low-eight-
         // bit semantics and is valid for every supported integer width.
-        let rewritten = rewritten.replace("(value & 255) as u8", "value as u8");
+        let rewritten = rewritten
+            .replace("(value & 255) as u8", "value as u8")
+            .replace("native_slice::<", "__luffs_native_slice::<")
+            .replace("native_slice_mut::<", "__luffs_native_slice_mut::<");
         for access in found {
             if access.proof.starts_with("__auto_") {
                 proofs.push(Proof {
@@ -910,6 +996,21 @@ fn read_result_expr(expr: &str, array: &str) -> String {
                     .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
         })
         .map_or(trimmed, |(expression, _)| expression.trim());
+    if trimmed.starts_with("native_slice::<") || trimmed.starts_with("native_slice_mut::<") {
+        let marker = format!("{array}[");
+        if let Some(start) = trimmed.find(&marker)
+            && let Some(close) = trimmed[start..].find(']')
+        {
+            let expression = model_expr(&trimmed[start..start + close + 1], array);
+            if let Some(subscript) = expression
+                .strip_prefix(&format!("{array}["))
+                .and_then(|rest| rest.strip_suffix(']'))
+                && let Some((begin, end)) = subscript.split_once("..<")
+            {
+                return format!("some (({array}.drop {begin}).take ({end} - {begin}))");
+            }
+        }
+    }
     if let Some((ty, bytes)) = trimmed.split_once("::from_le_bytes([")
         && let Some(bytes) = bytes.strip_suffix("])")
         && let Some(width) = scalar_width(ty)
@@ -1057,7 +1158,7 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
             let return_text = &trimmed[close + 1..];
             let result_type = if return_text.contains("-> Option<u8>") {
                 "Fin 256".to_owned()
-            } else if return_text.contains("-> Option<&") && return_text.contains("[u8]>") {
+            } else if return_text.contains("-> Option<&") && return_text.contains('[') {
                 "List (Fin 256)".to_owned()
             } else {
                 let scalar = return_text
@@ -4542,6 +4643,46 @@ mod tests {
         assert!(module.rust.contains(
             "#[cfg(not(target_endian = \"little\"))]\ncompile_error!(\"Luffs scalar representations currently require a little-endian Rust target\");"
         ));
+    }
+
+    #[test]
+    fn native_slice_intrinsic_has_byte_range_semantics() {
+        assert_eq!(
+            read_result_expr("native_slice::<u16>(storage[begin..<end])", "storage"),
+            "some ((storage.drop begin).take (end_ - begin))"
+        );
+        let module = parse(
+            "fn slice<'a>(storage: &'a [u8], begin: usize, end: usize) -> Option<&'a [u16]> {\nif begin > end { return None; }\nSome(native_slice::<u16>(storage[begin..<end]))\n}",
+        )
+        .unwrap();
+        assert_eq!(module.read_models.len(), 1);
+        assert_eq!(
+            module.read_models[0].result,
+            "some ((storage.drop begin).take (end_ - begin))"
+        );
+        assert!(module.rust.contains("__luffs_native_slice::<u16>"));
+        assert!(module.rust.contains("bytes.len() % width == 0"));
+        assert!(
+            module
+                .rust
+                .contains("align_offset(std::mem::align_of::<T>()) == 0")
+        );
+        assert!(!module.rust.contains("Some(native_slice::<u16>"));
+    }
+
+    #[test]
+    fn native_slice_intrinsic_rejects_non_scalar_and_reserved_calls() {
+        let unsupported = parse(
+            "fn slice<'a>(storage: &'a [u8]) -> Option<&'a [bool]> {\nSome(native_slice::<bool>(storage[0..<storage.len()]))\n}",
+        )
+        .unwrap_err();
+        assert!(unsupported.contains("`bool` is not a supported native scalar"));
+
+        let reserved = parse(
+            "fn slice<'a>(storage: &'a [u8]) -> Option<&'a [u16]> {\nSome(__luffs_native_slice::<u16>(storage))\n}",
+        )
+        .unwrap_err();
+        assert!(reserved.contains("reserved compiler symbol"));
     }
 
     #[test]

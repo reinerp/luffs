@@ -650,11 +650,12 @@ fn vec_slice_mut_bytes<'a>(storage: &'a mut [u8], offset: usize, len: usize, beg
     Some(storage[start..<finish] by vec_slice_mut_bytes_bounds)
 }
 
-// A u16 vector is represented by its proved little-endian byte encoding.  The
-// returned borrow therefore remains a byte slice; no native-alignment or
-// representation assumption is hidden in this operation.
+// Native typed slicing is a compiler intrinsic. Its Lean model remains the
+// exact object-byte range; vecSlice_native_mut_owns proves alignment, native
+// representation, length, and exclusive ownership before this is used as a
+// Rust reference.
 // refines Luffs.Runtime.Containers.vecSliceU16Bytes
-fn vec_slice_u16_bytes<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [u8]> {
+fn vec_slice_u16<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [u16]> {
     if begin > end { return None; }
     if end > len { return None; }
     if end > usize::MAX / 2 { return None; }
@@ -664,11 +665,11 @@ fn vec_slice_u16_bytes<'a>(storage: &'a [u8], offset: usize, len: usize, begin: 
     let start: usize = offset + byte_begin;
     let finish: usize = offset + byte_end;
     if finish > storage.len() { return None; }
-    Some(storage[start..<finish])
+    Some(native_slice::<u16>(storage[start..<finish]))
 }
 
 // refines Luffs.Runtime.Containers.vecSliceU16Bytes
-fn vec_slice_mut_u16_bytes<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [u8]> {
+fn vec_slice_mut_u16<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [u16]> {
     if begin > end { return None; }
     if end > len { return None; }
     if end > usize::MAX / 2 { return None; }
@@ -678,7 +679,7 @@ fn vec_slice_mut_u16_bytes<'a>(storage: &'a mut [u8], offset: usize, len: usize,
     let start: usize = offset + byte_begin;
     let finish: usize = offset + byte_end;
     if finish > storage.len() { return None; }
-    Some(storage[start..<finish])
+    Some(native_slice_mut::<u16>(storage[start..<finish]))
 }
 
 // refines Luffs.Runtime.Containers.vecCopyGrowU8

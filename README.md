@@ -16,6 +16,15 @@ facts, inline Lean proofs, shared/mutable slices, fixed arrays, and two slice fo
 Mutability is inferred from `&mut [T]`, as in Rust. Ordinary accesses use
 `omega` automatically; `by name` selects an explicitly declared proof.
 
+Integer storage can be exposed as a native typed slice with
+`native_slice::<T>(bytes[begin..<end])` or its mutable counterpart
+`native_slice_mut::<T>(...)`. These are compiler-reserved intrinsics, not
+general Rust casts: their Lean semantics is the exact object-byte range, and
+container proofs establish alignment, element count, native representation,
+and borrow ownership. Generated helpers retain alignment and divisibility
+checks as a safe fallback; those checks are proved redundant for TLSF-backed
+Vec slices.
+
 General structs/enums and general return types are intentionally rejected.
 SIMD operations will be admitted individually, each with a Lean model, as the
 zch decoder needs them.

@@ -548,6 +548,7 @@ fn parse(source: &str) -> Result<Module, String> {
         || module.tlsf_take_candidate_class_models.is_empty()
         || module.tlsf_allocate_physical_models.is_empty()
         || module.tlsf_classify_size_models.is_empty()
+        || module.tlsf_insert_class_models.is_empty()
     {
         module.tlsf_allocate_models.clear();
     }
@@ -4039,11 +4040,11 @@ rfl\n\n",
     }
     for model in &module.tlsf_allocate_models {
         out.push_str(&format!(
-            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (request : Nat) : Option Luffs.Runtime.TLSF.AllocateArraysResult := do\n  if request = 0 ∨ request % Luffs.Allocator.TLSF.alignment ≠ 0 then none\n  let start_bin ← tlsf_classify_request_model request\n  let found_bin ← tlsf_find_nonempty_class_model second first\n    (start_bin / Luffs.Allocator.TLSF.secondLevelCount) (start_bin % Luffs.Allocator.TLSF.secondLevelCount)\n  if found_bin ≥ heads.length then none\n  let selected_offset ← heads[found_bin]?\n  if selected_offset ≥ next.length ∨ selected_offset ≥ previous.length ∨\n      count = 0 ∨ count > offsets.length ∨ count > sizes.length ∨\n      count > is_free.length ∨ count > prev_free.length then none\n  let block ← Luffs.Runtime.TLSF.findOffsetIndex offsets count selected_offset\n  let selected_size ← sizes[block]?\n  if is_free[block]? = some 0 ∨ selected_size < request then none\n  let remainder_size := selected_size - request\n  let split := Luffs.Allocator.TLSF.minimumBlockBytes ≤ remainder_size\n  let remainder_offset := selected_offset + request\n  if split ∧ (count ≥ offsets.length ∨ count ≥ sizes.length ∨\n      count ≥ is_free.length ∨ count ≥ prev_free.length) then none\n  if split ∧ (remainder_offset ≥ 2 ^ 64 ∨ remainder_offset ≥ next.length ∨\n      remainder_offset ≥ previous.length) then none\n  let remainder_bin ← if split then tlsf_classify_size_model remainder_size else some 0\n  if split ∧ (remainder_bin ≥ heads.length ∨\n      remainder_bin / Luffs.Allocator.TLSF.secondLevelCount ≥ second.length) then none\n  let removed ← tlsf_take_candidate_class_model second first heads next previous\n    (start_bin / Luffs.Allocator.TLSF.secondLevelCount) (start_bin % Luffs.Allocator.TLSF.secondLevelCount)\n  let physical ← tlsf_allocate_physical_model offsets sizes is_free prev_free count block request\n  Luffs.Runtime.TLSF.finishAllocateArrays removed physical split remainder_bin remainder_offset\n\n",
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (request : Nat) : Option Luffs.Runtime.TLSF.AllocateArraysResult := do\n  if request = 0 ∨ request % Luffs.Allocator.TLSF.alignment ≠ 0 then none\n  let start_bin ← tlsf_classify_request_model request\n  let found_bin ← tlsf_find_nonempty_class_model second first\n    (start_bin / Luffs.Allocator.TLSF.secondLevelCount) (start_bin % Luffs.Allocator.TLSF.secondLevelCount)\n  if found_bin ≥ heads.length then none\n  let selected_offset ← heads[found_bin]?\n  if selected_offset ≥ next.length ∨ selected_offset ≥ previous.length ∨\n      count = 0 ∨ count > offsets.length ∨ count > sizes.length ∨\n      count > is_free.length ∨ count > prev_free.length then none\n  let block ← Luffs.Runtime.TLSF.findOffsetIndex offsets count selected_offset\n  let selected_size ← sizes[block]?\n  if is_free[block]? = some 0 ∨ selected_size < request then none\n  let remainder_size := selected_size - request\n  let split := Luffs.Allocator.TLSF.minimumBlockBytes ≤ remainder_size\n  let remainder_offset := selected_offset + request\n  if split ∧ (count ≥ offsets.length ∨ count ≥ sizes.length ∨\n      count ≥ is_free.length ∨ count ≥ prev_free.length) then none\n  if split ∧ (remainder_offset ≥ 2 ^ 64 ∨ remainder_offset ≥ next.length ∨\n      remainder_offset ≥ previous.length) then none\n  let remainder_bin ← if split then tlsf_classify_size_model remainder_size else some 0\n  if split ∧ (remainder_bin ≥ heads.length ∨\n      remainder_bin / Luffs.Allocator.TLSF.secondLevelCount ≥ second.length) then none\n  let removed ← tlsf_take_candidate_class_model second first heads next previous\n    (start_bin / Luffs.Allocator.TLSF.secondLevelCount) (start_bin % Luffs.Allocator.TLSF.secondLevelCount)\n  let physical ← tlsf_allocate_physical_model offsets sizes is_free prev_free count block request\n  if split then\n    let inserted ← tlsf_insert_class_model removed.second removed.first removed.heads\n      removed.next removed.previous remainder_bin remainder_offset\n    some ⟨physical.offsets, physical.sizes, physical.isFree, physical.prevFree,\n      physical.count, inserted.second, inserted.first, inserted.heads, inserted.next,\n      inserted.previous, physical.allocatedOffset, physical.allocatedBytes⟩\n  else\n    some ⟨physical.offsets, physical.sizes, physical.isFree, physical.prevFree,\n      physical.count, removed.second, removed.first, removed.heads, removed.next,\n      removed.previous, physical.allocatedOffset, physical.allocatedBytes⟩\n\n",
             model.name
         ));
         out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by\n  unfold {}_model tlsf_find_nonempty_class_model\n  rw [tlsf_classify_request_refines, tlsf_classify_size_refines, tlsf_take_candidate_class_refines, tlsf_allocate_physical_refines]\n  rfl\n\n",
+            "theorem {}_refines : {}_model = {} := by\n  unfold {}_model tlsf_find_nonempty_class_model\n  rw [tlsf_classify_request_refines, tlsf_classify_size_refines, tlsf_take_candidate_class_refines, tlsf_allocate_physical_refines, tlsf_insert_class_refines]\n  rfl\n\n",
             model.name, model.name, model.refines, model.name
         ));
     }
@@ -4609,6 +4610,12 @@ mod tests {
         ));
         assert!(generated.contains(
             "theorem tlsf_allocate_refines : tlsf_allocate_model = Luffs.Runtime.TLSF.allocateArrays"
+        ));
+        assert!(generated.contains(
+            "let inserted ← tlsf_insert_class_model removed.second removed.first removed.heads"
+        ));
+        assert!(!generated.contains(
+            "Luffs.Runtime.TLSF.finishAllocateArrays removed physical split remainder_bin remainder_offset"
         ));
         assert!(generated.contains(
             "theorem tlsf_pointer_to_offset_refines : tlsf_pointer_to_offset_model = Luffs.Runtime.TLSF.pointerToOffset"
@@ -5251,6 +5258,20 @@ mod tests {
         let m = parse(&source).unwrap();
         assert!(m.tlsf_take_candidate_class_models.is_empty());
         assert!(m.tlsf_allocate_models.is_empty());
+    }
+
+    #[test]
+    fn tlsf_allocation_requires_verified_remainder_insertion() {
+        let source = include_str!("../stdlib/tlsf.luffs").replace(
+            "first_nonempty[0] = first_nonempty[0] | first_mask;",
+            "first_nonempty[0] = first_nonempty[0] & first_mask;",
+        );
+        let m = parse(&source).unwrap();
+        assert!(m.tlsf_insert_class_models.is_empty());
+        assert!(m.tlsf_allocate_models.is_empty());
+        assert!(m.tlsf_box_new_models.is_empty());
+        assert!(m.tlsf_vec_new_models.is_empty());
+        assert!(m.tlsf_vec_grow_models.is_empty());
     }
 
     #[test]

@@ -826,7 +826,10 @@ concurrency are later extensions and are not prerequisites for `Box` and
   Public allocation is source-generated as a transaction as well: request
   classification, two-level nonempty-class lookup, selected-offset validation,
   physical-header lookup, split preflight, candidate detachment, physical
-  allocation, and optional remainder finishing are sequenced explicitly.
+  allocation, optional generated class insertion for a split remainder, and
+  final result assembly are sequenced explicitly. The public model no longer
+  calls the handwritten `finishAllocateArrays` helper, and allocation
+  recognition now depends on verified class insertion as well.
   Generated Box/Vec construction and growth consume this model, and dependency
   closure prevents their recognition if any required allocation stage is
   absent.

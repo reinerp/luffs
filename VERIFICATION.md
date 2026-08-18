@@ -803,9 +803,11 @@ concurrency are later extensions and are not prerequisites for `Box` and
   compaction, reclassifies the merged size, and inserts the merged node. Shape
   recognition is dependency-closed, so invalidating any lower stage also
   invalidates conditional/public deallocation and every dependent Box/Vec drop
-  or growth model instead of leaving a dangling generated theorem. The
-  recursive `coalescePhysicalArrays` compaction is the next source-generation
-  boundary.
+  or growth model instead of leaving a dangling generated theorem. Physical
+  coalescing now emits its capacity/free/adjacency checks, merged-size update,
+  four fixed-array compactions, and count decrement directly. The shared
+  `compactActive` primitive used to summarize each source loop is the next
+  source-generation boundary.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

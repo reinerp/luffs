@@ -3930,12 +3930,12 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
     }
     for model in &module.tlsf_coalesce_physical_models {
         out.push_str(&format!(
-            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count left : Nat) : Option Luffs.Runtime.TLSF.CoalescePhysicalResult :=\n  {} offsets sizes is_free prev_free count left\n\n",
-            model.name, model.refines
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count left : Nat) : Option Luffs.Runtime.TLSF.CoalescePhysicalResult :=\n  if count ≤ offsets.length ∧ count ≤ sizes.length ∧ count ≤ is_free.length ∧ count ≤ prev_free.length then\n    let right := left + 1\n    if right ≥ count then none\n    else if is_free[left]? = some 0 then none\n    else if is_free[right]? = some 0 then none\n    else match offsets[left]?, sizes[left]?, offsets[right]?, sizes[right]? with\n      | some left_offset, some left_size, some right_offset, some right_size =>\n          if left_offset + left_size != right_offset then none\n          else\n            let sizes := sizes.set left (left_size + right_size)\n            some {{\n              offsets := Luffs.Runtime.TLSF.compactActive offsets count right\n              sizes := Luffs.Runtime.TLSF.compactActive sizes count right\n              isFree := Luffs.Runtime.TLSF.compactActive is_free count right\n              prevFree := Luffs.Runtime.TLSF.compactActive prev_free count right\n              count := count - 1 }}\n      | _, _, _, _ => none\n  else none\n\n",
+            model.name
         ));
         out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
-            model.name, model.name, model.refines
+            "theorem {}_refines : {}_model = {} := by\n  unfold {}_model {}\n  rfl\n\n",
+            model.name, model.name, model.refines, model.name, model.refines
         ));
     }
     for model in &module.tlsf_coalesce_class_models {
@@ -4736,6 +4736,13 @@ mod tests {
         ));
         assert!(generated.contains(
             "theorem tlsf_coalesce_physical_refines : tlsf_coalesce_physical_model = Luffs.Runtime.TLSF.coalescePhysicalArrays"
+        ));
+        assert!(generated.contains("let sizes := sizes.set left (left_size + right_size)"));
+        assert!(
+            generated.contains("offsets := Luffs.Runtime.TLSF.compactActive offsets count right")
+        );
+        assert!(!generated.contains(
+            "Option Luffs.Runtime.TLSF.CoalescePhysicalResult :=\n  Luffs.Runtime.TLSF.coalescePhysicalArrays"
         ));
         assert!(generated.contains(
             "theorem tlsf_coalesce_class_refines : tlsf_coalesce_class_model = Luffs.Runtime.TLSF.coalesceClassArrays"

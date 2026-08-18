@@ -1055,6 +1055,13 @@ concurrency are later extensions and are not prerequisites for `Box` and
   its Iris weakest-precondition proof establishes exact ordered execution and
   no-stuckness for the composed program rather than treating the two verified
   stages as an atomic helper.
+  The composed no-split theorem now also reaches the pure state semantics: its
+  final memory simultaneously encodes the `removeClassArrays` result and the
+  whole-block `allocatePhysicalArrays` result. Intermediate mapping facts and
+  both physical flag arrays are derived from the actual unlink execution, and
+  all five updated class representations are framed through the subsequent
+  physical stores. Thus this allocator branch has a single end-to-end Iris WP,
+  not merely separate stage proofs with an unproved handoff.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

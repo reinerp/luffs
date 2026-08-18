@@ -6911,6 +6911,60 @@ theorem coalescePhysicalArrays_result {offsets sizes : List Nat}
                       hrightFree, leftOffset, leftSize, rightSize,
                       rfl, rfl, by simpa [hoffset], rfl⟩
 
+/-- A successful pure physical coalescing result is exactly the four fixed
+arrays produced by the merged-size update followed by forward compaction.
+This exposes the preflight capacity facts needed by the operational proof. -/
+theorem coalescePhysicalArrays_success_eq {offsets sizes : List Nat}
+    {isFree prevFree : List (Fin 256)} {count left : Nat}
+    {result : CoalescePhysicalResult}
+    (hsuccess : coalescePhysicalArrays offsets sizes isFree prevFree count left =
+      some result) :
+    ∃ leftSize rightSize,
+      count ≤ offsets.length ∧ count ≤ sizes.length ∧
+      count ≤ isFree.length ∧ count ≤ prevFree.length ∧
+      left + 1 < count ∧
+      sizes[left]? = some leftSize ∧ sizes[left + 1]? = some rightSize ∧
+      result = {
+        offsets := compactActive offsets count (left + 1)
+        sizes := compactActive (sizes.set left (leftSize + rightSize)) count
+          (left + 1)
+        isFree := compactActive isFree count (left + 1)
+        prevFree := compactActive prevFree count (left + 1)
+        count := count - 1 } := by
+  unfold coalescePhysicalArrays at hsuccess
+  split at hsuccess <;> try contradiction
+  next hcapacity =>
+    dsimp only at hsuccess
+    split at hsuccess <;> try contradiction
+    next hright =>
+      split at hsuccess <;> try contradiction
+      next _ =>
+        split at hsuccess <;> try contradiction
+        next _ =>
+          cases hleftOffset : offsets[left]? with
+          | none => simp [hleftOffset] at hsuccess
+          | some leftOffset =>
+            cases hleftSize : sizes[left]? with
+            | none => simp [hleftOffset, hleftSize] at hsuccess
+            | some leftSize =>
+              cases hrightOffset : offsets[left + 1]? with
+              | none => simp [hleftOffset, hleftSize, hrightOffset] at hsuccess
+              | some rightOffset =>
+                cases hrightSize : sizes[left + 1]? with
+                | none =>
+                    simp [hleftOffset, hleftSize, hrightOffset,
+                      hrightSize] at hsuccess
+                | some rightSize =>
+                  simp only [hleftOffset, hleftSize, hrightOffset,
+                    hrightSize, Option.getD_some] at hsuccess
+                  split at hsuccess <;> try contradiction
+                  next _ =>
+                    simp only [Option.some.injEq] at hsuccess
+                    subst result
+                    exact ⟨leftSize, rightSize, hcapacity.1,
+                      hcapacity.2.1, hcapacity.2.2.1, hcapacity.2.2.2,
+                      Nat.lt_of_not_ge hright, hleftSize, hrightSize, rfl⟩
+
 /-- The checked physical compaction has no post-preflight failure edge. -/
 theorem coalescePhysicalArrays_ne_none_of_preflight
     {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
@@ -23755,6 +23809,65 @@ theorem coalescePhysicalWrites_encodes
     map_compactActive] using
     And.intro hoffsetsFinal (And.intro hsizesFinal
       (And.intro hfreeFinal hprevFinal))
+
+/-- A successful pure physical coalescing step selects the actual
+source-ordered mutation program, whose closed WP encodes exactly the returned
+fixed-array state. -/
+theorem coalescePhysicalArrays_successfulProgram_wp {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (count left : Nat) (result : CoalescePhysicalResult) (mem : Memory)
+    (hsuccess : coalescePhysicalArrays offsets sizes isFree prevFree count left =
+      some result)
+    (layout : AllocateProgram.SplitMetadataDisjoint offsetsBase sizesBase
+      isFreeBase prevFreeBase countBase offsets.length sizes.length isFree.length
+      prevFree.length)
+    (hoffsetsMapped : ∀ index, index < offsets.length → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizesMapped : ∀ index, index < sizes.length → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hfreeMapped : ∀ index, index < isFree.length →
+      mem.mapped (isFreeBase + index))
+    (hprevMapped : ∀ index, index < prevFree.length →
+      mem.mapped (prevFreeBase + index))
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree)) :
+    ∃ leftSize rightSize program,
+      sizes[left]? = some leftSize ∧ sizes[left + 1]? = some rightSize ∧
+      program = coalescePhysicalProgram offsetsBase sizesBase isFreeBase
+        prevFreeBase offsets sizes isFree prevFree count left
+        (leftSize + rightSize) ∧
+      (⊢@{IProp GF} Program.wp program mem (fun final =>
+        final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+            (InitializeProgram.encodeNats result.offsets) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+            (InitializeProgram.encodeNats result.sizes) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+            (AllocateProgram.encodeFlags result.isFree) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+            (AllocateProgram.encodeFlags result.prevFree))) := by
+  obtain ⟨leftSize, rightSize, hcountOffsets, hcountSizes, hcountFree,
+      hcountPrev, hright, hleftSize, hrightSize, hresult⟩ :=
+    coalescePhysicalArrays_success_eq hsuccess
+  subst result
+  refine ⟨leftSize, rightSize, _, hleftSize, hrightSize, rfl, ?_⟩
+  apply Program.wp_mono
+    (coalescePhysicalProgram_wp_exact_mapped (GF := GF) offsetsBase sizesBase
+      isFreeBase prevFreeBase offsets sizes isFree prevFree count left
+      (leftSize + rightSize) mem hcountOffsets hcountSizes hcountFree hcountPrev
+      hright hoffsetsMapped hsizesMapped hfreeMapped hprevMapped)
+  intro final hfinal
+  subst final
+  exact coalescePhysicalWrites_encodes offsetsBase sizesBase isFreeBase
+    prevFreeBase countBase offsets sizes isFree prevFree count left
+    (leftSize + rightSize) mem hright hcountOffsets hcountSizes hcountFree
+    hcountPrev layout hoffsets hsizes hfree hprev
 
 end DeallocateProgram
 

@@ -1223,8 +1223,11 @@ concurrency are later extensions and are not prerequisites for `Box` and
   now also prepends and decodes the merged-size store: the complete physical
   mutation preserves the offsets and flag arrays through that store, updates
   exactly the selected size, and then establishes all four final compacted
-  encodings. It remains to identify this joint byte-level result with
-  `coalescePhysicalArrays`, then compose the surrounding class-index updates.
+  encodings. Successful `coalescePhysicalArrays` execution is now connected
+  directly to that trace as well: its ordinary result recovers the two merged
+  sizes and all capacity facts, selects the source-ordered program, and obtains
+  a closed Iris WP encoding exactly the four returned arrays. It remains to
+  compose the surrounding class-index removals and merged-block insertion.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

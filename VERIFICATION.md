@@ -1103,6 +1103,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   it cannot be replaced by an unrelated trivially safe program. The closed
   Iris WP terminates with one canonical postcondition decoding all ten metadata
   fields to the public `AllocateArraysResult`, identically for both branches.
+  Operational coverage has begun moving backward through the successful
+  preflight reads as well. The exact two-level class-search load profile always
+  reads the starting second-level word and, only on fallback, reads the
+  first-level word plus the selected later second-level word. Its closed WP
+  proves every byte mapped from the successful search result and leaves memory
+  unchanged for composition with the mutation suffix.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

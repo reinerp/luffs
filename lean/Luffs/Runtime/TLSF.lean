@@ -16345,6 +16345,57 @@ theorem allocateArrays_successfulMutation_wp {GF : BundledGFunctors}
         hclass.1, hclass.2.1, hclass.2.2.1, hclass.2.2.2.1,
         hclass.2.2.2.2⟩
 
+/-- Exact successful load profile of the two-level class search: the starting
+second-level word is always read; the fallback branch additionally reads the
+first-level word and the selected later second-level word. -/
+def findNonemptyClassReadProgram (secondBase firstBase startFl startSl found : Nat)
+    (second : List (BitVec 32)) : Program :=
+  (Program.readBytes (secondBase + startFl * 4) 4).then
+    (if second[startFl]?.getD 0 &&& maskFrom32 startSl ≠ 0 then .done
+     else
+       (Program.readBytes firstBase 8).then
+         (Program.readBytes (secondBase + (found / 32) * 4) 4))
+
+theorem findNonemptyClassReadProgram_wp {GF : BundledGFunctors}
+    (secondBase firstBase startFl startSl found : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64) (mem : Memory)
+    (hfind : findNonemptyClassLowered second first startFl startSl = some found)
+    (hsecondMapped : ∀ index, index < second.length → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i)) :
+    ⊢@{IProp GF} Program.wp
+      (findNonemptyClassReadProgram secondBase firstBase startFl startSl found
+        second) mem (fun final => final = mem) := by
+  have hsound := findNonemptyClassLowered_sound hfind
+  have hstart : startFl < second.length := by
+    omega
+  have hfound : found / 32 < second.length := by
+    rw [Nat.div_lt_iff_lt_mul (by decide : 0 < 32)]
+    simpa [Nat.mul_comm] using hsound.2.1
+  unfold findNonemptyClassReadProgram
+  apply Program.wp_then
+    (Program.readBytes_wp (secondBase + startFl * 4) 4 mem (by
+      intro i hi
+      simpa [Nat.add_assoc] using hsecondMapped startFl hstart i hi))
+  intro middle hmiddle
+  subst middle
+  change ⊢@{IProp GF} Program.wp
+    (if second[startFl]?.getD 0 &&& maskFrom32 startSl ≠ 0 then .done
+     else (Program.readBytes firstBase 8).then
+       (Program.readBytes (secondBase + (found / 32) * 4) 4)) mem
+    (fun final => final = mem)
+  by_cases hsame : second[startFl]?.getD 0 &&& maskFrom32 startSl ≠ 0
+  · rw [if_pos hsame]
+    exact Program.wp_done mem _ rfl
+  · rw [if_neg hsame]
+    apply Program.wp_then
+      (Program.readBytes_wp firstBase 8 mem hfirstMapped)
+    intro middle hmiddle
+    subst middle
+    exact Program.readBytes_wp (secondBase + (found / 32) * 4) 4 mem (by
+      intro i hi
+      simpa [Nat.add_assoc] using hsecondMapped (found / 32) hfound i hi)
+
 end AllocateComposition
 
 /-- Exact pure state transformer for `tlsf_initialize`. All fixed-capacity

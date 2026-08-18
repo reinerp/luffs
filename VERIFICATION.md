@@ -812,8 +812,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   spare tail. Thus no generated deallocation model calls the handwritten
   compaction primitive. Mark-free now also emits every identity check and its
   two ordered flag writes directly, including the conditional successor
-  boundary-tag update. Class-list insertion/removal remain the next direct
-  runtime-model boundaries on this path.
+  boundary-tag update. Class-list insertion and removal now compose the
+  generated intrusive-link operations with direct second- and first-level
+  bitmap updates. Removal preserves bitmap bits for a nonempty chain and
+  clears both levels exactly when detaching its last node. Their recognizers
+  depend on the corresponding lower link-operation recognizers, closing this
+  part of both allocation and deallocation dependency graphs.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

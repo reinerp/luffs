@@ -533,6 +533,12 @@ fn parse(source: &str) -> Result<Module, String> {
         tlsf_coalesce_if_possible_models: parse_tlsf_coalesce_if_possible_models(source),
         tlsf_deallocate_models: parse_tlsf_deallocate_models(source),
     };
+    if module.tlsf_insert_models.is_empty() {
+        module.tlsf_insert_class_models.clear();
+    }
+    if module.tlsf_remove_models.is_empty() {
+        module.tlsf_remove_class_models.clear();
+    }
     if module.tlsf_mark_free_models.is_empty()
         || module.tlsf_classify_size_models.is_empty()
         || module.tlsf_insert_class_models.is_empty()
@@ -3899,12 +3905,12 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
     }
     for model in &module.tlsf_insert_class_models {
         out.push_str(&format!(
-            "def {}_model (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (bin block : Nat) : Option Luffs.Runtime.TLSF.InsertClassResult :=\n  {} second first heads next previous bin block\n\n",
-            model.name, model.refines
+            "def {}_model (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (bin block : Nat) : Option Luffs.Runtime.TLSF.InsertClassResult := do\n  if bin ≥ heads.length then none else\n  let fl := bin / 32\n  let sl := bin % 32\n  if fl ≥ second.length then none\n  else if block ≥ next.length then none\n  else if block ≥ previous.length then none\n  else\n    let (next_heads, next_links, next_previous) ← tlsf_insert_model heads next previous bin block\n    let old_second := second[fl]?.getD 0\n    some {{\n      second := second.set fl (Luffs.Runtime.TLSF.setSecondBit old_second sl)\n      first := Luffs.Runtime.TLSF.setWordBit first fl\n      heads := next_heads\n      next := next_links\n      previous := next_previous }}\n\n",
+            model.name
         ));
         out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
-            model.name, model.name, model.refines
+            "theorem {}_refines : {}_model = {} := by\n  funext second first heads next previous bin block\n  simp [{}_model, {}, tlsf_insert_refines, Luffs.Runtime.TLSF.insertArrays] <;>\n  cases hmetadata : Luffs.Runtime.TLSF.insert {{ heads, next, previous }} bin block <;> simp [hmetadata]\n\n",
+            model.name, model.name, model.refines, model.name, model.refines
         ));
     }
     for model in &module.tlsf_deallocate_uncoalesced_models {
@@ -3919,12 +3925,12 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
     }
     for model in &module.tlsf_remove_class_models {
         out.push_str(&format!(
-            "def {}_model (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (bin block : Nat) : Option Luffs.Runtime.TLSF.RemoveClassResult :=\n  {} second first heads next previous bin block\n\n",
-            model.name, model.refines
+            "def {}_model (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (bin block : Nat) : Option Luffs.Runtime.TLSF.RemoveClassResult := do\n  if bin ≥ heads.length then none else\n  let fl := bin / 32\n  if fl ≥ second.length then none\n  else if block ≥ next.length then none\n  else if block ≥ previous.length then none\n  else\n    let successor := next[block]?.getD next.length\n    let predecessor := previous[block]?.getD next.length\n    let (next_heads, next_links, next_previous) ← tlsf_remove_model heads next previous bin block\n    if predecessor ≥ next.length ∧ successor ≥ next.length then\n      let next_second := Luffs.Runtime.TLSF.clearClassBit second bin\n      let next_first :=\n        if next_second[fl]?.getD 0 = 0 then Luffs.Runtime.TLSF.clearWordBit first fl\n        else first\n      some {{ second := next_second, first := next_first, heads := next_heads, next := next_links, previous := next_previous }}\n    else\n      some {{ second, first, heads := next_heads, next := next_links, previous := next_previous }}\n\n",
+            model.name
         ));
         out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
-            model.name, model.name, model.refines
+            "theorem {}_refines : {}_model = {} := by\n  funext second first heads next previous bin block\n  simp [{}_model, {}, tlsf_remove_refines, Luffs.Runtime.TLSF.removeArrays] <;>\n  cases hmetadata : Luffs.Runtime.TLSF.remove {{ heads, next, previous }} bin block <;> simp [hmetadata]\n\n",
+            model.name, model.name, model.refines, model.name, model.refines
         ));
     }
     if !module.tlsf_coalesce_physical_models.is_empty() {
@@ -4734,6 +4740,21 @@ mod tests {
         assert!(generated.contains("hsrc : ∀ i, i < len * 2 → mem.mapped (oldBase + i)"));
         assert!(generated.contains(
             "theorem tlsf_remove_class_refines : tlsf_remove_class_model = Luffs.Runtime.TLSF.removeClassArrays"
+        ));
+        assert!(generated.contains(
+            "let (next_heads, next_links, next_previous) ← tlsf_insert_model heads next previous bin block"
+        ));
+        assert!(generated.contains(
+            "let (next_heads, next_links, next_previous) ← tlsf_remove_model heads next previous bin block"
+        ));
+        assert!(generated.contains(
+            "if next_second[fl]?.getD 0 = 0 then Luffs.Runtime.TLSF.clearWordBit first fl"
+        ));
+        assert!(!generated.contains(
+            "Option Luffs.Runtime.TLSF.InsertClassResult :=\n  Luffs.Runtime.TLSF.insertClassArrays"
+        ));
+        assert!(!generated.contains(
+            "Option Luffs.Runtime.TLSF.RemoveClassResult :=\n  Luffs.Runtime.TLSF.removeClassArrays"
         ));
         assert!(generated.contains(
             "theorem tlsf_deallocate_uncoalesced_refines : tlsf_deallocate_uncoalesced_model = Luffs.Runtime.TLSF.deallocateUncoalescedArrays"

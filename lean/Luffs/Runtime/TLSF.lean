@@ -14111,6 +14111,187 @@ theorem insertClassProgram_wp_refines {GF : BundledGFunctors}
 
 end InsertProgram
 
+namespace AllocateComposition
+
+open Luffs.Memory
+
+/-- The physical-header fields touched while carving a selected TLSF block. -/
+inductive PhysicalField where
+  | offsets | sizes | isFree | prevFree | count
+  deriving DecidableEq
+
+/-- The segregated-class fields touched while unlinking or inserting a block. -/
+inductive ClassField where
+  | second | first | heads | next | previous
+  deriving DecidableEq
+
+def physicalRegion (offsetsBase sizesBase isFreeBase prevFreeBase countBase
+    offsetsLength sizesLength isFreeLength prevFreeLength : Nat) :
+    PhysicalField → Region
+  | .offsets => ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase offsetsLength
+  | .sizes => ArrayRegion Luffs.Memory.Scalar.u64 sizesBase sizesLength
+  | .isFree => ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase isFreeLength
+  | .prevFree => ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase prevFreeLength
+  | .count => ValueRegion Luffs.Memory.Scalar.u64 countBase
+
+def classRegion (secondBase firstBase headsBase nextBase previousBase secondLength
+    headsLength nextLength previousLength : Nat) : ClassField → Region
+  | .second => ArrayRegion Luffs.Memory.Scalar.u32 secondBase secondLength
+  | .first => ValueRegion Luffs.Memory.Scalar.u64 firstBase
+  | .heads => ArrayRegion Luffs.Memory.Scalar.u64 headsBase headsLength
+  | .next => ArrayRegion Luffs.Memory.Scalar.u64 nextBase nextLength
+  | .previous => ArrayRegion Luffs.Memory.Scalar.u64 previousBase previousLength
+
+/-- Layout contract for one concrete allocator instance. The two existing
+transaction-local layouts prove non-aliasing within each half; `cross` proves
+that physical-header writes and segregated-class writes cannot interfere. -/
+structure MetadataLayout
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase offsetsLength sizesLength isFreeLength
+      prevFreeLength secondLength headsLength nextLength previousLength : Nat) :
+    Prop where
+  physical : AllocateProgram.SplitMetadataDisjoint offsetsBase sizesBase
+    isFreeBase prevFreeBase countBase offsetsLength sizesLength isFreeLength
+    prevFreeLength
+  classes : RemoveProgram.RemoveClassMetadataDisjoint secondBase firstBase
+    headsBase nextBase previousBase secondLength headsLength nextLength
+    previousLength
+  cross : ∀ physicalField classField,
+    (physicalRegion offsetsBase sizesBase isFreeBase prevFreeBase countBase
+      offsetsLength sizesLength isFreeLength prevFreeLength physicalField).disjoint
+    (classRegion secondBase firstBase headsBase nextBase previousBase secondLength
+      headsLength nextLength previousLength classField)
+
+theorem MetadataLayout.cross_symm
+    {offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase offsetsLength sizesLength isFreeLength
+      prevFreeLength secondLength headsLength nextLength previousLength : Nat}
+    (layout : MetadataLayout offsetsBase sizesBase isFreeBase prevFreeBase
+      countBase secondBase firstBase headsBase nextBase previousBase offsetsLength
+      sizesLength isFreeLength prevFreeLength secondLength headsLength nextLength
+      previousLength) (classField : ClassField) (physicalField : PhysicalField) :
+    (classRegion secondBase firstBase headsBase nextBase previousBase secondLength
+      headsLength nextLength previousLength classField).disjoint
+    (physicalRegion offsetsBase sizesBase isFreeBase prevFreeBase countBase
+      offsetsLength sizesLength isFreeLength prevFreeLength physicalField) := by
+  exact disjoint_symmetric.mp (layout.cross physicalField classField)
+
+/-- Unlinking a free-list node preserves every physical-header field. -/
+theorem removeClassWrites_disjoint_physical
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase offsetsLength sizesLength isFreeLength
+      prevFreeLength secondLength headsLength nextLength previousLength bin block
+      successor predecessor fl sl : Nat) (oldSecond : BitVec 32)
+    (oldFirst : BitVec 64)
+    (layout : MetadataLayout offsetsBase sizesBase isFreeBase prevFreeBase
+      countBase secondBase firstBase headsBase nextBase previousBase offsetsLength
+      sizesLength isFreeLength prevFreeLength secondLength headsLength nextLength
+      previousLength)
+    (hbin : bin < headsLength) (hblockNext : block < nextLength)
+    (hblockPrevious : block < previousLength) (hfl : fl < secondLength)
+    (field : PhysicalField) :
+    ∀ write, write ∈ RemoveProgram.removeClassWrites secondBase firstBase
+      headsBase nextBase previousBase headsLength nextLength previousLength bin
+      block successor predecessor fl sl oldSecond oldFirst →
+      write.region.disjoint
+        (physicalRegion offsetsBase sizesBase isFreeBase prevFreeBase countBase
+          offsetsLength sizesLength isFreeLength prevFreeLength field) := by
+  intro write hwrite
+  simp only [RemoveProgram.removeClassWrites, List.mem_append] at hwrite
+  rcases hwrite with hlinks | hbitmap
+  · exact RemoveProgram.removeWrites_disjoint_region headsBase nextBase previousBase
+      headsLength nextLength previousLength bin block successor predecessor _ hbin
+      hblockNext hblockPrevious (layout.cross_symm .heads field)
+      (layout.cross_symm .next field) (layout.cross_symm .previous field) write hlinks
+  · exact RemoveProgram.removeClassBitmapWrites_disjoint_region secondBase firstBase
+      nextLength predecessor successor fl sl secondLength oldSecond oldFirst _ hfl
+      (layout.cross_symm .second field) (layout.cross_symm .first field) write hbitmap
+
+/-- Marking a whole selected block allocated preserves every class-list field. -/
+theorem allocateWholeWrites_disjoint_class
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase offsetsLength sizesLength isFreeLength
+      prevFreeLength secondLength headsLength nextLength previousLength block count :
+      Nat)
+    (layout : MetadataLayout offsetsBase sizesBase isFreeBase prevFreeBase
+      countBase secondBase firstBase headsBase nextBase previousBase offsetsLength
+      sizesLength isFreeLength prevFreeLength secondLength headsLength nextLength
+      previousLength)
+    (hblock : block < isFreeLength) (hcount : count ≤ prevFreeLength)
+    (field : ClassField) :
+    ∀ write, write ∈ AllocateProgram.allocateWholeWrites isFreeBase prevFreeBase
+      block count →
+      write.region.disjoint
+        (classRegion secondBase firstBase headsBase nextBase previousBase
+          secondLength headsLength nextLength previousLength field) := by
+  intro write hwrite
+  simp [AllocateProgram.allocateWholeWrites] at hwrite
+  rcases hwrite with rfl | hwrite
+  · simpa [ElementWrite.region, InitializeProgram.u8Bytes_length, ValueRegion,
+      Luffs.Memory.Scalar.u8, physicalRegion, classRegion] using
+      ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8 hblock
+        (layout.cross .isFree field)
+  · rcases hwrite with ⟨hsuccessor, rfl⟩
+    have hbound : block + 1 < prevFreeLength := by omega
+    simpa [ElementWrite.region, InitializeProgram.u8Bytes_length, ValueRegion,
+      Luffs.Memory.Scalar.u8, physicalRegion, classRegion] using
+      ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8 hbound
+        (layout.cross .prevFree field)
+
+/-- The no-split allocator transaction: unlink the selected free block from its
+segregated class, then mark its physical header allocated. -/
+def allocateWholeFromClassProgram
+    (secondBase firstBase headsBase nextBase previousBase isFreeBase prevFreeBase
+      headsLength nextLength previousLength bin block successor predecessor fl sl
+      count : Nat) (oldSecond : BitVec 32) (oldFirst : BitVec 64) : Program :=
+  (RemoveProgram.removeClassProgram secondBase firstBase headsBase nextBase
+    previousBase headsLength nextLength previousLength bin block successor
+    predecessor fl sl oldSecond oldFirst).then
+  (AllocateProgram.allocateWholeProgram isFreeBase prevFreeBase block count)
+
+theorem allocateWholeFromClassProgram_wp_exact {GF : BundledGFunctors}
+    (secondBase firstBase headsBase nextBase previousBase isFreeBase prevFreeBase
+      headsLength nextLength previousLength bin block successor predecessor fl sl
+      count : Nat) (oldSecond : BitVec 32) (oldFirst : BitVec 64) (mem : Memory)
+    (hbin : bin < headsLength) (hblockNext : block < nextLength)
+    (hblockPrevious : block < previousLength)
+    (hheadsMapped : ∀ index, index < headsLength → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < nextLength → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previousLength → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hsecondMapped : ∀ i, i < 4 → mem.mapped (secondBase + fl * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hfreeMapped : mem.mapped (isFreeBase + block))
+    (hprevMapped : block + 1 < count →
+      mem.mapped (prevFreeBase + (block + 1))) :
+    ⊢@{IProp GF} Program.wp
+      (allocateWholeFromClassProgram secondBase firstBase headsBase nextBase
+        previousBase isFreeBase prevFreeBase headsLength nextLength previousLength
+        bin block successor predecessor fl sl count oldSecond oldFirst) mem
+      (fun final => final = ElementWrite.applyAll
+        (AllocateProgram.allocateWholeWrites isFreeBase prevFreeBase block count)
+        (ElementWrite.applyAll
+          (RemoveProgram.removeClassWrites secondBase firstBase headsBase nextBase
+            previousBase headsLength nextLength previousLength bin block successor
+            predecessor fl sl oldSecond oldFirst) mem)) := by
+  unfold allocateWholeFromClassProgram
+  apply Program.wp_then
+    (RemoveProgram.removeClassProgram_wp_exact secondBase firstBase headsBase
+      nextBase previousBase headsLength nextLength previousLength bin block
+      successor predecessor fl sl oldSecond oldFirst mem hbin hblockNext
+      hblockPrevious hheadsMapped hnextMapped hpreviousMapped hsecondMapped
+      hfirstMapped)
+  intro middle hmiddle
+  subst middle
+  apply AllocateProgram.allocateWholeProgram_wp_exact
+  · exact ElementWrite.applyAll_mapped _ _ hfreeMapped
+  · intro hsuccessor
+    exact ElementWrite.applyAll_mapped _ _ (hprevMapped hsuccessor)
+
+end AllocateComposition
+
 /-- Exact pure state transformer for `tlsf_initialize`. All fixed-capacity
 metadata is reset before the single mmap-backed free block is inserted. -/
 def initializeArrays (offsets sizes : List Nat)

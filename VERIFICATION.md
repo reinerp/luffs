@@ -1045,6 +1045,16 @@ concurrency are later extensions and are not prerequisites for `Box` and
   Five simultaneous representation decoders prove that the resulting memory
   encodes exactly `insertClassArrays`; split-remainder insertion no longer
   relies only on initialization's special all-zero seed transaction.
+  Allocation-stage composition now has an explicit typed metadata layout:
+  physical headers and class-list fields are finite enumerations with total
+  region interpretations, transaction-local disjointness contracts, and an
+  exhaustive cross-disjointness law. Lean proves that every class-removal
+  write frames every physical field and every whole-block physical write
+  frames every class field. The concrete no-split transaction directly
+  sequences intrusive class removal with the physical free-flag transition;
+  its Iris weakest-precondition proof establishes exact ordered execution and
+  no-stuckness for the composed program rather than treating the two verified
+  stages as an atomic helper.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

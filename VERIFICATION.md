@@ -1062,6 +1062,16 @@ concurrency are later extensions and are not prerequisites for `Box` and
   all five updated class representations are framed through the subsequent
   physical stores. Thus this allocator branch has a single end-to-end Iris WP,
   not merely separate stage proofs with an unproved handoff.
+  The split branch now has the analogous compositional foundation. Lean checks
+  every write of the descending physical-header expansion and its finishing
+  transaction against every class-list region, while remainder insertion is
+  proved disjoint from all five physical fields. Class nodes are correctly
+  keyed by byte offset and therefore use a distinct `classBlock` from the
+  `physicalBlock` header-array index. The composed removal-to-split WP refines
+  both pure transformers, preserves exact execution for the next stage, and
+  the insertion WP frames the complete split physical result. Fixed-capacity
+  preservation for all four physical arrays is proved from the successful
+  split branch rather than assumed.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

@@ -1263,6 +1263,33 @@ def vecNewArrays {α : Type} (codec : Codec α) (offsets sizes : List Nat)
     second first heads next previous
       (Luffs.Containers.Vec.allocationBytes codec capacity)
 
+/-- Direct semantics of the Rust-shaped constructor arithmetic. This model is
+what generated scalar constructors use before refinement to `vecNewArrays`. -/
+def vecNewRoundedArrays {α : Type} (codec : Codec α)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256)) (count : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (capacity : Nat) :
+    Option Luffs.Runtime.TLSF.AllocateArraysResult :=
+  if capacity = 0 ∨ capacity > Luffs.Runtime.TLSF.usizeMax / codec.size then none
+  else if capacity * codec.size > Luffs.Runtime.TLSF.usizeMax - 7 then none
+  else Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree prevFree count
+    second first heads next previous (roundUp8 (capacity * codec.size))
+
+theorem vecNewRoundedArrays_eq_generic {α : Type} (codec : Codec α) :
+    vecNewRoundedArrays codec = vecNewArrays codec := by
+  funext offsets sizes isFree prevFree count second first heads next previous capacity
+  unfold vecNewRoundedArrays vecNewArrays
+  by_cases hbad : capacity = 0 ∨
+      capacity > Luffs.Runtime.TLSF.usizeMax / codec.size
+  · simp [hbad]
+  · have hcapacity : 0 < capacity :=
+      Nat.pos_of_ne_zero (fun hzero => hbad (Or.inl hzero))
+    by_cases hround : capacity * codec.size >
+        Luffs.Runtime.TLSF.usizeMax - 7
+    · simp [hbad, hround]
+    · simp only [hbad, hround, ↓reduceIte]
+      rw [Luffs.Containers.Vec.roundUp8_eq_allocationBytes codec hcapacity]
+
 theorem vecNewArrays_result {α : Type} {codec : Codec α}
     {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
     {count : Nat} {second : List (BitVec 32)} {first : BitVec 64}

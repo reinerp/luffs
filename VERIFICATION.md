@@ -829,8 +829,14 @@ concurrency are later extensions and are not prerequisites for `Box` and
   multiplication, and signed/native-width constructors reuse the identical
   representation layout. Each generated model targets the corresponding
   `vecNewArrays` codec specialization, so `vecNewArrays_refines_vec` supplies
-  the empty exclusive typed Vec capability. A u128 mutation regression rejects
-  using an eight-byte element width.
+  the empty exclusive typed Vec capability. Generated semantics for every
+  unsigned width now independently contains the checked capacity/byte guards,
+  source-shaped `roundUp8`, and a call to the generated TLSF allocator model;
+  it no longer aliases the handwritten codec wrapper. Signed and native-width
+  source aliases compose with those generated unsigned models, retaining their
+  typed codec only at the refinement boundary. A u128 mutation regression
+  rejects using an eight-byte element width, and invalidating a width removes
+  its dependent signed alias.
   Exact-shape recognizers are now lexically bounded to the function they
   certify. A missing statement can no longer be accidentally satisfied by a
   matching line in a later TLSF or Vec function; a dedicated regression removes

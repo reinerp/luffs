@@ -3985,14 +3985,57 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
         }
     }
     for model in &module.tlsf_vec_new_models {
-        if model.name != "tlsf_vec_new_u8" {
+        let unsigned_codec = match model.name.as_str() {
+            "tlsf_vec_new_u16" => Some("Luffs.Memory.Scalar.u16"),
+            "tlsf_vec_new_u32" => Some("Luffs.Memory.Scalar.u32"),
+            "tlsf_vec_new_u64" => Some("Luffs.Memory.Scalar.u64"),
+            "tlsf_vec_new_u128" => Some("Luffs.Memory.Scalar.u128"),
+            _ => None,
+        };
+        if let Some(codec) = unsigned_codec {
             out.push_str(&format!(
-                "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (capacity : Nat) : Option Luffs.Runtime.TLSF.AllocateArraysResult :=\n  {} offsets sizes is_free prev_free count second first heads next previous capacity\n\n",
-                model.name, model.refines
+                "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (capacity : Nat) : Option Luffs.Runtime.TLSF.AllocateArraysResult :=\n  if capacity = 0 ∨ capacity > Luffs.Runtime.TLSF.usizeMax / {}.size then none\n  else if capacity * {}.size > Luffs.Runtime.TLSF.usizeMax - 7 then none\n  else tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous\n    (Luffs.Allocator.TLSF.roundUp8 (capacity * {}.size))\n\n",
+                model.name, codec, codec, codec
             ));
             out.push_str(&format!(
-                "theorem {}_refines : {}_model = {} := by rfl\n\n",
-                model.name, model.name, model.refines
+                "theorem {}_refines : {}_model = {} := by\n  unfold {}_model\n  rw [tlsf_allocate_refines]\n  change Luffs.Runtime.Containers.vecNewRoundedArrays {} = {}\n  unfold {}\n  exact Luffs.Runtime.Containers.vecNewRoundedArrays_eq_generic {}\n\n",
+                model.name,
+                model.name,
+                model.refines,
+                model.name,
+                codec,
+                model.refines,
+                model.refines,
+                codec
+            ));
+            continue;
+        }
+        let alias = match model.name.as_str() {
+            "tlsf_vec_new_i8" => Some(("tlsf_vec_new_u8", true)),
+            "tlsf_vec_new_i16" => Some(("tlsf_vec_new_u16", false)),
+            "tlsf_vec_new_i32" => Some(("tlsf_vec_new_u32", false)),
+            "tlsf_vec_new_i64" => Some(("tlsf_vec_new_u64", false)),
+            "tlsf_vec_new_i128" => Some(("tlsf_vec_new_u128", false)),
+            "tlsf_vec_new_usize" | "tlsf_vec_new_isize" => Some(("tlsf_vec_new_u64", false)),
+            _ => None,
+        };
+        if let Some((dependency, byte_width)) = alias {
+            out.push_str(&format!(
+                "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (capacity : Nat) : Option Luffs.Runtime.TLSF.AllocateArraysResult :=\n  {}_model offsets sizes is_free prev_free count second first heads next previous capacity\n\n",
+                model.name, dependency
+            ));
+            out.push_str(&format!(
+                "theorem {}_refines : {}_model = {} := by\n  unfold {}_model\n  rw [{}_refines]\n{}  rfl\n\n",
+                model.name,
+                model.name,
+                model.refines,
+                model.name,
+                dependency,
+                if byte_width {
+                    "  rw [Luffs.Runtime.Containers.vecNewU8Arrays_eq_generic]\n"
+                } else {
+                    ""
+                }
             ));
             continue;
         }
@@ -4463,6 +4506,18 @@ mod tests {
         assert!(generated.contains(
             "else tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous\n    (Luffs.Allocator.TLSF.roundUp8 capacity)"
         ));
+        assert!(
+            generated.contains(
+                "Luffs.Allocator.TLSF.roundUp8 (capacity * Luffs.Memory.Scalar.u32.size)"
+            )
+        );
+        assert!(generated.contains("def tlsf_vec_new_i32_model (offsets sizes : List Nat)"));
+        assert!(generated.contains(
+            "tlsf_vec_new_u32_model offsets sizes is_free prev_free count second first heads next previous capacity"
+        ));
+        assert!(!generated.contains(
+            "def tlsf_vec_new_u32_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (capacity : Nat) : Option Luffs.Runtime.TLSF.AllocateArraysResult :=\n  Luffs.Runtime.Containers.vecNewU32Arrays"
+        ));
         assert!(generated.contains(
             "theorem tlsf_vec_push_u8_refines : tlsf_vec_push_u8_model = Luffs.Runtime.Containers.vecPushU8Offset"
         ));
@@ -4745,6 +4800,12 @@ mod tests {
                 .tlsf_vec_new_models
                 .iter()
                 .any(|model| model.name == "tlsf_vec_new_u32")
+        );
+        assert!(
+            !module
+                .tlsf_vec_new_models
+                .iter()
+                .any(|model| model.name == "tlsf_vec_new_i32")
         );
     }
 

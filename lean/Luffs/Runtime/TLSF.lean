@@ -22792,6 +22792,123 @@ theorem deallocateUncoalescedInterleavedProgram_wp_refines_components
       (hpreviousMapped index hindex i hi))
     hsecond' hheads' hnext' hprevious' hoffsets' hsizes' hfree' hprev' hcount'
 
+def EncodesDeallocateMachineState
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (count : Nat) (state : DeallocateMachineState)
+    (mem : Memory) : Prop :=
+  mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase state.second ∧
+  mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase state.first ∧
+  mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+    (InitializeProgram.encodeNats state.heads) ∧
+  mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+    (InitializeProgram.encodeNats state.next) ∧
+  mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+    (InitializeProgram.encodeNats state.previous) ∧
+  mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+    (InitializeProgram.encodeNats offsets) ∧
+  mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+    (InitializeProgram.encodeNats sizes) ∧
+  mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+    (AllocateProgram.encodeFlags state.isFree) ∧
+  mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+    (AllocateProgram.encodeFlags state.prevFree) ∧
+  mem.EncodesAt Luffs.Memory.Scalar.u64 countBase (BitVec.ofNat 64 count)
+
+/-- The successful state-retaining public uncoalesced transformer selects an
+actual source-ordered mutation program whose closed WP encodes its complete
+result.  The classifier result is recovered from the public CFG rather than
+supplied as a proof-only argument. -/
+theorem deallocateUncoalescedArraysOutcome_successfulInterleavedProgram_wp
+    {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (count block returnedOffset
+      returnedBytes : Nat) (state : DeallocateMachineState) (mem : Memory)
+    (hsuccess : deallocateUncoalescedArraysOutcome offsets sizes isFree prevFree
+      second first heads next previous count block returnedOffset returnedBytes =
+        .success state)
+    (layout : AllocateComposition.MetadataLayout offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets.length sizes.length isFree.length prevFree.length second.length
+      heads.length next.length previous.length)
+    (hoffsetsMapped : ∀ index, index < offsets.length → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizesMapped : ∀ index, index < sizes.length → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hfreeMapped : ∀ index, index < isFree.length →
+      mem.mapped (isFreeBase + index))
+    (hprevMapped : ∀ index, index < prevFree.length →
+      mem.mapped (prevFreeBase + index))
+    (hsecondMapped : ∀ index, index < second.length → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheadsMapped : ∀ index, index < heads.length → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < next.length → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previous.length → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree))
+    (hcount : mem.EncodesAt Luffs.Memory.Scalar.u64 countBase
+      (BitVec.ofNat 64 count))
+    (hsecond : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hfirst : mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase first)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous)) :
+    ∃ bin program,
+      classifySizeBin returnedBytes = some bin ∧
+      program = deallocateUncoalescedInterleavedProgram offsetsBase sizesBase
+        isFreeBase prevFreeBase secondBase firstBase headsBase nextBase
+        previousBase block prevFree.length next.length previous.length bin
+        returnedOffset (bin / 32) (bin % 32) (heads[bin]?.getD 0)
+        (second[bin / 32]?.getD 0) first ∧
+      (⊢@{IProp GF} Program.wp program mem
+        (EncodesDeallocateMachineState offsetsBase sizesBase isFreeBase
+          prevFreeBase countBase secondBase firstBase headsBase nextBase
+          previousBase offsets sizes count state)) := by
+  obtain ⟨marked, bin, inserted, hmark, hclass, hinsert, hstate⟩ :=
+    deallocateUncoalescedArraysOutcome_success_result hsuccess
+  have hmarkResult := markFreeArrays_result hmark
+  let program := deallocateUncoalescedInterleavedProgram offsetsBase sizesBase
+    isFreeBase prevFreeBase secondBase firstBase headsBase nextBase previousBase
+    block prevFree.length next.length previous.length bin returnedOffset
+    (bin / 32) (bin % 32) (heads[bin]?.getD 0)
+    (second[bin / 32]?.getD 0) first
+  refine ⟨bin, program, hclass, rfl, ?_⟩
+  apply Program.wp_mono
+    (deallocateUncoalescedInterleavedProgram_wp_refines_components (GF := GF)
+      offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase block returnedOffset returnedBytes bin
+      offsets sizes isFree prevFree second first heads next previous count marked
+      inserted mem hmark hinsert layout
+      (hfreeMapped block hmarkResult.2.2.1)
+      (hoffsetsMapped block hmarkResult.1)
+      (hsizesMapped block hmarkResult.2.1)
+      (fun hsuccessor => hprevMapped (block + 1) hsuccessor)
+      hsecondMapped hfirstMapped hheadsMapped hnextMapped hpreviousMapped
+      hoffsets hsizes hfree hprev hcount hsecond hfirst hheads hnext hprevious)
+  intro final hfinal
+  subst state
+  rcases hfinal with
+    ⟨⟨hsecondFinal, hfirstFinal, hheadsFinal, hnextFinal, hpreviousFinal⟩,
+      hoffsetsFinal, hsizesFinal, hfreeFinal, hprevFinal, hcountFinal⟩
+  exact ⟨hsecondFinal, hfirstFinal, hheadsFinal, hnextFinal, hpreviousFinal,
+    hoffsetsFinal, hsizesFinal, hfreeFinal, hprevFinal, hcountFinal⟩
+
 end DeallocateProgram
 
 end Luffs.Runtime.TLSF

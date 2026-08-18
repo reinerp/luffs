@@ -1202,9 +1202,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   the final encodings of both updated physical flags and all five updated
   class-index fields while framing offsets, sizes, and count. The theorem uses
   the successful `markFreeArrays` and `insertClassArrays` results as its typed
-  boundary; connecting the public classifier/preflight wrapper and then the
-  two conditional coalescing calls remains the next operational deallocation
-  work.
+  boundary. The state-retaining public uncoalesced transformer is now connected
+  too: success recovers the classifier result and component executions from the
+  ordinary CFG, selects the corresponding source-ordered interleaved program,
+  and proves that its closed WP encodes the complete returned machine state.
+  No proof-only bin argument appears at this public boundary. The two
+  conditional coalescing calls remain the next operational deallocation work.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

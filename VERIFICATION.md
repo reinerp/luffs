@@ -598,8 +598,9 @@ concurrency are later extensions and are not prerequisites for `Box` and
 
 ## Containers
 
-- [ ] `Box<T>`: allocation/layout, initialization before exposure, unique
-  ownership, dereference rules, and exactly-once drop/deallocation.
+- [x] `Box<T>` on the declared 64-bit target: allocation/layout,
+  initialization before exposure, unique ownership, dereference rules, and
+  exactly-once drop/deallocation.
   A verified generic codec interface now fixes size, alignment, encoding,
   decoding, encoded length, and decode/encode round trips. Iris-Lean has a
   separate authoritative byte-content map with exact initialized-byte
@@ -639,9 +640,10 @@ concurrency are later extensions and are not prerequisites for `Box` and
   `Box.requestBytes codec.size`, bounds-checks the complete encoding, writes all
   encoded bytes, and is proved to refine generic `Box.allocate`. Its Iris law
   converts the raw allocation capability into `Box.Owns codec ... value` while
-  retaining exactly the allocator's remaining free ownership. Target-width
-  parameterization beyond the declared 64-bit x86-64/AArch64 target remains
-  before this item is complete. The current `u8` constructor is now proved equal to the
+  retaining exactly the allocator's remaining free ownership. Generated Rust
+  now rejects non-64-bit pointer widths at compile time, making the Lean
+  `usize`/`isize` and address-width premise an enforced target contract rather
+  than an unchecked portability assumption. The current `u8` constructor is now proved equal to the
   generic constructor specialized with `Scalar.u8`, including equivalence of
   its one-byte bounds check and `List.set` update to the generic range write.
   The first non-byte allocator-backed monomorphization is checked as well:
@@ -713,9 +715,8 @@ concurrency are later extensions and are not prerequisites for `Box` and
   pointer-sized payloads (`BitVec 64`).
   The compositional source translator now assigns Lean `BitVec` models to all
   signed and unsigned scalar widths and lowers arbitrary 8/16/32/64/128-bit
-  `from_le_bytes` expressions plus byte-extraction stores. `usize`/`isize` are
-  currently fixed to the existing 64-bit target model; target-width
-  parameterization remains.
+  `from_le_bytes` expressions plus byte-extraction stores. `usize`/`isize` use
+  the enforced 64-bit target model.
 - [ ] `Vec<T>`: invariant `len <= capacity`, initialized prefix ownership,
   spare-capacity ownership, checked layout arithmetic, growth without loss or
   double-drop, `push`, `pop`, indexing, shared/mutable slices, and drop.

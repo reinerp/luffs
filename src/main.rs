@@ -309,7 +309,9 @@ fn run() -> Result<(), String> {
 }
 
 fn parse(source: &str) -> Result<Module, String> {
-    let mut rust = String::new();
+    let mut rust = String::from(
+        "#[cfg(not(target_pointer_width = \"64\"))]\ncompile_error!(\"Luffs currently supports only 64-bit Rust targets\");\n\n",
+    );
     let mut proofs = Vec::new();
     let mut accesses = Vec::new();
     let mut facts = Vec::new();
@@ -4302,6 +4304,14 @@ mod tests {
             checked_arithmetic_expression("count.checked_mul(width)?"),
             Some("count * width".to_owned())
         );
+    }
+
+    #[test]
+    fn generated_rust_rejects_non_64_bit_targets() {
+        let module = parse("fn identity(value: usize) -> Option<usize> {\nSome(value)\n}").unwrap();
+        assert!(module.rust.starts_with(
+            "#[cfg(not(target_pointer_width = \"64\"))]\ncompile_error!(\"Luffs currently supports only 64-bit Rust targets\");"
+        ));
     }
 
     #[test]

@@ -166,6 +166,12 @@ cargo run -- build examples/minimal.luffs -o build/minimal
 `check` and `build` require Lean 4 through `elan`; `lean-toolchain` pins the
 version. `emit` only needs Rust.
 
+Run `scripts/verify-clean.sh` for the repository-wide gate. It exports only
+tracked files to a temporary checkout, rebuilds the complete Lean library,
+runs every Rust test, and checks and compiles every example and standard-library
+Luffs module. This deliberately prevents local generated files or cached Lean
+artifacts from making an incomplete proof appear valid.
+
 ## zch reference
 
 [`examples/zch_stored.luffs`](examples/zch_stored.luffs) follows the current

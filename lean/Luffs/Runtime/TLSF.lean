@@ -41,6 +41,10 @@ open Luffs.Allocator.TLSF.Bins
 
 def usizeMax : Nat := 2 ^ 64 - 1
 
+theorem usizeMax_lt_iff (value : Nat) : usizeMax < value ↔ 2 ^ 64 ≤ value := by
+  unfold usizeMax
+  omega
+
 def encodeSizeClass (cls : SizeClass) : Nat :=
   cls.fl.val * secondLevelCount + cls.sl.val
 

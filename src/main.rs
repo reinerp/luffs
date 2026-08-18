@@ -1110,8 +1110,12 @@ fn substitute_ident(expr: &str, name: &str, replacement: &str) -> String {
             out.push(')');
             cursor += needle.len();
         } else {
-            out.push(bytes[cursor] as char);
-            cursor += 1;
+            let ch = expr[cursor..]
+                .chars()
+                .next()
+                .expect("cursor remains on a UTF-8 character boundary");
+            out.push(ch);
+            cursor += ch.len_utf8();
         }
     }
     out
@@ -1205,9 +1209,8 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
                 match ty.as_str() {
                     ty if ty == "&[u8]"
                         || ty == "&mut [u8]"
-                        || ((is_fixed_u8_array_reference(ty, false)
-                            || is_fixed_u8_array_reference(ty, true))
-                            && trimmed[3..open].trim().starts_with("tlsf_box_")) =>
+                        || is_fixed_u8_array_reference(ty, false)
+                        || is_fixed_u8_array_reference(ty, true) =>
                     {
                         if array.replace(source_name).is_some() {
                             eligible = false;
@@ -3756,7 +3759,7 @@ fn lean(module: &Module) -> String {
         out.push_str("\n\n");
         if let Some(target) = &model.refines {
             out.push_str(&format!(
-                "theorem {}_refines : {}_model = {} := by\n  funext {}\n  simp [{}, {}]\n\n",
+                "theorem {}_refines : {}_model = {} := by\n  funext {}\n  simp [{}, {}, Luffs.Runtime.TLSF.usizeMax_lt_iff]\n\n",
                 model.name,
                 model.name,
                 target,
@@ -4389,6 +4392,9 @@ rfl\n\n",
         ));
     }
     for model in &module.tlsf_vec_get_models {
+        if module.read_models.iter().any(|generic| generic.name == model.name) {
+            continue;
+        }
         out.push_str(&format!(
             "def {}_model (storage : List (Fin 256)) (offset len index : Nat) : Option (Fin 256) :=\n  if index ≥ len then none\n  else if offset + index ≥ 2 ^ 64 then none\n  else\n    let address := offset + index\n    if address ≥ storage.length then none else storage[address]?\n\n",
             model.name
@@ -4722,6 +4728,14 @@ mod tests {
     }
 
     #[test]
+    fn identifier_substitution_preserves_unicode_operators() {
+        assert_eq!(
+            substitute_ident("index ≥ len ∧ address < limit", "address", "offset + index"),
+            "index ≥ len ∧ (offset + index) < limit"
+        );
+    }
+
+    #[test]
     fn generated_rust_rejects_unsupported_targets() {
         let module = parse("fn identity(value: usize) -> Option<usize> {\nSome(value)\n}").unwrap();
         assert!(module.rust.starts_with(
@@ -5034,7 +5048,8 @@ mod tests {
         assert!(generated.contains(
             "theorem tlsf_vec_get_u8_refines : tlsf_vec_get_u8_model = Luffs.Runtime.Containers.vecGetU8Offset"
         ));
-        assert!(generated.contains("if address ≥ storage.length then none else storage[address]?"));
+        assert!(generated.contains("if (offset + index) ≥ pool.length then none else"));
+        assert!(generated.contains("pool[(offset + index)]?"));
         assert!(
             !generated.contains("Option (Fin 256) :=\n  Luffs.Runtime.Containers.vecGetU8Offset")
         );
@@ -5848,6 +5863,10 @@ mod tests {
         assert!(generated.contains("theorem tlsf_vec_push_u8_program_wp_of_mapped"));
         assert!(generated.contains("def tlsf_vec_get_u8_program"));
         assert!(generated.contains("theorem tlsf_vec_get_u8_program_wp"));
+        assert!(module
+            .read_models
+            .iter()
+            .any(|model| model.name == "tlsf_vec_get_u8"));
     }
 
     #[test]

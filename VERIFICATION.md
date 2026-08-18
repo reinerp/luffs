@@ -95,6 +95,14 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   has both trace-based and mapped-address WPs; get emits the symmetric nested
   read program and unchanged-memory WP. These programs are emitted only when
   the same complete source shape that enables their refinement is recognized.
+  The public fixed-pool `Vec<u8>` get path has now moved off its dedicated TLSF
+  program emitter entirely: fixed byte arrays flow through the same generic
+  read-model pipeline as slices and Box loads. Its checked-add overflow guard,
+  nested early-return branches, exact source read offset, refinement theorem,
+  and closed unchanged-memory WP are all derived from the Luffs body. During
+  that migration, a byte-oriented identifier substitution bug that corrupted
+  Unicode Lean operators after local expansion was found and fixed with a
+  UTF-8-boundary-preserving substitution regression.
   Pure scalar functions now participate in the same operational layer instead
   of disappearing from it: lowering emits `Program.done` and a closed
   unchanged-memory WP. This supplies the compositional base case for the public
@@ -1584,3 +1592,9 @@ alias semantics. This removes the one-store restriction that blocked
   The `build` driver now detects function-only Luffs modules and invokes
   `rustc --crate-type=lib`, so the complete generated TLSF/Box/Vec module is
   type-checked as Rust rather than failing merely because it has no `main`.
+  `scripts/verify-clean.sh` is the hermetic repository gate: it exports only
+  tracked files into a temporary checkout, rebuilds the pinned Lean dependency
+  graph and full library, runs every Rust test, then checks and compiles all
+  four examples plus the TLSF and container standard-library modules. CI runs
+  this same command from a GitHub checkout, so stale generated files and cached
+  `.olean` artifacts cannot satisfy the gate.

@@ -1141,6 +1141,70 @@ theorem boxDropU8Arrays_refines_box
   exact ⟨selected, abstractNext, hselectedOffset,
     List.mem_iff_getElem?.2 ⟨i, hget⟩, hboxDrop, howns⟩
 
+/-- Operational adequacy of Luffs `Box` drop. The Box-level offset lookup and
+allocation checks select the exact verified public TLSF deallocation program;
+all executions are non-stuck and end in the returned allocator metadata. -/
+theorem boxDropU8Arrays_successfulProgram_safe
+    {GF : Iris.BundledGFunctors.{0, 0, 0}}
+    {pool : Region} {blocks : List Block} {state : Bins.State}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {returnedOffset : Nat}
+    {result : Luffs.Runtime.TLSF.CoalesceClassResult} {mem : Memory}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hcountMax : count ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins { heads, next, previous } state)
+    (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
+    (hsuccess : boxDropU8Arrays offsets sizes isFree prevFree count second first
+      heads next previous returnedOffset = some result)
+    (hmem : Luffs.Runtime.TLSF.AllocateComposition.EncodedMetadata offsetsBase
+      sizesBase isFreeBase prevFreeBase countBase secondBase firstBase headsBase
+      nextBase previousBase offsets sizes isFree prevFree second first heads next
+      previous count mem) :
+    ∃ program, Program.Safe program mem ∧
+      ∀ final, Program.Exec program mem final →
+        Luffs.Runtime.TLSF.DeallocateProgram.EncodesResult offsetsBase sizesBase
+          isFreeBase prevFreeBase countBase secondBase firstBase headsBase
+          nextBase previousBase result final := by
+  obtain ⟨i, returnedBytes, hfind, hfree, hbytes, hdealloc⟩ :=
+    boxDropU8Arrays_result hsuccess
+  have hscan := Luffs.Runtime.TLSF.findOffsetIndex_sound hfind
+  have hi : i < blocks.length := by simpa [← hphysical.1] using hscan.1
+  let selected := blocks.get ⟨i, hi⟩
+  have hget : blocks[i]? = some selected := List.getElem?_eq_getElem hi
+  have hoffsetArray :=
+    Luffs.Runtime.TLSF.representsPhysicalArrays_get_offset hphysical hget
+  have hselectedOffset : selected.offset = returnedOffset := by
+    rw [hoffsetArray] at hscan
+    exact Option.some.inj hscan.2
+  have hsizeArray :=
+    Luffs.Runtime.TLSF.representsPhysicalArrays_get_size hphysical hget
+  have hselectedBytes : selected.bytes = returnedBytes := by
+    rw [hsizeArray] at hbytes
+    exact Option.some.inj hbytes
+  have hfreeArray :=
+    Luffs.Runtime.TLSF.representsPhysicalArrays_get_free hphysical hget
+  have hallocated : selected.free = false := by
+    rw [hfreeArray] at hfree
+    cases hselectedFree : selected.free <;> simp [hselectedFree] at hfree ⊢
+  have hdealloc' : Luffs.Runtime.TLSF.deallocateArrays offsets sizes isFree
+      prevFree second first heads next previous count i selected.offset
+      selected.bytes = some result := by
+    simpa [hselectedOffset, hselectedBytes] using hdealloc
+  exact Luffs.Runtime.TLSF.DeallocateProgram.deallocateArrays_successfulProgram_safe_of_encoded_metadata
+      (GF := GF)
+      offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase offsets sizes isFree prevFree second first
+      heads next previous count i result mem hget hallocated hphysical hvalid
+      hpoolMax hcountMax hsecond hfirst hbins hdisjoint hdealloc' hmem
+
 set_option maxHeartbeats 1200000 in
 theorem boxDropPointerU8Arrays_refines_box
     {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
@@ -1175,6 +1239,43 @@ theorem boxDropPointerU8Arrays_refines_box
       hfirst hbins hdisjoint hphysical hdrop
   exact ⟨selected, abstractNext, by rw [hpointer, ← hselectedOffset], hmember,
     habstract, howns⟩
+
+/-- Pointer-facing Box drop adequacy, including the source pointer-to-offset
+validation before the verified allocator transaction. -/
+theorem boxDropPointerU8Arrays_successfulProgram_safe
+    {GF : Iris.BundledGFunctors.{0, 0, 0}}
+    {pool : Region} {blocks : List Block} {state : Bins.State}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {pointer : Nat}
+    {result : Luffs.Runtime.TLSF.CoalesceClassResult} {mem : Memory}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hcountMax : count ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins { heads, next, previous } state)
+    (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
+    (hsuccess : boxDropPointerU8Arrays offsets sizes isFree prevFree count second
+      first heads next previous pool.base pool.bytes pointer = some result)
+    (hmem : Luffs.Runtime.TLSF.AllocateComposition.EncodedMetadata offsetsBase
+      sizesBase isFreeBase prevFreeBase countBase secondBase firstBase headsBase
+      nextBase previousBase offsets sizes isFree prevFree second first heads next
+      previous count mem) :
+    ∃ program, Program.Safe program mem ∧
+      ∀ final, Program.Exec program mem final →
+        Luffs.Runtime.TLSF.DeallocateProgram.EncodesResult offsetsBase sizesBase
+          isFreeBase prevFreeBase countBase secondBase firstBase headsBase
+          nextBase previousBase result final := by
+  obtain ⟨offset, _, _, hdrop⟩ := boxDropPointerU8Arrays_result hsuccess
+  exact boxDropU8Arrays_successfulProgram_safe (GF := GF) offsetsBase sizesBase
+    isFreeBase prevFreeBase countBase secondBase firstBase headsBase nextBase
+    previousBase hvalid hpoolMax hcountMax hsecond hfirst hbins hdisjoint
+    hphysical hdrop hmem
 
 /-- The concrete drop body is type-erased: once it has recovered the allocated
 block, the same deallocation transition consumes `Box.Owns` for any proved

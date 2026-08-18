@@ -14416,6 +14416,54 @@ structure MetadataLayout
     (classRegion secondBase firstBase headsBase nextBase previousBase secondLength
       headsLength nextLength previousLength classField)
 
+/-- Reusable concrete-memory precondition for allocator entry points. It
+packages the common layout, mappedness, and ten encoded metadata fields so Box
+and Vec operational theorems do not repeat the allocator's low-level premises. -/
+structure EncodedMetadata
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (count : Nat) (mem : Memory) : Prop where
+  layout : MetadataLayout offsetsBase sizesBase isFreeBase prevFreeBase countBase
+    secondBase firstBase headsBase nextBase previousBase offsets.length
+    sizes.length isFree.length prevFree.length second.length heads.length
+    next.length previous.length
+  offsetsMapped : ∀ index, index < offsets.length → ∀ i, i < 8 →
+    mem.mapped (offsetsBase + index * 8 + i)
+  sizesMapped : ∀ index, index < sizes.length → ∀ i, i < 8 →
+    mem.mapped (sizesBase + index * 8 + i)
+  freeMapped : ∀ index, index < isFree.length → mem.mapped (isFreeBase + index)
+  prevMapped : ∀ index, index < prevFree.length → mem.mapped (prevFreeBase + index)
+  countMapped : ∀ i, i < 8 → mem.mapped (countBase + i)
+  secondMapped : ∀ index, index < second.length → ∀ i, i < 4 →
+    mem.mapped (secondBase + index * 4 + i)
+  firstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i)
+  headsMapped : ∀ index, index < heads.length → ∀ i, i < 8 →
+    mem.mapped (headsBase + index * 8 + i)
+  nextMapped : ∀ index, index < next.length → ∀ i, i < 8 →
+    mem.mapped (nextBase + index * 8 + i)
+  previousMapped : ∀ index, index < previous.length → ∀ i, i < 8 →
+    mem.mapped (previousBase + index * 8 + i)
+  offsetsEncoded : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+    (InitializeProgram.encodeNats offsets)
+  sizesEncoded : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+    (InitializeProgram.encodeNats sizes)
+  freeEncoded : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+    (AllocateProgram.encodeFlags isFree)
+  prevEncoded : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+    (AllocateProgram.encodeFlags prevFree)
+  countEncoded : mem.EncodesAt Luffs.Memory.Scalar.u64 countBase
+    (BitVec.ofNat 64 count)
+  secondEncoded : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second
+  firstEncoded : mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase first
+  headsEncoded : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+    (InitializeProgram.encodeNats heads)
+  nextEncoded : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+    (InitializeProgram.encodeNats next)
+  previousEncoded : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+    (InitializeProgram.encodeNats previous)
+
 theorem MetadataLayout.cross_symm
     {offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
       headsBase nextBase previousBase offsetsLength sizesLength isFreeLength
@@ -19456,6 +19504,48 @@ theorem IsSuccessfulAllocateFullyInterleavedTopLevelProgram.adequate
           final := by
   exact ⟨hprogram, Program.wp_adequacy hwp⟩
 
+/-- Bundled-memory public allocation adequacy, suitable for Box and Vec
+composition. It preserves the exact source-shaped trace witness in addition to
+non-stuckness and the ten-field allocator result. -/
+theorem allocateArrays_successfulProgram_safe_of_encoded_metadata
+    {GF : BundledGFunctors.{0,0,0}}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64) (state : Bins.State)
+    (heads next previous : List Nat) (count request : Nat)
+    (result : AllocateArraysResult) (mem : Memory)
+    (hsuccess : allocateArrays offsets sizes isFree prevFree count second first
+      heads next previous request = some result)
+    (hbitmapRep : RepresentsSecondBitmap second state)
+    (hbinsValid : Bins.Valid state)
+    (hbinsRep : RepresentsBins { heads, next, previous } state)
+    (hmem : EncodedMetadata offsetsBase sizesBase isFreeBase prevFreeBase
+      countBase secondBase firstBase headsBase nextBase previousBase offsets sizes
+      isFree prevFree second first heads next previous count mem) :
+    ∃ program,
+      IsSuccessfulAllocateFullyInterleavedTopLevelProgram secondBase firstBase
+        headsBase countBase offsetsBase isFreeBase sizesBase nextBase
+        previousBase prevFreeBase offsets sizes isFree prevFree second first
+        heads next previous count request result program ∧
+      Program.Safe program mem ∧
+      ∀ final, Program.Exec program mem final →
+        EncodesAllocateArraysResult offsetsBase sizesBase isFreeBase prevFreeBase
+          countBase secondBase firstBase headsBase nextBase previousBase result
+          final := by
+  obtain ⟨program, hprogram, hwp⟩ :=
+    allocateArrays_successfulFullyInterleavedTopLevelProgram_wp (GF := GF)
+      offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase offsets sizes isFree prevFree second first
+      state heads next previous count request result mem hsuccess hbitmapRep
+      hbinsValid hbinsRep hmem.layout hmem.secondMapped hmem.firstMapped
+      hmem.headsMapped hmem.nextMapped hmem.previousMapped hmem.offsetsMapped
+      hmem.sizesMapped hmem.freeMapped hmem.prevMapped hmem.countMapped
+      hmem.secondEncoded hmem.firstEncoded hmem.headsEncoded hmem.nextEncoded
+      hmem.previousEncoded hmem.offsetsEncoded hmem.sizesEncoded hmem.freeEncoded
+      hmem.prevEncoded hmem.countEncoded
+  exact ⟨program, hprogram, Program.wp_adequacy hwp⟩
+
 end AllocateComposition
 
 /-- Exact pure state transformer for `tlsf_initialize`. All fixed-capacity
@@ -22856,6 +22946,29 @@ namespace DeallocateProgram
 
 open Luffs.Memory
 
+/-- Exact concrete postcondition shared by allocator, Box, and Vec
+deallocation adequacy theorems. -/
+def EncodesResult (offsetsBase sizesBase isFreeBase prevFreeBase countBase
+    secondBase firstBase headsBase nextBase previousBase : Nat)
+    (result : CoalesceClassResult) (mem : Memory) : Prop :=
+  mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats result.offsets) ∧
+  mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats result.sizes) ∧
+  mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags result.isFree) ∧
+  mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags result.prevFree) ∧
+  mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase result.second ∧
+  mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase result.first ∧
+  mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats result.heads) ∧
+  mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats result.next) ∧
+  mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats result.previous) ∧
+  mem.EncodesAt Luffs.Memory.Scalar.u64 countBase (BitVec.ofNat 64 result.count)
+
 /-- Exact successful stores of `tlsf_mark_free`, after all validation loads. -/
 def markFreeWrites (isFreeBase prevFreeBase block prevFreeLength : Nat) :
     List ElementWrite :=
@@ -26239,6 +26352,51 @@ theorem deallocateArrays_successfulProgram_safe
     hoffsetsMapped hsizesMapped hfreeMapped hprevMapped hcountMapped
     hsecondMapped hfirstMapped hheadsMapped hnextMapped hpreviousMapped hoffsets
     hsizes hfree hprev hcount hsecondEncoded hfirstEncoded hheads hnext hprevious
+
+/-- Bundled-memory form of public deallocation adequacy, intended for direct
+composition by verified containers. -/
+theorem deallocateArrays_successfulProgram_safe_of_encoded_metadata
+    {GF : BundledGFunctors.{0, 0, 0}}
+    {pool : Luffs.Memory.Region} {blocks : List Block} {state : Bins.State}
+    {selected : Block}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (count block : Nat)
+    (result : CoalesceClassResult) (mem : Memory)
+    (hget : blocks[block]? = some selected)
+    (hallocated : selected.free = false)
+    (hphysical : RepresentsPhysicalArrays offsets sizes isFree prevFree count blocks)
+    (hallocValid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hcountMax : count ≤ usizeMax)
+    (hsecondRep : RepresentsSecondBitmap second state)
+    (hfirstRep : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hsuccess : deallocateArrays offsets sizes isFree prevFree second first heads
+      next previous count block selected.offset selected.bytes = some result)
+    (hmem : AllocateComposition.EncodedMetadata offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets sizes isFree prevFree second first heads next previous count mem) :
+    ∃ program, Program.Safe program mem ∧
+      ∀ final, Program.Exec program mem final →
+        EncodesResult offsetsBase sizesBase isFreeBase prevFreeBase countBase
+          secondBase firstBase headsBase nextBase previousBase result final := by
+  have hfresh := allocatedBlock_offset_fresh hallocValid hget hallocated
+  have hsafety := deallocateArrays_successfulProgram_safe (GF := GF) offsetsBase
+    sizesBase isFreeBase prevFreeBase countBase secondBase firstBase headsBase
+    nextBase previousBase offsets sizes isFree prevFree second first heads next
+    previous count block result mem hget hallocated hphysical hallocValid
+    hpoolMax hcountMax hsecondRep hfirstRep hbins hdisjoint hfresh hsuccess
+    hmem.layout hmem.offsetsMapped hmem.sizesMapped hmem.freeMapped
+    hmem.prevMapped hmem.countMapped hmem.secondMapped hmem.firstMapped
+    hmem.headsMapped hmem.nextMapped hmem.previousMapped hmem.offsetsEncoded
+    hmem.sizesEncoded hmem.freeEncoded hmem.prevEncoded hmem.countEncoded
+    hmem.secondEncoded hmem.firstEncoded hmem.headsEncoded hmem.nextEncoded
+    hmem.previousEncoded
+  simpa [EncodesResult] using hsafety
 
 end DeallocateProgram
 

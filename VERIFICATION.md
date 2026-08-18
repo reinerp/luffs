@@ -830,7 +830,13 @@ concurrency are later extensions and are not prerequisites for `Box` and
   to exact Lean array transformers. Lean composes constructor success with the
   abstract `Box.allocate` and Iris initialization update, producing typed
   exclusive `Box.Owns`; drop is composed with abstract `Box.drop` and consumes
-  that typed capability exactly once while returning the region to TLSF.
+  that typed capability exactly once while returning the region to TLSF. Box
+  drop now also composes operationally: both offset and pointer entry points
+  select the complete verified TLSF deallocation program, prove it non-stuck,
+  and establish the exact ten-field returned allocator state. A reusable
+  encoded-metadata contract and matching bundled allocation adequacy theorem
+  provide the corresponding foundation for constructor and Vec-growth
+  composition.
   Constructor and drop refinement now accept the actual fixed-capacity header
   arrays through `RepresentsPhysicalArrays`; they no longer require canonical
   arrays with no spare slots, so splitting allocation is included in the

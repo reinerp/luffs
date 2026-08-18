@@ -829,6 +829,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   Lean reduces it to `initializeArrays`; recognition depends on both generated
   size classification and class insertion, so no trusted initializer alias
   remains.
+  Every scalar Box constructor is now source-generated. Beyond the specialized
+  byte case, one codec-parametric emission pattern calls generated allocation,
+  checks the exact encoded width against the pool, writes the scalar codec's
+  little-endian bytes, and assembles the owned result. This covers unsigned,
+  signed, and 64-bit native integer forms without direct `boxNew*Arrays`
+  aliases.
   Public allocation is source-generated as a transaction as well: request
   classification, two-level nonempty-class lookup, selected-offset validation,
   physical-header lookup, split preflight, candidate detachment, physical

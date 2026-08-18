@@ -4065,12 +4065,12 @@ rfl\n\n",
                     .expect("fixed-width scalar Box constructor name"),
             };
             out.push_str(&format!(
-                "def {}_model (storage : List (Fin 256)) (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (value : BitVec {}) : Option Luffs.Runtime.Containers.BoxNewU8ArraysResult :=\n  {} storage offsets sizes is_free prev_free count second first heads next previous value\n\n",
-                model.name, width, model.refines
+                "def {}_model (storage : List (Fin 256)) (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (value : BitVec {}) : Option Luffs.Runtime.Containers.BoxNewU8ArraysResult := do\n  let allocated ← tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous\n    (Luffs.Containers.Box.requestBytes Luffs.Memory.Scalar.{}.size)\n  if allocated.allocatedOffset + Luffs.Memory.Scalar.{}.size > storage.length then none\n  pure {{\n    offsets := allocated.offsets, sizes := allocated.sizes,\n    isFree := allocated.isFree, prevFree := allocated.prevFree,\n    count := allocated.count, second := allocated.second, first := allocated.first,\n    heads := allocated.heads, next := allocated.next, previous := allocated.previous,\n    allocatedOffset := allocated.allocatedOffset, allocatedBytes := allocated.allocatedBytes,\n    storage := Luffs.Runtime.Containers.writeBytes storage allocated.allocatedOffset\n      (Luffs.Memory.Scalar.{}.encode value) }}\n\n",
+                model.name, width, scalar, scalar, scalar
             ));
             out.push_str(&format!(
-                "theorem {}_refines : {}_model = {} := by rfl\n\n",
-                model.name, model.name, model.refines
+                "theorem {}_refines : {}_model = {} := by\n  unfold {}_model {} Luffs.Runtime.Containers.boxNewArrays\n  rw [tlsf_allocate_refines]\n\n",
+                model.name, model.name, model.refines, model.name, model.refines
             ));
             continue;
         }
@@ -4647,6 +4647,16 @@ mod tests {
         ));
         assert!(generated.contains(
             "theorem tlsf_box_new_i128_refines : tlsf_box_new_i128_model = Luffs.Runtime.Containers.boxNewI128Arrays"
+        ));
+        assert!(generated.contains("(Luffs.Memory.Scalar.u128.encode value)"));
+        assert!(
+            generated.contains("(Luffs.Containers.Box.requestBytes Luffs.Memory.Scalar.i64.size)")
+        );
+        assert!(!generated.contains(
+            "Option Luffs.Runtime.Containers.BoxNewU8ArraysResult :=\n  Luffs.Runtime.Containers.boxNewU16Arrays"
+        ));
+        assert!(!generated.contains(
+            "Option Luffs.Runtime.Containers.BoxNewU8ArraysResult :=\n  Luffs.Runtime.Containers.boxNewIsizeArrays"
         ));
         assert!(generated.contains(
             "theorem tlsf_box_new_usize_refines : tlsf_box_new_usize_model = Luffs.Runtime.Containers.boxNewUsizeArrays"

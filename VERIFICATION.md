@@ -255,9 +255,14 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   update is proved to commute with insertion rather than assumed.
   `allocateSplitWrites_count_encodes` closes the final count store directly;
   because that store is last, its typed postcondition is independent of all
-  preceding writes. Packaging these projections under the concrete metadata
-  layout and composing surrounding bin removal/remainder insertion remain the
-  next operational steps.
+  preceding writes. `SplitMetadataDisjoint` now packages the concrete four
+  array regions plus scalar count cell, and discharges every finishing-store
+  frame from pairwise layout disjointness. `allocateSplitProgram_wp_encodes`
+  gives one joint Iris WP for the same execution, while
+  `allocatePhysicalSplitProgram_wp_refines` identifies its complete typed
+  postcondition with the successful split branch of `allocatePhysicalArrays`.
+  The physical split decoder is therefore closed; composing surrounding bin
+  removal and remainder insertion remains the next operational step.
 - [x] Define the first pure block layout predicates and prove that splitting
   and coalescing preserve byte counts.
 - [x] Implement size-class mapping and prove every `(fl, sl)` index in range.

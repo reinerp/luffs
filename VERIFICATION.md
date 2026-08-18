@@ -389,6 +389,14 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   consumes the exact initialized Vec ownership. Generated Lean semantics for
   both wrappers are now composed from the generated pointer-conversion and
   offset-drop models instead of directly aliasing their reference targets.
+  The offset-drop model itself now contains a generated recursive physical
+  offset search, live-block check, returned-size lookup, and call to a
+  source-composed public deallocator. That generated deallocator explicitly
+  sequences the uncoalesced transition, right merge, zero-index early return,
+  and left merge; neither Box/Vec drop nor the public deallocator directly
+  aliases its handwritten transaction model. Its lower uncoalesced and
+  conditional-coalescing stage transformers remain explicit refinement
+  dependencies and are the next generated-semantics boundary.
   The first mutating physical stage and the complete uncoalesced transaction
   now additionally have source-ordered, state-retaining semantics. Lean derives
   the source preflight facts, proves both marking and bin insertion infallible

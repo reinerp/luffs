@@ -1072,6 +1072,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   the insertion WP frames the complete split physical result. Fixed-capacity
   preservation for all four physical arrays is proved from the successful
   split branch rather than assumed.
+  The complete successful split mutation is now one verified program:
+  class-node removal, physical-header splitting, and insertion of the remainder
+  by its byte-offset key. Its end-to-end Iris WP derives the third stage's
+  mapped-address facts from the exact first two write lists, reconstructs the
+  combined layout using proved fixed-capacity equalities, and establishes a
+  final memory encoding both `AllocatePhysicalResult` and `InsertClassResult`.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

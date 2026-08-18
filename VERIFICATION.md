@@ -1125,6 +1125,14 @@ concurrency are later extensions and are not prerequisites for `Box` and
   proves the final memory equals the established `removeClassWrites`
   transformer, including both bitmap branches; it is ready to replace the
   write-only candidate stage in the public composition.
+  That substitution is now proved for both physical-allocation outcomes. A
+  deterministic decoding lemma first identifies the exact five class arrays
+  produced by `removeClassWrites`; the interleaved candidate WP then frames all
+  five physical fields. Composing it with the whole and split physical stages
+  yields complete ten-field postconditions while preserving the helper's exact
+  repeated reads and conditional bitmap traffic. Physical-allocation helper
+  reads and the split remainder-insertion helper reads are still represented
+  by their established write transformers and remain the next splice points.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

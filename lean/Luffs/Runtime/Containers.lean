@@ -1834,24 +1834,26 @@ def vecNewU8Arrays (offsets sizes : List Nat)
   if capacity = 0 ∨ capacity > Luffs.Runtime.TLSF.usizeMax - 7 then none
   else Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree prevFree count
     second first heads next previous
-      (Luffs.Containers.Vec.allocationBytes Scalar.u8 capacity)
+      (roundUp8 capacity)
 
 theorem vecNewU8Arrays_eq_generic :
     vecNewU8Arrays = vecNewArrays Scalar.u8 := by
   funext offsets sizes isFree prevFree count second first heads next previous capacity
-  simp only [vecNewU8Arrays, vecNewArrays, Scalar.u8, Scalar.encode8]
+  unfold vecNewU8Arrays vecNewArrays
   by_cases hzero : capacity = 0
-  · simp [hzero]
+  · simp [hzero, Scalar.u8]
   · by_cases hlarge : capacity > Luffs.Runtime.TLSF.usizeMax - 7
     · have hover : capacity * 1 > Luffs.Runtime.TLSF.usizeMax - 7 := by omega
-      simp [hzero, hlarge, hover]
+      simp [hzero, hlarge, hover, Scalar.u8]
     · have hmax : capacity ≤ Luffs.Runtime.TLSF.usizeMax := by
         unfold Luffs.Runtime.TLSF.usizeMax at hlarge ⊢
         omega
       have hmul : ¬capacity * 1 > Luffs.Runtime.TLSF.usizeMax - 7 := by omega
       have hnmax : ¬Luffs.Runtime.TLSF.usizeMax < capacity :=
         Nat.not_lt_of_ge hmax
-      simp [hzero, hlarge, hnmax, hmul]
+      have hpositive : 0 < capacity := Nat.pos_of_ne_zero hzero
+      rw [← Luffs.Containers.Vec.roundUp8_eq_allocationBytes Scalar.u8 hpositive]
+      simp [hzero, hlarge, hnmax, hmul, Scalar.u8]
 
 theorem vecNewU8Arrays_result
     {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
@@ -1869,8 +1871,11 @@ theorem vecNewU8Arrays_result
   split at hsuccess
   next hbad => contradiction
   next hgood =>
-    exact ⟨Nat.pos_of_ne_zero (fun hzero => hgood (Or.inl hzero)),
-      Nat.le_of_not_gt (fun hlarge => hgood (Or.inr hlarge)), hsuccess⟩
+    have hpositive := Nat.pos_of_ne_zero (fun hzero => hgood (Or.inl hzero))
+    refine ⟨hpositive,
+      Nat.le_of_not_gt (fun hlarge => hgood (Or.inr hlarge)), ?_⟩
+    rw [← Luffs.Containers.Vec.roundUp8_eq_allocationBytes Scalar.u8 hpositive]
+    simpa only [Scalar.u8, Nat.mul_one] using hsuccess
 
 set_option maxHeartbeats 1200000 in
 theorem vecNewU8Arrays_refines_vec

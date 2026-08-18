@@ -790,7 +790,7 @@ fn tlsf_vec_new_u8(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_fr
     if capacity == 0 { return None; }
     if capacity > usize::MAX - 7 { return None; }
     let rounded: usize = capacity + 7;
-    let request: usize = rounded & !7;
+    let request: usize = (rounded / 8) * 8;
     tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)
 }
 
@@ -799,7 +799,7 @@ fn tlsf_vec_new_u16(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_f
     if capacity == 0 { return None; }
     let bytes: usize = capacity.checked_mul(2)?;
     let rounded: usize = bytes.checked_add(7)?;
-    let request: usize = rounded & !7;
+    let request: usize = (rounded / 8) * 8;
     tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)
 }
 
@@ -808,7 +808,7 @@ fn tlsf_vec_new_u32(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_f
     if capacity == 0 { return None; }
     let bytes: usize = capacity.checked_mul(4)?;
     let rounded: usize = bytes.checked_add(7)?;
-    let request: usize = rounded & !7;
+    let request: usize = (rounded / 8) * 8;
     tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)
 }
 
@@ -817,7 +817,7 @@ fn tlsf_vec_new_u64(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_f
     if capacity == 0 { return None; }
     let bytes: usize = capacity.checked_mul(8)?;
     let rounded: usize = bytes.checked_add(7)?;
-    let request: usize = rounded & !7;
+    let request: usize = (rounded / 8) * 8;
     tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)
 }
 
@@ -826,7 +826,7 @@ fn tlsf_vec_new_u128(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_
     if capacity == 0 { return None; }
     let bytes: usize = capacity.checked_mul(16)?;
     let rounded: usize = bytes.checked_add(7)?;
-    let request: usize = rounded & !7;
+    let request: usize = (rounded / 8) * 8;
     tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)
 }
 
@@ -909,7 +909,7 @@ fn tlsf_vec_grow_u8(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: &
     let old_end: usize = old_offset.checked_add(len)?;
     if old_end > pool.len() { return None; }
     let rounded: usize = new_capacity + 7;
-    let request: usize = rounded & !7;
+    let request: usize = (rounded / 8) * 8;
     let new_offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)?;
     let new_end: usize = new_offset.checked_add(len)?;
     if new_end > pool.len() { return None; }
@@ -936,7 +936,7 @@ fn tlsf_vec_grow_u16(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: 
     let rounded: usize = allocation_bytes.checked_add(7)?;
     let old_end: usize = old_offset.checked_add(initialized_bytes)?;
     if old_end > pool.len() { return None; }
-    let request: usize = rounded & !7;
+    let request: usize = (rounded / 8) * 8;
     let new_offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)?;
     let new_end: usize = new_offset.checked_add(initialized_bytes)?;
     if new_end > pool.len() { return None; }
@@ -963,7 +963,7 @@ fn tlsf_vec_grow_u32(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: 
     let rounded: usize = allocation_bytes.checked_add(7)?;
     let old_end: usize = old_offset.checked_add(initialized_bytes)?;
     if old_end > pool.len() { return None; }
-    let request: usize = rounded & !7;
+    let request: usize = (rounded / 8) * 8;
     let new_offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)?;
     let new_end: usize = new_offset.checked_add(initialized_bytes)?;
     if new_end > pool.len() { return None; }
@@ -990,7 +990,7 @@ fn tlsf_vec_grow_u64(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes: 
     let rounded: usize = allocation_bytes.checked_add(7)?;
     let old_end: usize = old_offset.checked_add(initialized_bytes)?;
     if old_end > pool.len() { return None; }
-    let request: usize = rounded & !7;
+    let request: usize = (rounded / 8) * 8;
     let new_offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)?;
     let new_end: usize = new_offset.checked_add(initialized_bytes)?;
     if new_end > pool.len() { return None; }
@@ -1017,7 +1017,7 @@ fn tlsf_vec_grow_u128(pool: &mut [u8; 4096], offsets: &mut [usize; 4096], sizes:
     let rounded: usize = allocation_bytes.checked_add(7)?;
     let old_end: usize = old_offset.checked_add(initialized_bytes)?;
     if old_end > pool.len() { return None; }
-    let request: usize = rounded & !7;
+    let request: usize = (rounded / 8) * 8;
     let new_offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)?;
     let new_end: usize = new_offset.checked_add(initialized_bytes)?;
     if new_end > pool.len() { return None; }

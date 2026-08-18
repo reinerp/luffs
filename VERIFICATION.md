@@ -784,8 +784,7 @@ concurrency are later extensions and are not prerequisites for `Box` and
   replacement bytes. The source-derived `copyByteRange` result is now connected
   to this combined rule: the same theorem carries the concrete copied-prefix/
   frame equations, the abstract `Vec.grow` transition, the Iris ownership
-  update, and an exact `CopySteps` witness. Generic Luffs monomorphization
-  remains before this item is complete.
+  update, and an exact `CopySteps` witness.
   The executable growth boundary is now codec-generic: element lengths are
   converted to checked encoded-byte lengths, replacement capacity arithmetic
   checks both multiplication and TLSF rounding, and the concrete copy/frame
@@ -856,10 +855,15 @@ concurrency are later extensions and are not prerequisites for `Box` and
   operate on that same handle and capability.
   Generated Vec-construction semantics now calls the generated TLSF allocator
   model with the verified byte-capacity request rather than directly aliasing
-  the hand-written Vec constructor transformer. The specialized source checker
-  still recognizes the exact `capacity + 7` and `& !7` Rust expression; a
-  general word-level lowering theorem for that mask remains part of generic
-  Luffs monomorphization.
+  the hand-written Vec constructor transformer. Allocation rounding no longer
+  relies on a specially recognized word mask: Luffs computes
+  `((bytes + 7) / 8) * 8` after the checked addition. The general Lean theorem
+  `roundUp8_eq_linearBinUpper` proves this source-shaped arithmetic is exactly
+  TLSF's abstract linear-bin upper endpoint for every positive byte count, and
+  `roundUp8_eq_allocationBytes` lifts it to every codec. The generated u8
+  constructor model now passes this arithmetic result to the generated TLSF
+  allocator rather than inserting the abstract request by hand; all scalar
+  constructors and growth bodies use the same checked expression.
 
 `stdlib/containers.luffs` now contains the first byte-monomorphized Box and Vec
 lowering: initialization/load/store, push/pop length transitions, indexed get,

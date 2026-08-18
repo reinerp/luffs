@@ -128,6 +128,12 @@ structure AllocResult where
 def allocationBytes {α : Type} (codec : Codec α) (capacity : Nat) : Nat :=
   Box.requestBytes (capacity * codec.size)
 
+theorem roundUp8_eq_allocationBytes {α : Type} (codec : Codec α)
+    {capacity : Nat} (hcapacity : 0 < capacity) :
+    roundUp8 (capacity * codec.size) = allocationBytes codec capacity := by
+  exact roundUp8_eq_linearBinUpper (capacity * codec.size)
+    (Nat.mul_pos hcapacity codec.size_pos)
+
 theorem allocationBytes_positive {α : Type} (codec : Codec α) {capacity : Nat}
     (hcapacity : 0 < capacity) : 0 < allocationBytes codec capacity :=
   Box.requestBytes_positive (Nat.mul_pos hcapacity codec.size_pos)

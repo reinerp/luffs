@@ -72,6 +72,16 @@ def linearBinNumber (size : Nat) : Nat := (size - 1) / alignment
 def linearBinLower (size : Nat) : Nat := linearBinNumber size * alignment + 1
 def linearBinUpper (size : Nat) : Nat := (linearBinNumber size + 1) * alignment
 
+/-- Rust-shaped arithmetic rounding used by the Luffs implementation after its
+checked `size + 7`. Unlike a bit mask, this expression has a direct generic
+integer semantics in both generated Lean and Rust. -/
+def roundUp8 (size : Nat) : Nat := (size + 7) / 8 * 8
+
+theorem roundUp8_eq_linearBinUpper (size : Nat) (hsize : 0 < size) :
+    roundUp8 size = linearBinUpper size := by
+  simp [roundUp8, linearBinUpper, linearBinNumber, alignment]
+  omega
+
 theorem linear_sizeClass_values (size : Nat) (hsize : 0 < size)
     (hmax : size < 2 ^ firstLevelCount) (hlinear : size ≤ linearCutoff) :
     (sizeClass size hsize hmax).fl.val = 0 ∧

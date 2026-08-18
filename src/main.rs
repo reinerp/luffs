@@ -2338,7 +2338,7 @@ fn parse_tlsf_vec_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
                 "if capacity == 0 { return None; }",
                 "if capacity > usize::MAX - 7 { return None; }",
                 "let rounded: usize = capacity + 7;",
-                "let request: usize = rounded & !7;",
+                "let request: usize = (rounded / 8) * 8;",
                 "tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)",
             ],
         ),
@@ -2348,7 +2348,7 @@ fn parse_tlsf_vec_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
                 "if capacity == 0 { return None; }",
                 "let bytes: usize = capacity.checked_mul(2)?;",
                 "let rounded: usize = bytes.checked_add(7)?;",
-                "let request: usize = rounded & !7;",
+                "let request: usize = (rounded / 8) * 8;",
                 "tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)",
             ],
         ),
@@ -2371,7 +2371,7 @@ fn parse_tlsf_vec_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
             "if capacity == 0 { return None; }",
             multiply,
             "let rounded: usize = bytes.checked_add(7)?;",
-            "let request: usize = rounded & !7;",
+            "let request: usize = (rounded / 8) * 8;",
             "tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)",
         ]));
     }
@@ -3997,7 +3997,7 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
             continue;
         }
         out.push_str(&format!(
-            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (capacity : Nat) : Option Luffs.Runtime.TLSF.AllocateArraysResult :=\n  if capacity = 0 ∨ capacity > Luffs.Runtime.TLSF.usizeMax - 7 then none\n  else tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous\n    (Luffs.Containers.Vec.allocationBytes Luffs.Memory.Scalar.u8 capacity)\n\n",
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (capacity : Nat) : Option Luffs.Runtime.TLSF.AllocateArraysResult :=\n  if capacity = 0 ∨ capacity > Luffs.Runtime.TLSF.usizeMax - 7 then none\n  else tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous\n    (Luffs.Allocator.TLSF.roundUp8 capacity)\n\n",
             model.name
         ));
         out.push_str(&format!(
@@ -4461,7 +4461,7 @@ mod tests {
             "theorem tlsf_vec_new_usize_refines : tlsf_vec_new_usize_model = Luffs.Runtime.Containers.vecNewUsizeArrays"
         ));
         assert!(generated.contains(
-            "else tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous\n    (Luffs.Containers.Vec.allocationBytes Luffs.Memory.Scalar.u8 capacity)"
+            "else tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous\n    (Luffs.Allocator.TLSF.roundUp8 capacity)"
         ));
         assert!(generated.contains(
             "theorem tlsf_vec_push_u8_refines : tlsf_vec_push_u8_model = Luffs.Runtime.Containers.vecPushU8Offset"
@@ -4697,8 +4697,8 @@ mod tests {
     #[test]
     fn tlsf_vec_new_refinement_rejects_wrong_rounding() {
         let source = include_str!("../stdlib/tlsf.luffs").replace(
-            "let request: usize = rounded & !7;",
-            "let request: usize = rounded;",
+            "let request: usize = (rounded / 8) * 8;",
+            "let request: usize = (rounded / 4) * 4;",
         );
         let m = parse(&source).unwrap();
         assert!(m.tlsf_vec_new_models.is_empty());
@@ -4736,8 +4736,8 @@ mod tests {
     #[test]
     fn tlsf_shape_recognition_does_not_leak_across_function_boundaries() {
         let source = include_str!("../stdlib/tlsf.luffs").replace(
-            "let bytes: usize = capacity.checked_mul(4)?;\n    let rounded: usize = bytes.checked_add(7)?;\n    let request: usize = rounded & !7;",
-            "let bytes: usize = capacity.checked_mul(4)?;\n    let rounded: usize = bytes.checked_add(7)?;\n    let omitted_request: usize = rounded & !7;",
+            "let bytes: usize = capacity.checked_mul(4)?;\n    let rounded: usize = bytes.checked_add(7)?;\n    let request: usize = (rounded / 8) * 8;",
+            "let bytes: usize = capacity.checked_mul(4)?;\n    let rounded: usize = bytes.checked_add(7)?;\n    let omitted_request: usize = (rounded / 8) * 8;",
         );
         let module = parse(&source).unwrap();
         assert!(

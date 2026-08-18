@@ -176,6 +176,12 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   `values.set index value`, while a distinct-index proof preserves every other
   element. A generic pairwise-region lemma also extracts the disjointness of
   named metadata regions from a pairwise layout hypothesis.
+  The physical and bin-clearing decoders are now composed. The nine-region
+  `InitializerMetadataDisjoint` layout covers all physical arrays, heads, both
+  bitmap levels, and derives the older physical-only layout. Under it,
+  `clearMetadataMemory_encodes` proves all nine cleared representations at
+  once, including preservation of every physical array across the subsequent
+  bitmap/head loops.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

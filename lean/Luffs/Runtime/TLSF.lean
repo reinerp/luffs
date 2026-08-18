@@ -8201,6 +8201,72 @@ structure PhysicalMetadataDisjoint
   next_previous : (ArrayRegion Luffs.Memory.Scalar.u64 nextBase count).disjoint
     (ArrayRegion Luffs.Memory.Scalar.u64 previousBase count)
 
+def initializerMetadataRegions
+    (offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
+      headsBase secondBase firstBase physicalCount headsCount secondCount : Nat) :
+    List Region :=
+  [ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase physicalCount,
+   ArrayRegion Luffs.Memory.Scalar.u64 sizesBase physicalCount,
+   ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase physicalCount,
+   ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase physicalCount,
+   ArrayRegion Luffs.Memory.Scalar.u64 nextBase physicalCount,
+   ArrayRegion Luffs.Memory.Scalar.u64 previousBase physicalCount,
+   ArrayRegion Luffs.Memory.Scalar.u64 headsBase headsCount,
+   ArrayRegion Luffs.Memory.Scalar.u32 secondBase secondCount,
+   ValueRegion Luffs.Memory.Scalar.u64 firstBase]
+
+def InitializerMetadataDisjoint
+    (offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
+      headsBase secondBase firstBase physicalCount headsCount secondCount : Nat) :
+    Prop :=
+  let regions := initializerMetadataRegions offsetsBase sizesBase isFreeBase
+    prevFreeBase nextBase previousBase headsBase secondBase firstBase
+    physicalCount headsCount secondCount
+  ∀ i j, (hi : i < regions.length) → (hj : j < regions.length) → i ≠ j →
+    regions[i].disjoint regions[j]
+
+theorem InitializerMetadataDisjoint.physical
+    {offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
+      headsBase secondBase firstBase physicalCount headsCount secondCount : Nat}
+    (h : InitializerMetadataDisjoint offsetsBase sizesBase isFreeBase
+      prevFreeBase nextBase previousBase headsBase secondBase firstBase
+      physicalCount headsCount secondCount) :
+    PhysicalMetadataDisjoint offsetsBase sizesBase isFreeBase prevFreeBase
+      nextBase previousBase physicalCount := by
+  unfold InitializerMetadataDisjoint at h
+  dsimp only [initializerMetadataRegions] at h
+  constructor
+  · simpa [InitializerMetadataDisjoint, initializerMetadataRegions] using
+      h 0 1 (by simp) (by simp) (by omega)
+  · simpa [InitializerMetadataDisjoint, initializerMetadataRegions] using
+      h 0 2 (by simp) (by simp) (by omega)
+  · simpa [InitializerMetadataDisjoint, initializerMetadataRegions] using
+      h 0 3 (by simp) (by simp) (by omega)
+  · simpa [InitializerMetadataDisjoint, initializerMetadataRegions] using
+      h 0 4 (by simp) (by simp) (by omega)
+  · simpa [InitializerMetadataDisjoint, initializerMetadataRegions] using
+      h 0 5 (by simp) (by simp) (by omega)
+  · simpa [InitializerMetadataDisjoint, initializerMetadataRegions] using
+      h 1 2 (by simp) (by simp) (by omega)
+  · simpa [InitializerMetadataDisjoint, initializerMetadataRegions] using
+      h 1 3 (by simp) (by simp) (by omega)
+  · simpa [InitializerMetadataDisjoint, initializerMetadataRegions] using
+      h 1 4 (by simp) (by simp) (by omega)
+  · simpa [InitializerMetadataDisjoint, initializerMetadataRegions] using
+      h 1 5 (by simp) (by simp) (by omega)
+  · simpa [InitializerMetadataDisjoint, initializerMetadataRegions] using
+      h 2 3 (by simp) (by simp) (by omega)
+  · simpa [InitializerMetadataDisjoint, initializerMetadataRegions] using
+      h 2 4 (by simp) (by simp) (by omega)
+  · simpa [InitializerMetadataDisjoint, initializerMetadataRegions] using
+      h 2 5 (by simp) (by simp) (by omega)
+  · simpa [InitializerMetadataDisjoint, initializerMetadataRegions] using
+      h 3 4 (by simp) (by simp) (by omega)
+  · simpa [InitializerMetadataDisjoint, initializerMetadataRegions] using
+      h 3 5 (by simp) (by simp) (by omega)
+  · simpa [InitializerMetadataDisjoint, initializerMetadataRegions] using
+      h 4 5 (by simp) (by simp) (by omega)
+
 theorem clearPhysicalMemory_encodes
     (offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
       count sentinel : Nat) (mem : Memory)
@@ -8495,6 +8561,122 @@ theorem clearBinsMemory_encodes (secondBase firstBase headsBase secondCount
   simpa [clearBinsMemory, afterSecond, afterFirst, usizeBytes,
     Luffs.Memory.Scalar.u64] using
     And.intro hsecondFinal (And.intro hfirstFinal hheadsFinal)
+
+theorem clearBinsMemory_preserves_encodesArray {α : Type}
+    (codec : Luffs.Memory.Codec α) (targetBase : Nat) (values : List α)
+    (secondBase firstBase headsBase secondCount headsCount sentinel : Nat)
+    (mem : Memory) (hencoded : mem.EncodesArray codec targetBase values)
+    (hsecond : (ArrayRegion Luffs.Memory.Scalar.u32 secondBase secondCount).disjoint
+      (ArrayRegion codec targetBase values.length))
+    (hfirst : (ValueRegion Luffs.Memory.Scalar.u64 firstBase).disjoint
+      (ArrayRegion codec targetBase values.length))
+    (hheads : (ArrayRegion Luffs.Memory.Scalar.u64 headsBase headsCount).disjoint
+      (ArrayRegion codec targetBase values.length)) :
+    (clearBinsMemory secondBase firstBase headsBase secondCount headsCount
+      sentinel mem).EncodesArray codec targetBase values := by
+  let afterSecond := Memory.fillElements mem secondBase 4 0 secondCount
+    (u32Bytes 0)
+  let afterFirst := afterSecond.writeBytes firstBase (usizeBytes 0)
+  have hsecondPreserved : afterSecond.EncodesArray codec targetBase values := by
+    simpa [afterSecond, u32Bytes, Luffs.Memory.Scalar.u32] using
+      hencoded.fillElements_of_disjoint
+        (writeCodec := Luffs.Memory.Scalar.u32) (writeBase := secondBase)
+        (value := (0 : BitVec 32)) (start := 0) (count := secondCount) (by
+          intro index _ hindex
+          exact ArrayRegion.element_disjoint Luffs.Memory.Scalar.u32 (by omega)
+            hsecond)
+  have hfirstPreserved : afterFirst.EncodesArray codec targetBase values := by
+    apply hsecondPreserved.writeBytes_of_disjoint
+    simpa [usizeBytes_length, ValueRegion, Luffs.Memory.Scalar.u64] using hfirst
+  have hheadsPreserved := hfirstPreserved.fillElements_of_disjoint
+    (writeCodec := Luffs.Memory.Scalar.u64) (writeBase := headsBase)
+    (value := BitVec.ofNat 64 sentinel) (start := 0) (count := headsCount) (by
+      intro index _ hindex
+      exact ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 (by omega)
+        hheads)
+  simpa [clearBinsMemory, afterSecond, afterFirst, usizeBytes,
+    Luffs.Memory.Scalar.u64] using hheadsPreserved
+
+theorem clearMetadataMemory_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
+      secondBase firstBase headsBase physicalCount secondCount headsCount
+      sentinel : Nat) (mem : Memory)
+    (hlayout : InitializerMetadataDisjoint offsetsBase sizesBase isFreeBase
+      prevFreeBase nextBase previousBase headsBase secondBase firstBase
+      physicalCount headsCount secondCount) :
+    let afterPhysical := clearPhysicalMemory offsetsBase sizesBase isFreeBase
+      prevFreeBase nextBase previousBase sentinel 0 physicalCount mem
+    let final := clearBinsMemory secondBase firstBase headsBase secondCount
+      headsCount sentinel afterPhysical
+    final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+        (List.replicate physicalCount (0 : BitVec 64)) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+        (List.replicate physicalCount (0 : BitVec 64)) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+        (List.replicate physicalCount (0 : BitVec 8)) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+        (List.replicate physicalCount (0 : BitVec 8)) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+        (List.replicate physicalCount (BitVec.ofNat 64 sentinel)) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+        (List.replicate physicalCount (BitVec.ofNat 64 sentinel)) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u32 secondBase
+        (List.replicate secondCount (0 : BitVec 32)) ∧
+      final.EncodesAt Luffs.Memory.Scalar.u64 firstBase (0 : BitVec 64) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+        (List.replicate headsCount (BitVec.ofNat 64 sentinel)) := by
+  dsimp only
+  let afterPhysical := clearPhysicalMemory offsetsBase sizesBase isFreeBase
+    prevFreeBase nextBase previousBase sentinel 0 physicalCount mem
+  have hphysical := clearPhysicalMemory_encodes offsetsBase sizesBase isFreeBase
+    prevFreeBase nextBase previousBase physicalCount sentinel mem hlayout.physical
+  have hregions := hlayout
+  unfold InitializerMetadataDisjoint at hregions
+  dsimp only [initializerMetadataRegions] at hregions
+  have preservePhysical {α : Type} (codec : Luffs.Memory.Codec α)
+      (base : Nat) (values : List α)
+      (hencoded : afterPhysical.EncodesArray codec base values)
+      (hsecond : (ArrayRegion Luffs.Memory.Scalar.u32 secondBase secondCount).disjoint
+        (ArrayRegion codec base values.length))
+      (hfirst : (ValueRegion Luffs.Memory.Scalar.u64 firstBase).disjoint
+        (ArrayRegion codec base values.length))
+      (hheads : (ArrayRegion Luffs.Memory.Scalar.u64 headsBase headsCount).disjoint
+        (ArrayRegion codec base values.length)) :
+      (clearBinsMemory secondBase firstBase headsBase secondCount headsCount
+        sentinel afterPhysical).EncodesArray codec base values := by
+    exact clearBinsMemory_preserves_encodesArray codec base values secondBase
+      firstBase headsBase secondCount headsCount sentinel afterPhysical hencoded
+      hsecond hfirst hheads
+  have hbins := clearBinsMemory_encodes secondBase firstBase headsBase secondCount
+    headsCount sentinel afterPhysical
+    (by simpa using hregions 8 7 (by simp) (by simp) (by omega))
+    (by simpa using hregions 6 7 (by simp) (by simp) (by omega))
+    (by simpa using hregions 6 8 (by simp) (by simp) (by omega))
+  exact ⟨preservePhysical Luffs.Memory.Scalar.u64 offsetsBase _ hphysical.1
+      (by simpa using hregions 7 0 (by simp) (by simp) (by omega))
+      (by simpa using hregions 8 0 (by simp) (by simp) (by omega))
+      (by simpa using hregions 6 0 (by simp) (by simp) (by omega)),
+    preservePhysical Luffs.Memory.Scalar.u64 sizesBase _ hphysical.2.1
+      (by simpa using hregions 7 1 (by simp) (by simp) (by omega))
+      (by simpa using hregions 8 1 (by simp) (by simp) (by omega))
+      (by simpa using hregions 6 1 (by simp) (by simp) (by omega)),
+    preservePhysical Luffs.Memory.Scalar.u8 isFreeBase _ hphysical.2.2.1
+      (by simpa using hregions 7 2 (by simp) (by simp) (by omega))
+      (by simpa using hregions 8 2 (by simp) (by simp) (by omega))
+      (by simpa using hregions 6 2 (by simp) (by simp) (by omega)),
+    preservePhysical Luffs.Memory.Scalar.u8 prevFreeBase _ hphysical.2.2.2.1
+      (by simpa using hregions 7 3 (by simp) (by simp) (by omega))
+      (by simpa using hregions 8 3 (by simp) (by simp) (by omega))
+      (by simpa using hregions 6 3 (by simp) (by simp) (by omega)),
+    preservePhysical Luffs.Memory.Scalar.u64 nextBase _ hphysical.2.2.2.2.1
+      (by simpa using hregions 7 4 (by simp) (by simp) (by omega))
+      (by simpa using hregions 8 4 (by simp) (by simp) (by omega))
+      (by simpa using hregions 6 4 (by simp) (by simp) (by omega)),
+    preservePhysical Luffs.Memory.Scalar.u64 previousBase _ hphysical.2.2.2.2.2
+      (by simpa using hregions 7 5 (by simp) (by simp) (by omega))
+      (by simpa using hregions 8 5 (by simp) (by simp) (by omega))
+      (by simpa using hregions 6 5 (by simp) (by simp) (by omega)),
+    hbins.1, hbins.2.1, hbins.2.2⟩
 
 theorem clearBins_wp {GF : BundledGFunctors}
     (secondBase firstBase headsBase secondCount headsCount sentinel : Nat)

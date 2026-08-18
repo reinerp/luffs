@@ -228,6 +228,16 @@ theorem Memory.EncodesAt.applyAll_of_disjoint {α : Type}
       intro tail htail
       exact hdisjoint tail (by simp [htail])
 
+theorem ElementWrite.applyAll_append (left right : List ElementWrite)
+    (mem : Memory) :
+    ElementWrite.applyAll (left ++ right) mem =
+      ElementWrite.applyAll right (ElementWrite.applyAll left mem) := by
+  induction left generalizing mem with
+  | nil => rfl
+  | cons write rest ih =>
+      simp only [List.cons_append, ElementWrite.applyAll]
+      exact ih (write.apply mem)
+
 theorem Memory.EncodesArray.writeBytes_of_disjoint {α : Type}
     {codec : Codec α} {mem : Memory} {base writeBase : Nat}
     {values : List α} {bytes : List Byte}
@@ -238,6 +248,21 @@ theorem Memory.EncodesArray.writeBytes_of_disjoint {α : Type}
   intro index hindex
   apply (hencoded index hindex).writeBytes_of_disjoint
   exact ArrayRegion.disjoint_element codec hindex hdisjoint
+
+theorem Memory.EncodesArray.applyAll_of_disjoint {α : Type}
+    {codec : Codec α} {mem : Memory} {base : Nat} {values : List α}
+    {writes : List ElementWrite} (hencoded : mem.EncodesArray codec base values)
+    (hdisjoint : ∀ write, write ∈ writes →
+      write.region.disjoint (ArrayRegion codec base values.length)) :
+    (ElementWrite.applyAll writes mem).EncodesArray codec base values := by
+  induction writes generalizing mem with
+  | nil => exact hencoded
+  | cons write rest ih =>
+      apply ih (hencoded.writeBytes_of_disjoint (by
+        simpa [ElementWrite.apply, ElementWrite.region] using
+          hdisjoint write (by simp)))
+      intro tail htail
+      exact hdisjoint tail (by simp [htail])
 
 theorem Memory.EncodesArray.fillElements_of_disjoint {α β : Type}
     {codec : Codec α} {writeCodec : Codec β} {mem : Memory}
@@ -274,6 +299,27 @@ theorem Memory.EncodesArray.writeElement {α : Type} {codec : Codec α}
     apply (hencoded other hother').writeBytes_of_disjoint
     simpa [ValueRegion, codec.encode_length] using
       ValueRegion.element_disjoint codec base index other heq
+
+/-- An ordered heterogeneous transaction containing one typed array update.
+All preceding writes frame the old array, the selected write performs the
+`List.set`, and all following writes frame the updated array. -/
+theorem Memory.EncodesArray.applyAll_update {α : Type} {codec : Codec α}
+    {mem : Memory} {base : Nat} {values : List α} {index : Nat} {value : α}
+    {before after : List ElementWrite}
+    (hencoded : mem.EncodesArray codec base values) (hindex : index < values.length)
+    (hbefore : ∀ write, write ∈ before →
+      write.region.disjoint (ArrayRegion codec base values.length))
+    (hafter : ∀ write, write ∈ after →
+      write.region.disjoint (ArrayRegion codec base values.length)) :
+    (ElementWrite.applyAll
+      (before ++ (⟨base, codec.size, index, codec.encode value⟩ : ElementWrite) ::
+        after) mem).EncodesArray codec base (values.set index value) := by
+  rw [ElementWrite.applyAll_append]
+  simp only [ElementWrite.applyAll]
+  apply ((hencoded.applyAll_of_disjoint hbefore).writeElement hindex)
+    |>.applyAll_of_disjoint
+  intro write hwrite
+  simpa [List.length_set] using hafter write hwrite
 
 theorem Memory.fillElements_encodesArray {α : Type} (codec : Codec α)
     (mem : Memory) (base count : Nat) (value : α) :

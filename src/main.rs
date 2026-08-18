@@ -3928,14 +3928,19 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
             model.name, model.name, model.refines
         ));
     }
+    if !module.tlsf_coalesce_physical_models.is_empty() {
+        out.push_str(
+            "def tlsf_compact_prefix_model {α : Type} : List α → Nat → List α\n  | _, 0 => []\n  | [], _ + 1 => []\n  | value :: rest, count + 1 => value :: tlsf_compact_prefix_model rest count\n\ntheorem tlsf_compact_prefix_refines {α : Type} :\n    tlsf_compact_prefix_model = fun (values : List α) count => values.take count := by\n  funext values count\n  induction count generalizing values with\n  | zero => cases values <;> rfl\n  | succ count ih =>\n      cases values with\n      | nil => rfl\n      | cons value rest => simp only [tlsf_compact_prefix_model, List.take_succ_cons, ih]\n\ndef tlsf_compact_active_model {α : Type} [Inhabited α]\n    (values : List α) (count removed : Nat) : List α :=\n  values.take removed ++\n    tlsf_compact_prefix_model (values.drop (removed + 1)) (count - removed - 1) ++\n    values.drop (count - 1)\n\ntheorem tlsf_compact_active_refines {α : Type} [Inhabited α] :\n    tlsf_compact_active_model (α := α) = Luffs.Runtime.TLSF.compactActive := by\n  funext values count removed\n  unfold tlsf_compact_active_model Luffs.Runtime.TLSF.compactActive\n  rw [tlsf_compact_prefix_refines]\n\n",
+        );
+    }
     for model in &module.tlsf_coalesce_physical_models {
         out.push_str(&format!(
-            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count left : Nat) : Option Luffs.Runtime.TLSF.CoalescePhysicalResult :=\n  if count ≤ offsets.length ∧ count ≤ sizes.length ∧ count ≤ is_free.length ∧ count ≤ prev_free.length then\n    let right := left + 1\n    if right ≥ count then none\n    else if is_free[left]? = some 0 then none\n    else if is_free[right]? = some 0 then none\n    else match offsets[left]?, sizes[left]?, offsets[right]?, sizes[right]? with\n      | some left_offset, some left_size, some right_offset, some right_size =>\n          if left_offset + left_size != right_offset then none\n          else\n            let sizes := sizes.set left (left_size + right_size)\n            some {{\n              offsets := Luffs.Runtime.TLSF.compactActive offsets count right\n              sizes := Luffs.Runtime.TLSF.compactActive sizes count right\n              isFree := Luffs.Runtime.TLSF.compactActive is_free count right\n              prevFree := Luffs.Runtime.TLSF.compactActive prev_free count right\n              count := count - 1 }}\n      | _, _, _, _ => none\n  else none\n\n",
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count left : Nat) : Option Luffs.Runtime.TLSF.CoalescePhysicalResult :=\n  if count ≤ offsets.length ∧ count ≤ sizes.length ∧ count ≤ is_free.length ∧ count ≤ prev_free.length then\n    let right := left + 1\n    if right ≥ count then none\n    else if is_free[left]? = some 0 then none\n    else if is_free[right]? = some 0 then none\n    else match offsets[left]?, sizes[left]?, offsets[right]?, sizes[right]? with\n      | some left_offset, some left_size, some right_offset, some right_size =>\n          if left_offset + left_size != right_offset then none\n          else\n            let sizes := sizes.set left (left_size + right_size)\n            some {{\n              offsets := tlsf_compact_active_model offsets count right\n              sizes := tlsf_compact_active_model sizes count right\n              isFree := tlsf_compact_active_model is_free count right\n              prevFree := tlsf_compact_active_model prev_free count right\n              count := count - 1 }}\n      | _, _, _, _ => none\n  else none\n\n",
             model.name
         ));
         out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by\n  unfold {}_model {}\n  rfl\n\n",
-            model.name, model.name, model.refines, model.name, model.refines
+            "theorem {}_refines : {}_model = {} := by\n  unfold {}_model\n  simp only [tlsf_compact_active_refines]\n  rfl\n\n",
+            model.name, model.name, model.refines, model.name
         ));
     }
     for model in &module.tlsf_coalesce_class_models {
@@ -4738,8 +4743,10 @@ mod tests {
             "theorem tlsf_coalesce_physical_refines : tlsf_coalesce_physical_model = Luffs.Runtime.TLSF.coalescePhysicalArrays"
         ));
         assert!(generated.contains("let sizes := sizes.set left (left_size + right_size)"));
+        assert!(generated.contains("def tlsf_compact_prefix_model {α : Type}"));
+        assert!(generated.contains("offsets := tlsf_compact_active_model offsets count right"));
         assert!(
-            generated.contains("offsets := Luffs.Runtime.TLSF.compactActive offsets count right")
+            !generated.contains("offsets := Luffs.Runtime.TLSF.compactActive offsets count right")
         );
         assert!(!generated.contains(
             "Option Luffs.Runtime.TLSF.CoalescePhysicalResult :=\n  Luffs.Runtime.TLSF.coalescePhysicalArrays"

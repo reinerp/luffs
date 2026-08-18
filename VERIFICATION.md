@@ -805,9 +805,13 @@ concurrency are later extensions and are not prerequisites for `Box` and
   invalidates conditional/public deallocation and every dependent Box/Vec drop
   or growth model instead of leaving a dangling generated theorem. Physical
   coalescing now emits its capacity/free/adjacency checks, merged-size update,
-  four fixed-array compactions, and count decrement directly. The shared
-  `compactActive` primitive used to summarize each source loop is the next
-  source-generation boundary.
+  four fixed-array compactions, and count decrement directly. Each compaction
+  now uses a generated structural recursion over the shifted active prefix.
+  Lean proves that recursion equal to `List.take` and then proves the complete
+  fixed-capacity result equal to `compactActive`, including preservation of the
+  spare tail. Thus no generated deallocation model calls the handwritten
+  compaction primitive. Mark-free and class-list insertion/removal remain the
+  next direct runtime-model boundaries on this path.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

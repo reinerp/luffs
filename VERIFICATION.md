@@ -1140,7 +1140,13 @@ concurrency are later extensions and are not prerequisites for `Box` and
   too: it reads the active count, selected free flag, selected offset, and
   selected size in source order. Its Iris WP leaves memory unchanged, and its
   composition with the whole-branch stores has the exact established final
-  write state. The split branch's shifting-loop reads are not yet included.
+  write state. The split branch now has an exact source-ordered operational
+  trace as well. Each descending-loop row performs offset load/store, size
+  load/store, free-flag load/store, and predecessor-flag load/store before
+  recurring; the recursive Iris WP transports mappedness through all earlier
+  writes. Composing the common header reads, that loop, and the finishing
+  stores is proved byte-for-byte equal to `allocateSplitWrites`. Lifting this
+  new program through the public split-result encoding is the next splice.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

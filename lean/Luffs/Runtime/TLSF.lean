@@ -17677,6 +17677,309 @@ theorem allocatePhysicalWholeInterleavedProgram_wp_exact
   exact AllocateProgram.allocateWholeProgram_wp_exact isFreeBase prevFreeBase
     block count mem hfree hprev
 
+/-- One exact iteration of the split branch's descending header-copy loop.
+Each field is loaded immediately before its corresponding store, matching the
+Luffs source rather than batching reads or treating the row copy atomically. -/
+def shiftPhysicalRowInterleavedProgram
+    (offsetsBase sizesBase isFreeBase prevFreeBase cursor : Nat)
+    (offsetValue sizeValue : Nat) (freeValue prevValue : Fin 256) : Program :=
+  (Program.readBytes (offsetsBase + cursor * 8) 8).then
+  ((Program.writeElements [⟨offsetsBase, 8, cursor + 1,
+      InitializeProgram.usizeBytes offsetValue⟩]).then
+  ((Program.readBytes (sizesBase + cursor * 8) 8).then
+  ((Program.writeElements [⟨sizesBase, 8, cursor + 1,
+      InitializeProgram.usizeBytes sizeValue⟩]).then
+  ((Program.readBytes (isFreeBase + cursor) 1).then
+  ((Program.writeElements [⟨isFreeBase, 1, cursor + 1,
+      InitializeProgram.u8Bytes freeValue⟩]).then
+  ((Program.readBytes (prevFreeBase + cursor) 1).then
+    (Program.writeElements [⟨prevFreeBase, 1, cursor + 1,
+      InitializeProgram.u8Bytes prevValue⟩])))))))
+
+theorem shiftPhysicalRowInterleavedProgram_wp_exact
+    {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase cursor : Nat)
+    (offsetValue sizeValue : Nat) (freeValue prevValue : Fin 256) (mem : Memory)
+    (hoffsetsRead : ∀ i, i < 8 →
+      mem.mapped (offsetsBase + cursor * 8 + i))
+    (hoffsetsWrite : ∀ i, i < 8 →
+      mem.mapped (offsetsBase + (cursor + 1) * 8 + i))
+    (hsizesRead : ∀ i, i < 8 → mem.mapped (sizesBase + cursor * 8 + i))
+    (hsizesWrite : ∀ i, i < 8 →
+      mem.mapped (sizesBase + (cursor + 1) * 8 + i))
+    (hfreeRead : mem.mapped (isFreeBase + cursor))
+    (hfreeWrite : mem.mapped (isFreeBase + cursor + 1))
+    (hprevRead : mem.mapped (prevFreeBase + cursor))
+    (hprevWrite : mem.mapped (prevFreeBase + cursor + 1)) :
+    ⊢@{IProp GF} Program.wp
+      (shiftPhysicalRowInterleavedProgram offsetsBase sizesBase isFreeBase
+        prevFreeBase cursor offsetValue sizeValue freeValue prevValue) mem
+      (fun final => final = ElementWrite.applyAll
+        [⟨offsetsBase, 8, cursor + 1, InitializeProgram.usizeBytes offsetValue⟩,
+         ⟨sizesBase, 8, cursor + 1, InitializeProgram.usizeBytes sizeValue⟩,
+         ⟨isFreeBase, 1, cursor + 1, InitializeProgram.u8Bytes freeValue⟩,
+         ⟨prevFreeBase, 1, cursor + 1, InitializeProgram.u8Bytes prevValue⟩] mem) := by
+  let wo : ElementWrite := ⟨offsetsBase, 8, cursor + 1,
+    InitializeProgram.usizeBytes offsetValue⟩
+  let ws : ElementWrite := ⟨sizesBase, 8, cursor + 1,
+    InitializeProgram.usizeBytes sizeValue⟩
+  let wf : ElementWrite := ⟨isFreeBase, 1, cursor + 1,
+    InitializeProgram.u8Bytes freeValue⟩
+  let wp : ElementWrite := ⟨prevFreeBase, 1, cursor + 1,
+    InitializeProgram.u8Bytes prevValue⟩
+  unfold shiftPhysicalRowInterleavedProgram
+  apply Program.wp_then
+    (Program.readBytes_wp (offsetsBase + cursor * 8) 8 mem hoffsetsRead)
+  intro m0 hm0
+  subst m0
+  apply Program.wp_then
+    (Program.writeElements_wp_exact [wo] mem (by
+      intro w hw
+      simp only [List.mem_singleton] at hw
+      subst w
+      simpa [wo] using InitializeProgram.usizeBytes_length offsetValue) (by
+      intro w hw i hi
+      simp only [List.mem_singleton] at hw
+      subst w
+      simpa [wo] using hoffsetsWrite i hi))
+  intro m1 hm1
+  subst m1
+  apply Program.wp_then
+    (Program.readBytes_wp (sizesBase + cursor * 8) 8 _ (by
+      intro i hi
+      exact ElementWrite.applyAll_mapped [wo] mem (hsizesRead i hi)))
+  intro m1r hm1r
+  subst m1r
+  apply Program.wp_then
+    (Program.writeElements_wp_exact [ws] _ (by
+      intro w hw
+      simp only [List.mem_singleton] at hw
+      subst w
+      simpa [ws] using InitializeProgram.usizeBytes_length sizeValue) (by
+      intro w hw i hi
+      simp only [List.mem_singleton] at hw
+      subst w
+      exact ElementWrite.applyAll_mapped [wo] mem (by
+        simpa [ws] using hsizesWrite i hi)))
+  intro m2 hm2
+  subst m2
+  apply Program.wp_then
+    (Program.readBytes_wp (isFreeBase + cursor) 1 _ (by
+      intro i hi
+      have : i = 0 := by omega
+      subst i
+      exact ElementWrite.applyAll_mapped [ws] _
+        (ElementWrite.applyAll_mapped [wo] mem (by simpa using hfreeRead))))
+  intro m2r hm2r
+  subst m2r
+  apply Program.wp_then
+    (Program.writeElements_wp_exact [wf] _ (by
+      intro w hw
+      simp only [List.mem_singleton] at hw
+      subst w
+      simpa [wf] using InitializeProgram.u8Bytes_length freeValue) (by
+      intro w hw i hi
+      simp only [List.mem_singleton] at hw
+      subst w
+      have : i = 0 := by simpa [wf] using hi
+      subst i
+      exact ElementWrite.applyAll_mapped [ws] _
+        (ElementWrite.applyAll_mapped [wo] mem (by
+          simpa [wf, Nat.add_assoc] using hfreeWrite))))
+  intro m3 hm3
+  subst m3
+  apply Program.wp_then
+    (Program.readBytes_wp (prevFreeBase + cursor) 1 _ (by
+      intro i hi
+      have : i = 0 := by omega
+      subst i
+      exact ElementWrite.applyAll_mapped [wf] _
+        (ElementWrite.applyAll_mapped [ws] _
+          (ElementWrite.applyAll_mapped [wo] mem (by simpa using hprevRead)))))
+  intro m3r hm3r
+  subst m3r
+  apply Program.wp_mono
+    (Program.writeElements_wp_exact [wp] _ (by
+      intro w hw
+      simp only [List.mem_singleton] at hw
+      subst w
+      simpa [wp] using InitializeProgram.u8Bytes_length prevValue) (by
+      intro w hw i hi
+      simp only [List.mem_singleton] at hw
+      subst w
+      have : i = 0 := by simpa [wp] using hi
+      subst i
+      exact ElementWrite.applyAll_mapped [wf] _
+        (ElementWrite.applyAll_mapped [ws] _
+          (ElementWrite.applyAll_mapped [wo] mem (by
+            simpa [wp, Nat.add_assoc] using hprevWrite)))))
+  intro final hfinal
+  subst final
+  rfl
+
+def shiftPhysicalInterleavedProgram
+    (offsetsBase sizesBase isFreeBase prevFreeBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (successor : Nat) : Nat → Program
+  | 0 => .done
+  | cursor + 1 =>
+      if successor < cursor + 1 then
+        (shiftPhysicalRowInterleavedProgram offsetsBase sizesBase isFreeBase
+          prevFreeBase cursor (offsets[cursor]?.getD 0)
+          (sizes[cursor]?.getD 0) (isFree[cursor]?.getD 0)
+          (prevFree[cursor]?.getD 0)).then
+        (shiftPhysicalInterleavedProgram offsetsBase sizesBase isFreeBase
+          prevFreeBase offsets sizes isFree prevFree successor cursor)
+      else .done
+
+theorem shiftPhysicalInterleavedProgram_wp_exact
+    {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (successor cursor : Nat) (mem : Memory)
+    (hcursorOffsets : cursor < offsets.length)
+    (hcursorSizes : cursor < sizes.length)
+    (hcursorFree : cursor < isFree.length)
+    (hcursorPrev : cursor < prevFree.length)
+    (hoffsets : ∀ index, index < offsets.length → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizes : ∀ index, index < sizes.length → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hfree : ∀ index, index < isFree.length →
+      mem.mapped (isFreeBase + index))
+    (hprev : ∀ index, index < prevFree.length →
+      mem.mapped (prevFreeBase + index)) :
+    ⊢@{IProp GF} Program.wp
+      (shiftPhysicalInterleavedProgram offsetsBase sizesBase isFreeBase
+        prevFreeBase offsets sizes isFree prevFree successor cursor) mem
+      (fun final => final = ElementWrite.applyAll
+        (AllocateProgram.shiftPhysicalWrites offsetsBase sizesBase isFreeBase
+          prevFreeBase offsets sizes isFree prevFree successor cursor) mem) := by
+  induction cursor generalizing mem with
+  | zero =>
+      simpa [shiftPhysicalInterleavedProgram,
+        AllocateProgram.shiftPhysicalWrites, ElementWrite.applyAll] using
+        (Program.wp_done (GF := GF) mem (fun final => final = mem) rfl)
+  | succ cursor ih =>
+      by_cases hcopy : successor < cursor + 1
+      · rw [shiftPhysicalInterleavedProgram, if_pos hcopy,
+          AllocateProgram.shiftPhysicalWrites, if_pos hcopy]
+        let rowWrites : List ElementWrite :=
+          [⟨offsetsBase, 8, cursor + 1,
+              InitializeProgram.usizeBytes (offsets[cursor]?.getD 0)⟩,
+           ⟨sizesBase, 8, cursor + 1,
+              InitializeProgram.usizeBytes (sizes[cursor]?.getD 0)⟩,
+           ⟨isFreeBase, 1, cursor + 1,
+              InitializeProgram.u8Bytes (isFree[cursor]?.getD 0)⟩,
+           ⟨prevFreeBase, 1, cursor + 1,
+              InitializeProgram.u8Bytes (prevFree[cursor]?.getD 0)⟩]
+        apply Program.wp_then
+          (shiftPhysicalRowInterleavedProgram_wp_exact (GF := GF) offsetsBase
+            sizesBase isFreeBase prevFreeBase cursor (offsets[cursor]?.getD 0)
+            (sizes[cursor]?.getD 0) (isFree[cursor]?.getD 0)
+            (prevFree[cursor]?.getD 0) mem
+            (hoffsets cursor (by omega))
+            (hoffsets (cursor + 1) hcursorOffsets)
+            (hsizes cursor (by omega))
+            (hsizes (cursor + 1) hcursorSizes)
+            (hfree cursor (by omega)) (hfree (cursor + 1) hcursorFree)
+            (hprev cursor (by omega)) (hprev (cursor + 1) hcursorPrev))
+        intro middle hmiddle
+        subst middle
+        apply Program.wp_mono
+          (ih (mem := ElementWrite.applyAll rowWrites mem) (by omega) (by omega)
+            (by omega) (by omega)
+            (fun index hindex i hi =>
+              ElementWrite.applyAll_mapped rowWrites mem
+                (hoffsets index hindex i hi))
+            (fun index hindex i hi =>
+              ElementWrite.applyAll_mapped rowWrites mem
+                (hsizes index hindex i hi))
+            (fun index hindex =>
+              ElementWrite.applyAll_mapped rowWrites mem (hfree index hindex))
+            (fun index hindex =>
+              ElementWrite.applyAll_mapped rowWrites mem (hprev index hindex)))
+        intro final hfinal
+        subst final
+        rw [← ElementWrite.applyAll_append]
+      · rw [shiftPhysicalInterleavedProgram, if_neg hcopy,
+          AllocateProgram.shiftPhysicalWrites, if_neg hcopy]
+        exact Program.wp_done mem _ rfl
+
+def allocatePhysicalSplitInterleavedProgram
+    (countBase offsetsBase sizesBase isFreeBase prevFreeBase block count request
+      remainderOffset remainderSize : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256)) : Program :=
+  (allocatePhysicalHeaderReadProgram countBase offsetsBase sizesBase isFreeBase
+    block).then
+  ((shiftPhysicalInterleavedProgram offsetsBase sizesBase isFreeBase prevFreeBase
+    offsets sizes isFree prevFree (block + 1) count).then
+    (Program.writeElements
+      (AllocateProgram.finishSplitWrites offsetsBase sizesBase isFreeBase
+        prevFreeBase countBase block count request remainderOffset remainderSize)))
+
+theorem allocatePhysicalSplitInterleavedProgram_wp_exact
+    {GF : BundledGFunctors}
+    (countBase offsetsBase sizesBase isFreeBase prevFreeBase block count request
+      remainderOffset remainderSize : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256)) (mem : Memory)
+    (hblock : block < count)
+    (hcountOffsets : count < offsets.length)
+    (hcountSizes : count < sizes.length)
+    (hcountFree : count < isFree.length)
+    (hcountPrev : count < prevFree.length)
+    (hoffsets : ∀ index, index < offsets.length → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizes : ∀ index, index < sizes.length → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hfree : ∀ index, index < isFree.length →
+      mem.mapped (isFreeBase + index))
+    (hprev : ∀ index, index < prevFree.length →
+      mem.mapped (prevFreeBase + index))
+    (hcountMapped : ∀ i, i < 8 → mem.mapped (countBase + i)) :
+    ⊢@{IProp GF} Program.wp
+      (allocatePhysicalSplitInterleavedProgram countBase offsetsBase sizesBase
+        isFreeBase prevFreeBase block count request remainderOffset remainderSize
+        offsets sizes isFree prevFree) mem
+      (fun final => final = ElementWrite.applyAll
+        (AllocateProgram.allocateSplitWrites offsetsBase sizesBase isFreeBase
+          prevFreeBase countBase block count request remainderOffset remainderSize
+          offsets sizes isFree prevFree) mem) := by
+  unfold allocatePhysicalSplitInterleavedProgram
+  apply Program.wp_then
+    (allocatePhysicalHeaderReadProgram_wp (GF := GF) countBase offsetsBase
+      sizesBase isFreeBase block mem hcountMapped
+      (hfree block (by omega)) (hoffsets block (by omega))
+      (hsizes block (by omega)))
+  intro afterHeader hheader
+  subst afterHeader
+  apply Program.wp_then
+    (shiftPhysicalInterleavedProgram_wp_exact (GF := GF) offsetsBase sizesBase
+      isFreeBase prevFreeBase offsets sizes isFree prevFree (block + 1) count mem
+      hcountOffsets hcountSizes hcountFree hcountPrev hoffsets hsizes hfree hprev)
+  intro afterLoop hloop
+  subst afterLoop
+  let loopWrites := AllocateProgram.shiftPhysicalWrites offsetsBase sizesBase
+    isFreeBase prevFreeBase offsets sizes isFree prevFree (block + 1) count
+  apply Program.wp_mono
+    (Program.writeElements_wp_exact
+      (AllocateProgram.finishSplitWrites offsetsBase sizesBase isFreeBase
+        prevFreeBase countBase block count request remainderOffset remainderSize)
+      (ElementWrite.applyAll loopWrites mem)
+      (AllocateProgram.finishSplitWrites_width offsetsBase sizesBase isFreeBase
+        prevFreeBase countBase block count request remainderOffset remainderSize)
+      (by
+        intro write hwrite i hi
+        exact ElementWrite.applyAll_mapped loopWrites mem
+          (AllocateProgram.finishSplitWrites_mapped offsetsBase sizesBase
+            isFreeBase prevFreeBase countBase block count request remainderOffset
+            remainderSize offsets sizes isFree prevFree mem hblock hcountOffsets
+            hcountSizes hcountFree hcountPrev hoffsets hsizes hfree hprev
+            hcountMapped write hwrite i hi)))
+  intro final hfinal
+  subst final
+  rw [AllocateProgram.allocateSplitWrites, ElementWrite.applyAll_append]
+
 end AllocateComposition
 
 /-- Exact pure state transformer for `tlsf_initialize`. All fixed-capacity

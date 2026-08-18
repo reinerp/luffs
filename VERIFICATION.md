@@ -1141,9 +1141,12 @@ alias semantics. This removes the one-store restriction that blocked
   the corresponding signed, unsigned, and pointer-width scalar codecs.
   Generated Rust checks alignment and byte divisibility before the internal
   cast, while `NativeSliceReady` proves those checks redundant on the verified
-  TLSF path and Iris supplies mutable uniqueness. The final public Vec API and
-  lifetime-recombination connection remain before the overall Vec item is
-  complete.
+  TLSF path and Iris supplies mutable uniqueness. Ending a native mutable-slice
+  lifetime is now proved as well: returning the exclusive slice capability
+  (possibly with updated values, but unchanged length) combines it with the
+  retained prefix and suffix capabilities to restore sole ownership of the
+  whole updated Vec. The final public Vec surface remains before the overall
+  Vec item is complete.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.
   All four checked-in examples are currently accepted by Lean and compile to

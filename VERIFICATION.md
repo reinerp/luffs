@@ -1214,6 +1214,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   derive a closed exact WP from the successful physical preflight bounds. The
   next step is decoding this trace to `coalescePhysicalArrays`, then composing
   it between the two class removals and the merged-class insertion.
+  The forward compaction loop now also has a typed state transformer and
+  byte-to-array projection proofs for both native-width offset and size arrays.
+  Each proof follows the actual interleaved row order and frames the other
+  three stores using region disjointness. Flag projections and the final
+  identification with `compactActive` remain before the physical decoder is
+  complete.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

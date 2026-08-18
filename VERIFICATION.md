@@ -84,6 +84,12 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   The framed Iris Vec-growth rule now returns that exact WP for the generated
   loop alongside the transferred typed ownership, and the compiler emits the
   same exact-trace theorem for both growth variants.
+  Generic read/write-program emission now accepts fixed byte arrays as well as
+  slices. Consequently the public TLSF-backed `Box<u8>` load and store bodies
+  generate closed operational WPs directly from their Luffs source; the store
+  also has the mapped-address existence corollary. This removes the previous
+  discrepancy where their slice-based container counterparts had WPs but the
+  fixed-pool entry points did not.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

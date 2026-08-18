@@ -846,6 +846,16 @@ fn scalar_width(ty: &str) -> Option<usize> {
     }
 }
 
+fn is_fixed_u8_array_reference(ty: &str, mutable: bool) -> bool {
+    let prefix = if mutable { "&mut [u8; " } else { "&[u8; " };
+    ty.trim()
+        .strip_prefix(prefix)
+        .and_then(|rest| rest.strip_suffix(']'))
+        .is_some_and(|length| {
+            !length.is_empty() && length.bytes().all(|byte| byte.is_ascii_digit())
+        })
+}
+
 fn parse_array_models(source: &str) -> Vec<ArrayModel> {
     #[derive(Default)]
     struct Pending {
@@ -900,7 +910,10 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
                 };
                 let name = name.trim().to_owned();
                 match ty.trim() {
-                    "&mut [u8]" => {
+                    ty if ty == "&mut [u8]"
+                        || (is_fixed_u8_array_reference(ty, true)
+                            && trimmed[3..open].trim().starts_with("tlsf_box_")) =>
+                    {
                         if array.replace(name.clone()).is_some() {
                             eligible = false;
                         }
@@ -1190,7 +1203,12 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
                 let name = lean_ident(&source_name);
                 let ty = erase_reference_lifetime(ty);
                 match ty.as_str() {
-                    "&[u8]" | "&mut [u8]" => {
+                    ty if ty == "&[u8]"
+                        || ty == "&mut [u8]"
+                        || ((is_fixed_u8_array_reference(ty, false)
+                            || is_fixed_u8_array_reference(ty, true))
+                            && trimmed[3..open].trim().starts_with("tlsf_box_")) =>
+                    {
                         if array.replace(source_name).is_some() {
                             eligible = false;
                         }
@@ -5766,6 +5784,19 @@ mod tests {
         assert!(tlsf.rust.contains("pub fn tlsf_vec_drop_u8"));
         assert!(!tlsf.rust.contains("pub fn tlsf_allocate_physical"));
         assert!(!tlsf.rust.contains("pub fn tlsf_coalesce_physical"));
+    }
+
+    #[test]
+    fn fixed_array_box_accesses_emit_closed_memory_programs() {
+        let module = parse(include_str!("../stdlib/tlsf.luffs")).unwrap();
+        validate(&module).unwrap();
+        let generated = lean(&module);
+
+        assert!(generated.contains("def tlsf_box_load_u8_program"));
+        assert!(generated.contains("theorem tlsf_box_load_u8_program_wp"));
+        assert!(generated.contains("def tlsf_box_store_u8_program"));
+        assert!(generated.contains("theorem tlsf_box_store_u8_program_wp"));
+        assert!(generated.contains("theorem tlsf_box_store_u8_program_wp_of_mapped"));
     }
 
     #[test]

@@ -693,6 +693,13 @@ through the exhausted-chain clear operation. The compiler's specialized
 source-shape gate emits the corresponding refinement declaration. Relating
 this fixed-array state to `Bins.State.takeCandidate` is still required before
 the abstract allocator proof can consume it.
+The lower-level `tlsf_remove_class` mutation is now decoded all the way to
+memory as well. One source-ordered `Program` performs the conditional intrusive
+link repairs, mandatory detach sentinels, second-level bit clear, and optional
+first-level summary clear. Its Iris weakest-precondition theorem simultaneously
+returns encodings of all five resulting objects and refines the successful
+`removeClassArrays` result. Pairwise region separation frames every cross-array
+store, including the singleton-chain path that writes both bitmap levels.
 The clear operation is no longer opaque: Lean proves array length preservation,
 preservation of every other bitmap word, preservation of every other bit in
 the selected word, and that the selected bit becomes false.

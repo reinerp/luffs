@@ -818,6 +818,11 @@ concurrency are later extensions and are not prerequisites for `Box` and
   clears both levels exactly when detaching its last node. Their recognizers
   depend on the corresponding lower link-operation recognizers, closing this
   part of both allocation and deallocation dependency graphs.
+  Candidate-class detachment is source-generated too: it composes the
+  generated two-level class lookup with generated intrusive removal, then
+  performs the last-member second- and first-level bitmap clears directly.
+  Its refinement theorem reduces the complete transaction to the executable
+  reference semantics, and dependency closure requires both lower stages.
   Public allocation is source-generated as a transaction as well: request
   classification, two-level nonempty-class lookup, selected-offset validation,
   physical-header lookup, split preflight, candidate detachment, physical

@@ -538,6 +538,10 @@ fn parse(source: &str) -> Result<Module, String> {
     }
     if module.tlsf_remove_models.is_empty() {
         module.tlsf_remove_class_models.clear();
+        module.tlsf_take_candidate_class_models.clear();
+    }
+    if module.tlsf_find_nonempty_class_models.is_empty() {
+        module.tlsf_take_candidate_class_models.clear();
     }
     if module.tlsf_classify_request_models.is_empty()
         || module.tlsf_find_nonempty_class_models.is_empty()
@@ -3878,12 +3882,37 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
     for model in &module.tlsf_take_candidate_class_models {
         out.push_str(&format!(
             "def {}_model (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (start_fl start_sl : Nat) : Option Luffs.Runtime.TLSF.ClassCandidateResult :=\n  \
-{} second first heads next previous start_fl start_sl\n\n",
-            model.name, model.refines
+match tlsf_find_nonempty_class_model second first start_fl start_sl with\n  \
+| none => none\n  \
+| some bin =>\n      \
+if bin ≥ heads.length then none else\n      \
+let found_fl := bin / 32\n      \
+if found_fl ≥ second.length then none else\n      \
+let block := heads[bin]?.getD next.length\n      \
+if block ≥ next.length then none else\n      \
+if block ≥ previous.length then none else\n      \
+let successor := next[block]?.getD next.length\n      \
+match tlsf_remove_model heads next previous bin block with\n      \
+| none => none\n      \
+| some (next_heads, next_links, next_previous) =>\n          \
+if successor ≥ next.length then\n            \
+let next_second := Luffs.Runtime.TLSF.clearClassBit second bin\n            \
+let next_first :=\n              \
+if next_second[found_fl]?.getD 0 = 0 then\n                \
+Luffs.Runtime.TLSF.clearWordBit first found_fl\n              \
+else first\n            \
+some ⟨block, bin, next_second, next_first, next_heads, next_links, next_previous⟩\n          \
+else\n            \
+some ⟨block, bin, second, first, next_heads, next_links, next_previous⟩\n\n",
+            model.name
         ));
         out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
-            model.name, model.name, model.refines
+            "theorem {}_refines : {}_model = {} := by\n  \
+funext second first heads next previous start_fl start_sl\n  \
+unfold {}_model {} tlsf_find_nonempty_class_model\n  \
+rw [tlsf_remove_refines]\n  \
+rfl\n\n",
+            model.name, model.name, model.refines, model.name, model.refines
         ));
     }
     for model in &module.tlsf_mark_free_models {
@@ -4542,6 +4571,15 @@ mod tests {
         assert!(generated.contains("theorem tlsf_find_nonempty_class_refines"));
         assert!(generated.contains(
             "theorem tlsf_take_candidate_class_refines : tlsf_take_candidate_class_model = Luffs.Runtime.TLSF.takeCandidateClassArrays"
+        ));
+        assert!(
+            generated.contains(
+                "match tlsf_find_nonempty_class_model second first start_fl start_sl with"
+            )
+        );
+        assert!(generated.contains("match tlsf_remove_model heads next previous bin block with"));
+        assert!(!generated.contains(
+            "def tlsf_take_candidate_class_model (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (start_fl start_sl : Nat) : Option Luffs.Runtime.TLSF.ClassCandidateResult :=\n  Luffs.Runtime.TLSF.takeCandidateClassArrays"
         ));
         assert!(generated.contains(
             "theorem tlsf_mark_free_refines : tlsf_mark_free_model = Luffs.Runtime.TLSF.markFreeArrays"
@@ -5202,6 +5240,17 @@ mod tests {
         );
         let m = parse(&source).unwrap();
         assert!(m.tlsf_remove_class_models.is_empty());
+    }
+
+    #[test]
+    fn tlsf_candidate_class_rejects_a_changed_second_level_mask() {
+        let source = include_str!("../stdlib/tlsf.luffs").replace(
+            "let second_mask: u32 = 1 << found_sl;",
+            "let second_mask: u32 = 2 << found_sl;",
+        );
+        let m = parse(&source).unwrap();
+        assert!(m.tlsf_take_candidate_class_models.is_empty());
+        assert!(m.tlsf_allocate_models.is_empty());
     }
 
     #[test]

@@ -3950,8 +3950,12 @@ rfl\n\n",
     }
     for model in &module.tlsf_classify_size_models {
         out.push_str(&format!(
-            "def {}_model (size : Nat) : Option Nat :=\n  Luffs.Runtime.TLSF.classifySizeBinLowered size\n\n",
+            "def {}_model (size : Nat) : Option Nat :=\n  if size > Luffs.Runtime.TLSF.usizeMax then none\n  else if size = 0 then none\n  else if size ≤ 256 then some ((size - 1) >>> 3)\n  else\n    let leading := Luffs.Runtime.TLSF.leadingZeros64 size\n    if leading > 63 then none else\n    let fl := 63 - leading\n    if fl < 5 then none else\n    let base := 1 <<< fl\n    if base > size then none else\n    let shift := fl - 5\n    let step := 1 <<< shift\n    let delta := size - base\n    let sl := delta / step\n    if sl ≥ 32 then none else\n    let encoded_base := fl * 32\n    let encoded := encoded_base + sl\n    if encoded > Luffs.Runtime.TLSF.usizeMax then none else some encoded\n\n",
             model.name
+        ));
+        out.push_str(&format!(
+            "theorem {}_lowered : {}_model = Luffs.Runtime.TLSF.classifySizeBinLowered := by rfl\n\n",
+            model.name, model.name
         ));
         out.push_str(&format!(
             "theorem {}_refines : {}_model = {} := by\n  funext size\n  exact Luffs.Runtime.TLSF.classifySizeBinLowered_eq size\n\n",
@@ -3959,9 +3963,16 @@ rfl\n\n",
         ));
     }
     for model in &module.tlsf_classify_request_models {
+        out.push_str(
+            "def tlsf_high_request_key_model (request : Nat) : Option Nat :=\n  let leading := Luffs.Runtime.TLSF.leadingZeros64 request\n  if leading > 63 then none else\n  let fl := 63 - leading\n  if fl < 5 then none else\n  let base := 1 <<< fl\n  if base > request then none else\n  let shift := fl - 5\n  let step := 1 <<< shift\n  let delta := request - base\n  let sl := delta / step\n  if sl ≥ 32 then none else\n  let lower_delta := sl * step\n  let lower := base + lower_delta\n  if lower > Luffs.Runtime.TLSF.usizeMax then none else\n  let key := lower + step\n  if key > Luffs.Runtime.TLSF.usizeMax then none else some key\n\ntheorem tlsf_high_request_key_lowered :\n    tlsf_high_request_key_model = Luffs.Runtime.TLSF.highRequestKeyLowered := by rfl\n\n",
+        );
         out.push_str(&format!(
-            "def {}_model (request : Nat) : Option Nat :=\n  Luffs.Runtime.TLSF.classifyRequestBinLowered request\n\n",
+            "def {}_model (request : Nat) : Option Nat :=\n  if request > Luffs.Runtime.TLSF.usizeMax then none\n  else if request = 0 then none\n  else if request ≤ 256 then tlsf_classify_size_model request\n  else do\n    let key ← tlsf_high_request_key_model request\n    tlsf_classify_size_model key\n\n",
             model.name
+        ));
+        out.push_str(&format!(
+            "theorem {}_lowered : {}_model = Luffs.Runtime.TLSF.classifyRequestBinLowered := by\n  unfold {}_model Luffs.Runtime.TLSF.classifyRequestBinLowered\n  rw [tlsf_classify_size_lowered, tlsf_high_request_key_lowered]\n\n",
+            model.name, model.name, model.name
         ));
         out.push_str(&format!(
             "theorem {}_refines : {}_model = {} := by\n  funext request\n  exact Luffs.Runtime.TLSF.classifyRequestBinLowered_eq request\n\n",
@@ -4616,16 +4627,22 @@ mod tests {
         assert!(generated.contains(
             "theorem tlsf_classify_size_refines : tlsf_classify_size_model = Luffs.Runtime.TLSF.classifySizeBin"
         ));
-        assert!(generated.contains("Luffs.Runtime.TLSF.classifySizeBinLowered size"));
+        assert!(generated.contains(
+            "theorem tlsf_classify_size_lowered : tlsf_classify_size_model = Luffs.Runtime.TLSF.classifySizeBinLowered"
+        ));
+        assert!(generated.contains("let encoded_base := fl * 32"));
         assert!(!generated.contains(
-            "def tlsf_classify_size_model (size : Nat) : Option Nat :=\n  Luffs.Runtime.TLSF.classifySizeBin size"
+            "def tlsf_classify_size_model (size : Nat) : Option Nat :=\n  Luffs.Runtime.TLSF.classifySizeBinLowered"
         ));
         assert!(generated.contains(
             "theorem tlsf_classify_request_refines : tlsf_classify_request_model = Luffs.Runtime.TLSF.classifyRequestBin"
         ));
-        assert!(generated.contains("Luffs.Runtime.TLSF.classifyRequestBinLowered request"));
+        assert!(generated.contains("let key ← tlsf_high_request_key_model request"));
+        assert!(generated.contains(
+            "theorem tlsf_classify_request_lowered : tlsf_classify_request_model = Luffs.Runtime.TLSF.classifyRequestBinLowered"
+        ));
         assert!(!generated.contains(
-            "def tlsf_classify_request_model (request : Nat) : Option Nat :=\n  Luffs.Runtime.TLSF.classifyRequestBin request"
+            "def tlsf_classify_request_model (request : Nat) : Option Nat :=\n  Luffs.Runtime.TLSF.classifyRequestBinLowered"
         ));
         assert!(generated.contains(
             "theorem tlsf_insert_class_refines : tlsf_insert_class_model = Luffs.Runtime.TLSF.insertClassArrays"

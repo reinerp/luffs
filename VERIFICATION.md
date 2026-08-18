@@ -841,6 +841,13 @@ concurrency are later extensions and are not prerequisites for `Box` and
   this definition equal to the bounded lowered search before applying the
   abstract bitmap-representation theorem; allocation no longer depends on a
   whole-function class-search alias.
+  Both TLSF classifiers are now emitted from their word-operation-shaped
+  control flow. Size classification covers the linear bins and the logarithmic
+  first/second-level calculation with every 64-bit overflow guard. Request
+  classification generates its conservative upper-endpoint calculation and
+  calls the generated size classifier. Separate definitional theorems identify
+  these models with the independently proved lowered semantics before their
+  abstract class refinements; neither live classifier remains an alias.
   Public allocation is source-generated as a transaction as well: request
   classification, two-level nonempty-class lookup, selected-offset validation,
   physical-header lookup, split preflight, candidate detachment, physical

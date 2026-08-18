@@ -835,6 +835,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   little-endian bytes, and assembles the owned result. This covers unsigned,
   signed, and 64-bit native integer forms without direct `boxNew*Arrays`
   aliases.
+  The branch-bounded two-level TLSF class search is emitted directly as well:
+  it masks the starting second-level word, falls through to the first-level
+  summary only when needed, and probes the selected later word. Lean proves
+  this definition equal to the bounded lowered search before applying the
+  abstract bitmap-representation theorem; allocation no longer depends on a
+  whole-function class-search alias.
   Public allocation is source-generated as a transaction as well: request
   classification, two-level nonempty-class lookup, selected-offset validation,
   physical-header lookup, split preflight, candidate detachment, physical

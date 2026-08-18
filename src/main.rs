@@ -3870,8 +3870,27 @@ exact Luffs.Runtime.TLSF.findNonemptyBinLowered_refines words start\n\n",
     for model in &module.tlsf_find_nonempty_class_models {
         out.push_str(&format!(
             "def {}_model (second : List (BitVec 32)) (first : BitVec 64) (start_fl start_sl : Nat) : Option Nat :=\n  \
-Luffs.Runtime.TLSF.findNonemptyClassLowered second first start_fl start_sl\n\n",
+if start_fl ≥ second.length then none else\n  \
+if start_sl ≥ 32 then none else\n  \
+let second_bitmap := second[start_fl]?.getD 0\n  \
+let second_masked := second_bitmap &&& Luffs.Runtime.TLSF.maskFrom32 start_sl\n  \
+if second_masked ≠ 0 then\n    \
+some (start_fl * 32 + second_masked.ctz.toNat)\n  \
+else\n    \
+let next_fl := start_fl + 1\n    \
+if next_fl ≥ 64 then none else\n    \
+let first_masked := first &&& Luffs.Runtime.TLSF.maskFrom next_fl\n    \
+if first_masked = 0 then none else\n    \
+let found_fl := first_masked.ctz.toNat\n    \
+if found_fl ≥ second.length then none else\n    \
+let found_second := second[found_fl]?.getD 0\n    \
+if found_second = 0 then none else\n    \
+some (found_fl * 32 + found_second.ctz.toNat)\n\n",
             model.name
+        ));
+        out.push_str(&format!(
+            "theorem {}_lowered : {}_model = Luffs.Runtime.TLSF.findNonemptyClassLowered := by rfl\n\n",
+            model.name, model.name
         ));
         out.push_str(&format!(
             "theorem {}_refines (second : List (BitVec 32)) (first : BitVec 64)\n    \
@@ -4573,6 +4592,12 @@ mod tests {
             "theorem tlsf_take_candidate_refines : tlsf_take_candidate_model = Luffs.Runtime.TLSF.takeCandidateArrays"
         ));
         assert!(generated.contains("theorem tlsf_find_nonempty_class_refines"));
+        assert!(generated.contains(
+            "let second_masked := second_bitmap &&& Luffs.Runtime.TLSF.maskFrom32 start_sl"
+        ));
+        assert!(!generated.contains(
+            "def tlsf_find_nonempty_class_model (second : List (BitVec 32)) (first : BitVec 64) (start_fl start_sl : Nat) : Option Nat :=\n  Luffs.Runtime.TLSF.findNonemptyClassLowered"
+        ));
         assert!(generated.contains(
             "theorem tlsf_take_candidate_class_refines : tlsf_take_candidate_class_model = Luffs.Runtime.TLSF.takeCandidateClassArrays"
         ));
@@ -5278,6 +5303,18 @@ mod tests {
         let m = parse(&source).unwrap();
         assert!(m.tlsf_take_candidate_class_models.is_empty());
         assert!(m.tlsf_allocate_models.is_empty());
+    }
+
+    #[test]
+    fn tlsf_class_search_rejects_a_reversed_start_mask() {
+        let source = include_str!("../stdlib/tlsf.luffs")
+            .replace("u32::MAX << start_sl", "u32::MAX >> start_sl");
+        let m = parse(&source).unwrap();
+        assert!(m.tlsf_find_nonempty_class_models.is_empty());
+        assert!(m.tlsf_take_candidate_class_models.is_empty());
+        assert!(m.tlsf_allocate_models.is_empty());
+        assert!(m.tlsf_box_new_models.is_empty());
+        assert!(m.tlsf_vec_grow_models.is_empty());
     }
 
     #[test]

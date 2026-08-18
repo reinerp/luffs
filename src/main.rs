@@ -4050,21 +4050,21 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
     }
     for model in &module.tlsf_vec_push_models {
         out.push_str(&format!(
-            "def {}_model (storage : List (Fin 256)) (offset len capacity : Nat) (value : Fin 256) : Option Luffs.Runtime.Containers.VecPushU8OffsetResult :=\n  {} storage offset len capacity value\n\n",
-            model.name, model.refines
+            "def {}_model (storage : List (Fin 256)) (offset len capacity : Nat) (value : Fin 256) : Option Luffs.Runtime.Containers.VecPushU8OffsetResult :=\n  if len ≥ capacity then none\n  else if offset + len ≥ 2 ^ 64 then none\n  else\n    let index := offset + len\n    if index ≥ storage.length then none\n    else some ⟨storage.set index value, len + 1⟩\n\n",
+            model.name
         ));
         out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
+            "theorem {}_refines : {}_model = {} := by\n  funext storage offset len capacity value\n  rfl\n\n",
             model.name, model.name, model.refines
         ));
     }
     for model in &module.tlsf_vec_get_models {
         out.push_str(&format!(
-            "def {}_model (storage : List (Fin 256)) (offset len index : Nat) : Option (Fin 256) :=\n  {} storage offset len index\n\n",
-            model.name, model.refines
+            "def {}_model (storage : List (Fin 256)) (offset len index : Nat) : Option (Fin 256) :=\n  if index ≥ len then none\n  else if offset + index ≥ 2 ^ 64 then none\n  else\n    let address := offset + index\n    if address ≥ storage.length then none else storage[address]?\n\n",
+            model.name
         ));
         out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
+            "theorem {}_refines : {}_model = {} := by\n  funext storage offset len index\n  rfl\n\n",
             model.name, model.name, model.refines
         ));
     }
@@ -4521,9 +4521,18 @@ mod tests {
         assert!(generated.contains(
             "theorem tlsf_vec_push_u8_refines : tlsf_vec_push_u8_model = Luffs.Runtime.Containers.vecPushU8Offset"
         ));
+        assert!(generated.contains("def tlsf_vec_push_u8_model (storage : List (Fin 256))"));
+        assert!(generated.contains("else some ⟨storage.set index value, len + 1⟩"));
+        assert!(!generated.contains(
+            "Option Luffs.Runtime.Containers.VecPushU8OffsetResult :=\n  Luffs.Runtime.Containers.vecPushU8Offset"
+        ));
         assert!(generated.contains(
             "theorem tlsf_vec_get_u8_refines : tlsf_vec_get_u8_model = Luffs.Runtime.Containers.vecGetU8Offset"
         ));
+        assert!(generated.contains("if address ≥ storage.length then none else storage[address]?"));
+        assert!(
+            !generated.contains("Option (Fin 256) :=\n  Luffs.Runtime.Containers.vecGetU8Offset")
+        );
         assert!(generated.contains(
             "theorem tlsf_vec_drop_u8_refines : tlsf_vec_drop_u8_model = Luffs.Runtime.Containers.boxDropU8Arrays"
         ));

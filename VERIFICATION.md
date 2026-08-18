@@ -767,7 +767,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   `tlsf_vec_get_u8` model refines the concrete allocator-offset operation; its
   Iris theorem proves that a successful get returns exactly the owned logical
   byte, preserves the exclusive typed Vec capability, and exposes exactly one
-  operational byte read. Growth statically checks every
+  operational byte read. Generated semantics for both the byte push and byte
+  get now contains the source CFG guards, checked 64-bit address calculation,
+  and exact list write/read directly; neither model delegates to its
+  handwritten runtime transformer. Their refinement equalities therefore form
+  the explicit boundary between source-derived execution and the existing
+  typed/Iris ownership theorems. Growth statically checks every
   loop address and has a source-recognized exact Lean state transformer that
   sequences replacement allocation, snapshot-prefix copying, old-block
   deallocation/coalescing, and the returned offset. That concrete transformer

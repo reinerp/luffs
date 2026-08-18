@@ -382,6 +382,10 @@ fn run() -> Result<(), String> {
 
 fn parse(source: &str) -> Result<Module, String> {
     validate_native_slice_intrinsics(source)?;
+    // Visibility does not affect executable or proof semantics. Normalize it
+    // only for the source-shape/model recognizers; generated Rust retains the
+    // original `pub fn` spelling.
+    let analysis_source = source.replace("pub fn ", "fn ");
     let mut rust = String::from(
         "#[cfg(not(target_pointer_width = \"64\"))]\ncompile_error!(\"Luffs currently supports only 64-bit Rust targets\");\n#[cfg(not(target_endian = \"little\"))]\ncompile_error!(\"Luffs scalar representations currently require a little-endian Rust target\");\n\n",
     );
@@ -408,15 +412,16 @@ fn parse(source: &str) -> Result<Module, String> {
     for (line_no, raw) in logical_lines(source)? {
         let raw = raw.as_str();
         let trimmed = raw.trim();
-        if trimmed.starts_with("fn ") {
-            validate_scoped_slice_signature(trimmed)
+        let analysis_trimmed = trimmed.strip_prefix("pub ").unwrap_or(trimmed);
+        if analysis_trimmed.starts_with("fn ") {
+            validate_scoped_slice_signature(analysis_trimmed)
                 .map_err(|error| format!("line {line_no}: {error}"))?;
             nat_vars.clear();
             mutable_arrays.clear();
             facts.clear();
             control_scopes.clear();
             brace_depth = 0;
-            for part in trimmed.split(['(', ',', ')']) {
+            for part in analysis_trimmed.split(['(', ',', ')']) {
                 if let Some((name, ty)) = part.trim().split_once(':') {
                     if is_slice_reference(ty) {
                         nat_vars.push(format!("{}_len", name.trim()));
@@ -586,38 +591,40 @@ fn parse(source: &str) -> Result<Module, String> {
         rust,
         proofs,
         accesses,
-        scalar_models: parse_scalar_models(source),
-        array_models: parse_array_models(source),
-        read_models: parse_read_models(source),
-        copy_models: parse_copy_models(source),
-        tlsf_insert_models: parse_tlsf_insert_models(source),
-        tlsf_remove_models: parse_tlsf_remove_models(source),
-        tlsf_find_fit_models: parse_tlsf_find_fit_models(source),
-        tlsf_find_nonempty_bin_models: parse_tlsf_find_nonempty_bin_models(source),
-        tlsf_take_candidate_models: parse_tlsf_take_candidate_models(source),
-        tlsf_find_nonempty_class_models: parse_tlsf_find_nonempty_class_models(source),
-        tlsf_take_candidate_class_models: parse_tlsf_take_candidate_class_models(source),
-        tlsf_mark_free_models: parse_tlsf_mark_free_models(source),
-        tlsf_classify_size_models: parse_tlsf_classify_size_models(source),
-        tlsf_classify_request_models: parse_tlsf_classify_request_models(source),
-        tlsf_insert_class_models: parse_tlsf_insert_class_models(source),
-        tlsf_initialize_models: parse_tlsf_initialize_models(source),
-        tlsf_allocate_physical_models: parse_tlsf_allocate_physical_models(source),
-        tlsf_allocate_models: parse_tlsf_allocate_models(source),
-        tlsf_box_new_models: parse_tlsf_box_new_models(source),
-        tlsf_box_drop_models: parse_tlsf_box_drop_models(source),
-        tlsf_box_drop_ptr_models: parse_tlsf_box_drop_ptr_models(source),
-        tlsf_vec_new_models: parse_tlsf_vec_new_models(source),
-        tlsf_vec_push_models: parse_tlsf_vec_push_models(source),
-        tlsf_vec_get_models: parse_tlsf_vec_get_models(source),
-        tlsf_vec_drop_models: parse_tlsf_vec_drop_models(source),
-        tlsf_vec_grow_models: parse_tlsf_vec_grow_models(source),
-        tlsf_remove_class_models: parse_tlsf_remove_class_models(source),
-        tlsf_deallocate_uncoalesced_models: parse_tlsf_deallocate_uncoalesced_models(source),
-        tlsf_coalesce_physical_models: parse_tlsf_coalesce_physical_models(source),
-        tlsf_coalesce_class_models: parse_tlsf_coalesce_class_models(source),
-        tlsf_coalesce_if_possible_models: parse_tlsf_coalesce_if_possible_models(source),
-        tlsf_deallocate_models: parse_tlsf_deallocate_models(source),
+        scalar_models: parse_scalar_models(&analysis_source),
+        array_models: parse_array_models(&analysis_source),
+        read_models: parse_read_models(&analysis_source),
+        copy_models: parse_copy_models(&analysis_source),
+        tlsf_insert_models: parse_tlsf_insert_models(&analysis_source),
+        tlsf_remove_models: parse_tlsf_remove_models(&analysis_source),
+        tlsf_find_fit_models: parse_tlsf_find_fit_models(&analysis_source),
+        tlsf_find_nonempty_bin_models: parse_tlsf_find_nonempty_bin_models(&analysis_source),
+        tlsf_take_candidate_models: parse_tlsf_take_candidate_models(&analysis_source),
+        tlsf_find_nonempty_class_models: parse_tlsf_find_nonempty_class_models(&analysis_source),
+        tlsf_take_candidate_class_models: parse_tlsf_take_candidate_class_models(&analysis_source),
+        tlsf_mark_free_models: parse_tlsf_mark_free_models(&analysis_source),
+        tlsf_classify_size_models: parse_tlsf_classify_size_models(&analysis_source),
+        tlsf_classify_request_models: parse_tlsf_classify_request_models(&analysis_source),
+        tlsf_insert_class_models: parse_tlsf_insert_class_models(&analysis_source),
+        tlsf_initialize_models: parse_tlsf_initialize_models(&analysis_source),
+        tlsf_allocate_physical_models: parse_tlsf_allocate_physical_models(&analysis_source),
+        tlsf_allocate_models: parse_tlsf_allocate_models(&analysis_source),
+        tlsf_box_new_models: parse_tlsf_box_new_models(&analysis_source),
+        tlsf_box_drop_models: parse_tlsf_box_drop_models(&analysis_source),
+        tlsf_box_drop_ptr_models: parse_tlsf_box_drop_ptr_models(&analysis_source),
+        tlsf_vec_new_models: parse_tlsf_vec_new_models(&analysis_source),
+        tlsf_vec_push_models: parse_tlsf_vec_push_models(&analysis_source),
+        tlsf_vec_get_models: parse_tlsf_vec_get_models(&analysis_source),
+        tlsf_vec_drop_models: parse_tlsf_vec_drop_models(&analysis_source),
+        tlsf_vec_grow_models: parse_tlsf_vec_grow_models(&analysis_source),
+        tlsf_remove_class_models: parse_tlsf_remove_class_models(&analysis_source),
+        tlsf_deallocate_uncoalesced_models: parse_tlsf_deallocate_uncoalesced_models(
+            &analysis_source,
+        ),
+        tlsf_coalesce_physical_models: parse_tlsf_coalesce_physical_models(&analysis_source),
+        tlsf_coalesce_class_models: parse_tlsf_coalesce_class_models(&analysis_source),
+        tlsf_coalesce_if_possible_models: parse_tlsf_coalesce_if_possible_models(&analysis_source),
+        tlsf_deallocate_models: parse_tlsf_deallocate_models(&analysis_source),
     };
     if module.tlsf_insert_models.is_empty() {
         module.tlsf_insert_class_models.clear();
@@ -4497,10 +4504,10 @@ fn check(source: &Path, module: &Module) -> Result<(), String> {
 }
 
 fn generated_rust_has_main(module: &Module) -> bool {
-    module
-        .rust
-        .lines()
-        .any(|line| line.trim_start().starts_with("fn main("))
+    module.rust.lines().any(|line| {
+        let line = line.trim_start();
+        line.starts_with("fn main(") || line.starts_with("pub fn main(")
+    })
 }
 
 fn build(source: &Path, output: Option<&Path>, module: &Module) -> Result<(), String> {
@@ -4528,6 +4535,22 @@ mod tests {
         assert!(!generated_rust_has_main(&library));
         let executable = parse("fn main() {\n}\n").unwrap();
         assert!(generated_rust_has_main(&executable));
+    }
+
+    #[test]
+    fn public_functions_keep_their_generated_semantics() {
+        let module = parse(
+            "// refines Luffs.Runtime.Containers.vecLenAfterPop\npub fn pop(len: usize) -> Option<usize> {\nif len == 0 { return None; }\nSome(len - 1)\n}",
+        )
+        .unwrap();
+        validate(&module).unwrap();
+        assert!(module.rust.contains("pub fn pop(len: usize)"));
+        assert_eq!(module.scalar_models.len(), 1);
+        assert_eq!(module.scalar_models[0].name, "pop");
+        assert_eq!(
+            module.scalar_models[0].refines.as_deref(),
+            Some("Luffs.Runtime.Containers.vecLenAfterPop")
+        );
     }
 
     #[test]
@@ -5709,6 +5732,40 @@ mod tests {
         assert!(module.rust.contains("Option<&'a mut [u8]>"));
         assert!(generated.contains("theorem vec_slice_u8_refines"));
         assert!(generated.contains("theorem vec_slice_mut_u8_refines"));
+    }
+
+    #[test]
+    fn verified_container_and_allocator_entry_points_are_public() {
+        let containers = parse(include_str!("../stdlib/containers.luffs")).unwrap();
+        let tlsf = parse(include_str!("../stdlib/tlsf.luffs")).unwrap();
+
+        for ty in [
+            "u8", "u16", "u32", "u64", "u128", "i8", "i16", "i32", "i64", "i128", "usize", "isize",
+        ] {
+            for operation in ["box_load", "box_store", "vec_push", "vec_get", "vec_slice"] {
+                assert!(
+                    containers
+                        .rust
+                        .contains(&format!("pub fn {operation}_{ty}"))
+                );
+            }
+            assert!(
+                containers
+                    .rust
+                    .contains(&format!("pub fn vec_slice_mut_{ty}"))
+            );
+            assert!(tlsf.rust.contains(&format!("pub fn tlsf_box_new_{ty}")));
+            assert!(tlsf.rust.contains(&format!("pub fn tlsf_vec_new_{ty}")));
+            assert!(tlsf.rust.contains(&format!("pub fn tlsf_vec_grow_{ty}")));
+        }
+
+        for operation in ["initialize", "allocate", "deallocate"] {
+            assert!(tlsf.rust.contains(&format!("pub fn tlsf_{operation}(")));
+        }
+        assert!(tlsf.rust.contains("pub fn tlsf_box_drop_u8"));
+        assert!(tlsf.rust.contains("pub fn tlsf_vec_drop_u8"));
+        assert!(!tlsf.rust.contains("pub fn tlsf_allocate_physical"));
+        assert!(!tlsf.rust.contains("pub fn tlsf_coalesce_physical"));
     }
 
     #[test]

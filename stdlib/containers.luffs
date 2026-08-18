@@ -9,27 +9,27 @@ fn box_initialize_u8(storage: &mut [u8], begin: usize, value: u8) -> Option<()> 
 }
 
 // refines Luffs.Runtime.Containers.boxLoadU8
-fn box_load_u8(storage: &[u8], begin: usize) -> Option<u8> {
+pub fn box_load_u8(storage: &[u8], begin: usize) -> Option<u8> {
     if begin >= storage.len() { return None; }
     Some(storage[begin])
 }
 
 // refines Luffs.Runtime.Containers.boxLoadU16
-fn box_load_u16(storage: &[u8], begin: usize) -> Option<u16> {
+pub fn box_load_u16(storage: &[u8], begin: usize) -> Option<u16> {
     if begin == usize::MAX { return None; }
     if begin + 1 >= storage.len() { return None; }
     Some(u16::from_le_bytes([storage[begin], storage[begin + 1]]))
 }
 
 // refines Luffs.Runtime.Containers.boxStoreU8
-fn box_store_u8(storage: &mut [u8], begin: usize, value: u8) -> Option<()> {
+pub fn box_store_u8(storage: &mut [u8], begin: usize, value: u8) -> Option<()> {
     if begin >= storage.len() { return None; }
     storage[begin] = value;
     Some(())
 }
 
 // refines Luffs.Runtime.Containers.boxStoreU16
-fn box_store_u16(storage: &mut [u8], begin: usize, value: u16) -> Option<()> {
+pub fn box_store_u16(storage: &mut [u8], begin: usize, value: u16) -> Option<()> {
     if begin == usize::MAX { return None; }
     if begin + 1 >= storage.len() { return None; }
     storage[begin] = (value & 255) as u8;
@@ -38,14 +38,14 @@ fn box_store_u16(storage: &mut [u8], begin: usize, value: u16) -> Option<()> {
 }
 
 // refines Luffs.Runtime.Containers.boxLoadU32
-fn box_load_u32(storage: &[u8], begin: usize) -> Option<u32> {
+pub fn box_load_u32(storage: &[u8], begin: usize) -> Option<u32> {
     if begin > usize::MAX - 3 { return None; }
     if begin + 3 >= storage.len() { return None; }
     Some(u32::from_le_bytes([storage[begin], storage[begin + 1], storage[begin + 2], storage[begin + 3]]))
 }
 
 // refines Luffs.Runtime.Containers.boxStoreU32
-fn box_store_u32(storage: &mut [u8], begin: usize, value: u32) -> Option<()> {
+pub fn box_store_u32(storage: &mut [u8], begin: usize, value: u32) -> Option<()> {
     if begin > usize::MAX - 3 { return None; }
     if begin + 3 >= storage.len() { return None; }
     storage[begin] = (value & 255) as u8;
@@ -56,14 +56,14 @@ fn box_store_u32(storage: &mut [u8], begin: usize, value: u32) -> Option<()> {
 }
 
 // refines Luffs.Runtime.Containers.boxLoadU64
-fn box_load_u64(storage: &[u8], begin: usize) -> Option<u64> {
+pub fn box_load_u64(storage: &[u8], begin: usize) -> Option<u64> {
     if begin > usize::MAX - 7 { return None; }
     if begin + 7 >= storage.len() { return None; }
     Some(u64::from_le_bytes([storage[begin], storage[begin + 1], storage[begin + 2], storage[begin + 3], storage[begin + 4], storage[begin + 5], storage[begin + 6], storage[begin + 7]]))
 }
 
 // refines Luffs.Runtime.Containers.boxStoreU64
-fn box_store_u64(storage: &mut [u8], begin: usize, value: u64) -> Option<()> {
+pub fn box_store_u64(storage: &mut [u8], begin: usize, value: u64) -> Option<()> {
     if begin > usize::MAX - 7 { return None; }
     if begin + 7 >= storage.len() { return None; }
     storage[begin] = (value & 255) as u8;
@@ -78,14 +78,14 @@ fn box_store_u64(storage: &mut [u8], begin: usize, value: u64) -> Option<()> {
 }
 
 // refines Luffs.Runtime.Containers.boxLoadU128
-fn box_load_u128(storage: &[u8], begin: usize) -> Option<u128> {
+pub fn box_load_u128(storage: &[u8], begin: usize) -> Option<u128> {
     if begin > usize::MAX - 15 { return None; }
     if begin + 15 >= storage.len() { return None; }
     Some(u128::from_le_bytes([storage[begin], storage[begin + 1], storage[begin + 2], storage[begin + 3], storage[begin + 4], storage[begin + 5], storage[begin + 6], storage[begin + 7], storage[begin + 8], storage[begin + 9], storage[begin + 10], storage[begin + 11], storage[begin + 12], storage[begin + 13], storage[begin + 14], storage[begin + 15]]))
 }
 
 // refines Luffs.Runtime.Containers.boxStoreU128
-fn box_store_u128(storage: &mut [u8], begin: usize, value: u128) -> Option<()> {
+pub fn box_store_u128(storage: &mut [u8], begin: usize, value: u128) -> Option<()> {
     if begin > usize::MAX - 15 { return None; }
     if begin + 15 >= storage.len() { return None; }
     storage[begin] = (value & 255) as u8;
@@ -109,27 +109,27 @@ fn box_store_u128(storage: &mut [u8], begin: usize, value: u128) -> Option<()> {
 
 // Signed scalars use the same two's-complement BitVec byte semantics.
 // refines Luffs.Runtime.Containers.boxLoadI8
-fn box_load_i8(storage: &[u8], begin: usize) -> Option<i8> {
+pub fn box_load_i8(storage: &[u8], begin: usize) -> Option<i8> {
     if begin >= storage.len() { return None; }
     Some(i8::from_le_bytes([storage[begin]]))
 }
 
 // refines Luffs.Runtime.Containers.boxStoreI8
-fn box_store_i8(storage: &mut [u8], begin: usize, value: i8) -> Option<()> {
+pub fn box_store_i8(storage: &mut [u8], begin: usize, value: i8) -> Option<()> {
     if begin >= storage.len() { return None; }
     storage[begin] = (value & 255) as u8;
     Some(())
 }
 
 // refines Luffs.Runtime.Containers.boxLoadU128
-fn box_load_i128(storage: &[u8], begin: usize) -> Option<i128> {
+pub fn box_load_i128(storage: &[u8], begin: usize) -> Option<i128> {
     if begin > usize::MAX - 15 { return None; }
     if begin + 15 >= storage.len() { return None; }
     Some(i128::from_le_bytes([storage[begin], storage[begin + 1], storage[begin + 2], storage[begin + 3], storage[begin + 4], storage[begin + 5], storage[begin + 6], storage[begin + 7], storage[begin + 8], storage[begin + 9], storage[begin + 10], storage[begin + 11], storage[begin + 12], storage[begin + 13], storage[begin + 14], storage[begin + 15]]))
 }
 
 // refines Luffs.Runtime.Containers.boxStoreU128
-fn box_store_i128(storage: &mut [u8], begin: usize, value: i128) -> Option<()> {
+pub fn box_store_i128(storage: &mut [u8], begin: usize, value: i128) -> Option<()> {
     if begin > usize::MAX - 15 { return None; }
     if begin + 15 >= storage.len() { return None; }
     storage[begin] = (value & 255) as u8;
@@ -152,14 +152,14 @@ fn box_store_i128(storage: &mut [u8], begin: usize, value: i128) -> Option<()> {
 }
 
 // refines Luffs.Runtime.Containers.boxLoadU16
-fn box_load_i16(storage: &[u8], begin: usize) -> Option<i16> {
+pub fn box_load_i16(storage: &[u8], begin: usize) -> Option<i16> {
     if begin == usize::MAX { return None; }
     if begin + 1 >= storage.len() { return None; }
     Some(i16::from_le_bytes([storage[begin], storage[begin + 1]]))
 }
 
 // refines Luffs.Runtime.Containers.boxStoreU16
-fn box_store_i16(storage: &mut [u8], begin: usize, value: i16) -> Option<()> {
+pub fn box_store_i16(storage: &mut [u8], begin: usize, value: i16) -> Option<()> {
     if begin == usize::MAX { return None; }
     if begin + 1 >= storage.len() { return None; }
     storage[begin] = (value & 255) as u8;
@@ -168,14 +168,14 @@ fn box_store_i16(storage: &mut [u8], begin: usize, value: i16) -> Option<()> {
 }
 
 // refines Luffs.Runtime.Containers.boxLoadU32
-fn box_load_i32(storage: &[u8], begin: usize) -> Option<i32> {
+pub fn box_load_i32(storage: &[u8], begin: usize) -> Option<i32> {
     if begin > usize::MAX - 3 { return None; }
     if begin + 3 >= storage.len() { return None; }
     Some(i32::from_le_bytes([storage[begin], storage[begin + 1], storage[begin + 2], storage[begin + 3]]))
 }
 
 // refines Luffs.Runtime.Containers.boxStoreU32
-fn box_store_i32(storage: &mut [u8], begin: usize, value: i32) -> Option<()> {
+pub fn box_store_i32(storage: &mut [u8], begin: usize, value: i32) -> Option<()> {
     if begin > usize::MAX - 3 { return None; }
     if begin + 3 >= storage.len() { return None; }
     storage[begin] = (value & 255) as u8;
@@ -186,14 +186,14 @@ fn box_store_i32(storage: &mut [u8], begin: usize, value: i32) -> Option<()> {
 }
 
 // refines Luffs.Runtime.Containers.boxLoadU64
-fn box_load_i64(storage: &[u8], begin: usize) -> Option<i64> {
+pub fn box_load_i64(storage: &[u8], begin: usize) -> Option<i64> {
     if begin > usize::MAX - 7 { return None; }
     if begin + 7 >= storage.len() { return None; }
     Some(i64::from_le_bytes([storage[begin], storage[begin + 1], storage[begin + 2], storage[begin + 3], storage[begin + 4], storage[begin + 5], storage[begin + 6], storage[begin + 7]]))
 }
 
 // refines Luffs.Runtime.Containers.boxStoreU64
-fn box_store_i64(storage: &mut [u8], begin: usize, value: i64) -> Option<()> {
+pub fn box_store_i64(storage: &mut [u8], begin: usize, value: i64) -> Option<()> {
     if begin > usize::MAX - 7 { return None; }
     if begin + 7 >= storage.len() { return None; }
     storage[begin] = (value & 255) as u8;
@@ -209,14 +209,14 @@ fn box_store_i64(storage: &mut [u8], begin: usize, value: i64) -> Option<()> {
 
 // The current Luffs target model fixes pointer-sized integers at 64 bits.
 // refines Luffs.Runtime.Containers.boxLoadU64
-fn box_load_usize(storage: &[u8], begin: usize) -> Option<usize> {
+pub fn box_load_usize(storage: &[u8], begin: usize) -> Option<usize> {
     if begin > usize::MAX - 7 { return None; }
     if begin + 7 >= storage.len() { return None; }
     Some(usize::from_le_bytes([storage[begin], storage[begin + 1], storage[begin + 2], storage[begin + 3], storage[begin + 4], storage[begin + 5], storage[begin + 6], storage[begin + 7]]))
 }
 
 // refines Luffs.Runtime.Containers.boxStoreU64
-fn box_store_usize(storage: &mut [u8], begin: usize, value: usize) -> Option<()> {
+pub fn box_store_usize(storage: &mut [u8], begin: usize, value: usize) -> Option<()> {
     if begin > usize::MAX - 7 { return None; }
     if begin + 7 >= storage.len() { return None; }
     storage[begin] = (value & 255) as u8;
@@ -231,14 +231,14 @@ fn box_store_usize(storage: &mut [u8], begin: usize, value: usize) -> Option<()>
 }
 
 // refines Luffs.Runtime.Containers.boxLoadU64
-fn box_load_isize(storage: &[u8], begin: usize) -> Option<isize> {
+pub fn box_load_isize(storage: &[u8], begin: usize) -> Option<isize> {
     if begin > usize::MAX - 7 { return None; }
     if begin + 7 >= storage.len() { return None; }
     Some(isize::from_le_bytes([storage[begin], storage[begin + 1], storage[begin + 2], storage[begin + 3], storage[begin + 4], storage[begin + 5], storage[begin + 6], storage[begin + 7]]))
 }
 
 // refines Luffs.Runtime.Containers.boxStoreU64
-fn box_store_isize(storage: &mut [u8], begin: usize, value: isize) -> Option<()> {
+pub fn box_store_isize(storage: &mut [u8], begin: usize, value: isize) -> Option<()> {
     if begin > usize::MAX - 7 { return None; }
     if begin + 7 >= storage.len() { return None; }
     storage[begin] = (value & 255) as u8;
@@ -253,7 +253,7 @@ fn box_store_isize(storage: &mut [u8], begin: usize, value: isize) -> Option<()>
 }
 
 // refines Luffs.Runtime.Containers.vecPushU8
-fn vec_push_u8(storage: &mut [u8], len: usize, capacity: usize, value: u8) -> Option<usize> {
+pub fn vec_push_u8(storage: &mut [u8], len: usize, capacity: usize, value: u8) -> Option<usize> {
     if len >= capacity { return None; }
     if capacity > storage.len() { return None; }
     storage[len] = value;
@@ -262,7 +262,7 @@ fn vec_push_u8(storage: &mut [u8], len: usize, capacity: usize, value: u8) -> Op
 }
 
 // refines Luffs.Runtime.Containers.vecPushU16
-fn vec_push_u16(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: u16) -> Option<usize> {
+pub fn vec_push_u16(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: u16) -> Option<usize> {
     if len >= capacity { return None; }
     if len > usize::MAX / 2 { return None; }
     if offset > usize::MAX - len * 2 { return None; }
@@ -275,7 +275,7 @@ fn vec_push_u16(storage: &mut [u8], offset: usize, len: usize, capacity: usize, 
 }
 
 // refines Luffs.Runtime.Containers.vecPushU32
-fn vec_push_u32(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: u32) -> Option<usize> {
+pub fn vec_push_u32(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: u32) -> Option<usize> {
     if len >= capacity { return None; }
     if len > usize::MAX / 4 { return None; }
     if offset > usize::MAX - len * 4 { return None; }
@@ -290,7 +290,7 @@ fn vec_push_u32(storage: &mut [u8], offset: usize, len: usize, capacity: usize, 
 }
 
 // refines Luffs.Runtime.Containers.vecPushU64
-fn vec_push_u64(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: u64) -> Option<usize> {
+pub fn vec_push_u64(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: u64) -> Option<usize> {
     if len >= capacity { return None; }
     if len > usize::MAX / 8 { return None; }
     if offset > usize::MAX - len * 8 { return None; }
@@ -309,7 +309,7 @@ fn vec_push_u64(storage: &mut [u8], offset: usize, len: usize, capacity: usize, 
 }
 
 // refines Luffs.Runtime.Containers.vecPushU128
-fn vec_push_u128(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: u128) -> Option<usize> {
+pub fn vec_push_u128(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: u128) -> Option<usize> {
     if len >= capacity { return None; }
     if len > usize::MAX / 16 { return None; }
     if offset > usize::MAX - len * 16 { return None; }
@@ -336,7 +336,7 @@ fn vec_push_u128(storage: &mut [u8], offset: usize, len: usize, capacity: usize,
 }
 
 // refines Luffs.Runtime.Containers.vecPushI128
-fn vec_push_i128(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: i128) -> Option<usize> {
+pub fn vec_push_i128(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: i128) -> Option<usize> {
     if len >= capacity { return None; }
     if len > usize::MAX / 16 { return None; }
     if offset > usize::MAX - len * 16 { return None; }
@@ -363,7 +363,7 @@ fn vec_push_i128(storage: &mut [u8], offset: usize, len: usize, capacity: usize,
 }
 
 // refines Luffs.Runtime.Containers.vecPushU16
-fn vec_push_i16(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: i16) -> Option<usize> {
+pub fn vec_push_i16(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: i16) -> Option<usize> {
     if len >= capacity { return None; }
     if len > usize::MAX / 2 { return None; }
     if offset > usize::MAX - len * 2 { return None; }
@@ -376,7 +376,7 @@ fn vec_push_i16(storage: &mut [u8], offset: usize, len: usize, capacity: usize, 
 }
 
 // refines Luffs.Runtime.Containers.vecPushU32
-fn vec_push_i32(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: i32) -> Option<usize> {
+pub fn vec_push_i32(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: i32) -> Option<usize> {
     if len >= capacity { return None; }
     if len > usize::MAX / 4 { return None; }
     if offset > usize::MAX - len * 4 { return None; }
@@ -391,7 +391,7 @@ fn vec_push_i32(storage: &mut [u8], offset: usize, len: usize, capacity: usize, 
 }
 
 // refines Luffs.Runtime.Containers.vecPushU64
-fn vec_push_i64(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: i64) -> Option<usize> {
+pub fn vec_push_i64(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: i64) -> Option<usize> {
     if len >= capacity { return None; }
     if len > usize::MAX / 8 { return None; }
     if offset > usize::MAX - len * 8 { return None; }
@@ -410,7 +410,7 @@ fn vec_push_i64(storage: &mut [u8], offset: usize, len: usize, capacity: usize, 
 }
 
 // refines Luffs.Runtime.Containers.vecPushI8
-fn vec_push_i8(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: i8) -> Option<usize> {
+pub fn vec_push_i8(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: i8) -> Option<usize> {
     if capacity > usize::MAX { return None; }
     if len >= capacity { return None; }
     if offset > usize::MAX - len { return None; }
@@ -423,7 +423,7 @@ fn vec_push_i8(storage: &mut [u8], offset: usize, len: usize, capacity: usize, v
 
 // The current Luffs target fixes pointer-sized integers at 64 bits.
 // refines Luffs.Runtime.Containers.vecPushU64
-fn vec_push_usize(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: usize) -> Option<usize> {
+pub fn vec_push_usize(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: usize) -> Option<usize> {
     if len >= capacity { return None; }
     if len > usize::MAX / 8 { return None; }
     if offset > usize::MAX - len * 8 { return None; }
@@ -442,7 +442,7 @@ fn vec_push_usize(storage: &mut [u8], offset: usize, len: usize, capacity: usize
 }
 
 // refines Luffs.Runtime.Containers.vecPushU64
-fn vec_push_isize(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: isize) -> Option<usize> {
+pub fn vec_push_isize(storage: &mut [u8], offset: usize, len: usize, capacity: usize, value: isize) -> Option<usize> {
     if len >= capacity { return None; }
     if len > usize::MAX / 8 { return None; }
     if offset > usize::MAX - len * 8 { return None; }
@@ -461,7 +461,7 @@ fn vec_push_isize(storage: &mut [u8], offset: usize, len: usize, capacity: usize
 }
 
 // refines Luffs.Runtime.Containers.vecLastU8
-fn vec_last_u8(storage: &[u8], len: usize) -> Option<u8> {
+pub fn vec_last_u8(storage: &[u8], len: usize) -> Option<u8> {
     if len == 0 { return None; }
     if len > storage.len() { return None; }
     let index: usize = len - 1;
@@ -469,21 +469,21 @@ fn vec_last_u8(storage: &[u8], len: usize) -> Option<u8> {
 }
 
 // refines Luffs.Runtime.Containers.vecLenAfterPop
-fn vec_len_after_pop(len: usize) -> Option<usize> {
+pub fn vec_len_after_pop(len: usize) -> Option<usize> {
     if len == 0 { return None; }
     let next_len: usize = len - 1;
     Some(next_len)
 }
 
 // refines Luffs.Runtime.Containers.vecGetU8
-fn vec_get_u8(storage: &[u8], len: usize, index: usize) -> Option<u8> {
+pub fn vec_get_u8(storage: &[u8], len: usize, index: usize) -> Option<u8> {
     if index >= len { return None; }
     if len > storage.len() { return None; }
     Some(storage[index])
 }
 
 // refines Luffs.Runtime.Containers.vecGetU16
-fn vec_get_u16(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<u16> {
+pub fn vec_get_u16(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<u16> {
     if index >= len { return None; }
     if index > usize::MAX / 2 { return None; }
     if offset > usize::MAX - index * 2 { return None; }
@@ -493,7 +493,7 @@ fn vec_get_u16(storage: &[u8], offset: usize, len: usize, index: usize) -> Optio
 }
 
 // refines Luffs.Runtime.Containers.vecGetU32
-fn vec_get_u32(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<u32> {
+pub fn vec_get_u32(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<u32> {
     if index >= len { return None; }
     if index > usize::MAX / 4 { return None; }
     if offset > usize::MAX - index * 4 { return None; }
@@ -503,7 +503,7 @@ fn vec_get_u32(storage: &[u8], offset: usize, len: usize, index: usize) -> Optio
 }
 
 // refines Luffs.Runtime.Containers.vecGetU64
-fn vec_get_u64(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<u64> {
+pub fn vec_get_u64(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<u64> {
     if index >= len { return None; }
     if index > usize::MAX / 8 { return None; }
     if offset > usize::MAX - index * 8 { return None; }
@@ -513,7 +513,7 @@ fn vec_get_u64(storage: &[u8], offset: usize, len: usize, index: usize) -> Optio
 }
 
 // refines Luffs.Runtime.Containers.vecGetU128
-fn vec_get_u128(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<u128> {
+pub fn vec_get_u128(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<u128> {
     if index >= len { return None; }
     if index > usize::MAX / 16 { return None; }
     if offset > usize::MAX - index * 16 { return None; }
@@ -523,7 +523,7 @@ fn vec_get_u128(storage: &[u8], offset: usize, len: usize, index: usize) -> Opti
 }
 
 // refines Luffs.Runtime.Containers.vecGetI128
-fn vec_get_i128(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<i128> {
+pub fn vec_get_i128(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<i128> {
     if index >= len { return None; }
     if index > usize::MAX / 16 { return None; }
     if offset > usize::MAX - index * 16 { return None; }
@@ -533,7 +533,7 @@ fn vec_get_i128(storage: &[u8], offset: usize, len: usize, index: usize) -> Opti
 }
 
 // refines Luffs.Runtime.Containers.vecGetU16
-fn vec_get_i16(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<i16> {
+pub fn vec_get_i16(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<i16> {
     if index >= len { return None; }
     if index > usize::MAX / 2 { return None; }
     if offset > usize::MAX - index * 2 { return None; }
@@ -543,7 +543,7 @@ fn vec_get_i16(storage: &[u8], offset: usize, len: usize, index: usize) -> Optio
 }
 
 // refines Luffs.Runtime.Containers.vecGetU32
-fn vec_get_i32(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<i32> {
+pub fn vec_get_i32(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<i32> {
     if index >= len { return None; }
     if index > usize::MAX / 4 { return None; }
     if offset > usize::MAX - index * 4 { return None; }
@@ -553,7 +553,7 @@ fn vec_get_i32(storage: &[u8], offset: usize, len: usize, index: usize) -> Optio
 }
 
 // refines Luffs.Runtime.Containers.vecGetU64
-fn vec_get_i64(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<i64> {
+pub fn vec_get_i64(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<i64> {
     if index >= len { return None; }
     if index > usize::MAX / 8 { return None; }
     if offset > usize::MAX - index * 8 { return None; }
@@ -563,7 +563,7 @@ fn vec_get_i64(storage: &[u8], offset: usize, len: usize, index: usize) -> Optio
 }
 
 // refines Luffs.Runtime.Containers.vecGetI8
-fn vec_get_i8(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<i8> {
+pub fn vec_get_i8(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<i8> {
     if index >= len { return None; }
     if index > usize::MAX { return None; }
     if offset > usize::MAX - index { return None; }
@@ -573,7 +573,7 @@ fn vec_get_i8(storage: &[u8], offset: usize, len: usize, index: usize) -> Option
 }
 
 // refines Luffs.Runtime.Containers.vecGetU64
-fn vec_get_usize(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<usize> {
+pub fn vec_get_usize(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<usize> {
     if index >= len { return None; }
     if index > usize::MAX / 8 { return None; }
     if offset > usize::MAX - index * 8 { return None; }
@@ -583,7 +583,7 @@ fn vec_get_usize(storage: &[u8], offset: usize, len: usize, index: usize) -> Opt
 }
 
 // refines Luffs.Runtime.Containers.vecGetU64
-fn vec_get_isize(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<isize> {
+pub fn vec_get_isize(storage: &[u8], offset: usize, len: usize, index: usize) -> Option<isize> {
     if index >= len { return None; }
     if index > usize::MAX / 8 { return None; }
     if offset > usize::MAX - index * 8 { return None; }
@@ -593,7 +593,7 @@ fn vec_get_isize(storage: &[u8], offset: usize, len: usize, index: usize) -> Opt
 }
 
 // refines Luffs.Runtime.Containers.vecSliceU8
-fn vec_slice_u8<'a>(storage: &'a [u8], len: usize, begin: usize, end: usize) -> Option<&'a [u8]> {
+pub fn vec_slice_u8<'a>(storage: &'a [u8], len: usize, begin: usize, end: usize) -> Option<&'a [u8]> {
     if begin > end { return None; }
     if end > len { return None; }
     if len > storage.len() { return None; }
@@ -601,7 +601,7 @@ fn vec_slice_u8<'a>(storage: &'a [u8], len: usize, begin: usize, end: usize) -> 
 }
 
 // refines Luffs.Runtime.Containers.vecSliceU8
-fn vec_slice_mut_u8<'a>(storage: &'a mut [u8], len: usize, begin: usize, end: usize) -> Option<&'a mut [u8]> {
+pub fn vec_slice_mut_u8<'a>(storage: &'a mut [u8], len: usize, begin: usize, end: usize) -> Option<&'a mut [u8]> {
     if begin > end { return None; }
     if end > len { return None; }
     if len > storage.len() { return None; }
@@ -611,7 +611,7 @@ fn vec_slice_mut_u8<'a>(storage: &'a mut [u8], len: usize, begin: usize, end: us
 // Codec-generic encoded slice boundary. Callers pass the proved codec size;
 // the Lean bridge instantiates this one body for every supported scalar.
 // refines Luffs.Runtime.Containers.vecSliceBytes
-fn vec_slice_bytes<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize, width: usize) -> Option<&'a [u8]> {
+pub fn vec_slice_bytes<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize, width: usize) -> Option<&'a [u8]> {
     if begin > end { return None; }
     if end > len { return None; }
     let byte_begin: usize = begin.checked_mul(width)?;
@@ -631,7 +631,7 @@ fn vec_slice_bytes<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usiz
 }
 
 // refines Luffs.Runtime.Containers.vecSliceBytes
-fn vec_slice_mut_bytes<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize, width: usize) -> Option<&'a mut [u8]> {
+pub fn vec_slice_mut_bytes<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize, width: usize) -> Option<&'a mut [u8]> {
     if begin > end { return None; }
     if end > len { return None; }
     let byte_begin: usize = begin.checked_mul(width)?;
@@ -655,7 +655,7 @@ fn vec_slice_mut_bytes<'a>(storage: &'a mut [u8], offset: usize, len: usize, beg
 // representation, length, and exclusive ownership before this is used as a
 // Rust reference.
 // refines Luffs.Runtime.Containers.vecSliceU16Bytes
-fn vec_slice_u16<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [u16]> {
+pub fn vec_slice_u16<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [u16]> {
     if begin > end { return None; }
     if end > len { return None; }
     if end > usize::MAX / 2 { return None; }
@@ -669,7 +669,7 @@ fn vec_slice_u16<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize,
 }
 
 // refines Luffs.Runtime.Containers.vecSliceU16Bytes
-fn vec_slice_mut_u16<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [u16]> {
+pub fn vec_slice_mut_u16<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [u16]> {
     if begin > end { return None; }
     if end > len { return None; }
     if end > usize::MAX / 2 { return None; }
@@ -683,7 +683,7 @@ fn vec_slice_mut_u16<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin
 }
 
 // refines Luffs.Runtime.Containers.vecSliceWidth4Bytes
-fn vec_slice_u32<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [u32]> {
+pub fn vec_slice_u32<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [u32]> {
     if begin > end { return None; }
     if end > len { return None; }
     let byte_begin: usize = begin.checked_mul(4)?;
@@ -695,7 +695,7 @@ fn vec_slice_u32<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize,
 }
 
 // refines Luffs.Runtime.Containers.vecSliceWidth4Bytes
-fn vec_slice_mut_u32<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [u32]> {
+pub fn vec_slice_mut_u32<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [u32]> {
     if begin > end { return None; }
     if end > len { return None; }
     let byte_begin: usize = begin.checked_mul(4)?;
@@ -707,7 +707,7 @@ fn vec_slice_mut_u32<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin
 }
 
 // refines Luffs.Runtime.Containers.vecSliceWidth8Bytes
-fn vec_slice_u64<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [u64]> {
+pub fn vec_slice_u64<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [u64]> {
     if begin > end { return None; }
     if end > len { return None; }
     let byte_begin: usize = begin.checked_mul(8)?;
@@ -719,7 +719,7 @@ fn vec_slice_u64<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize,
 }
 
 // refines Luffs.Runtime.Containers.vecSliceWidth8Bytes
-fn vec_slice_mut_u64<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [u64]> {
+pub fn vec_slice_mut_u64<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [u64]> {
     if begin > end { return None; }
     if end > len { return None; }
     let byte_begin: usize = begin.checked_mul(8)?;
@@ -731,7 +731,7 @@ fn vec_slice_mut_u64<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin
 }
 
 // refines Luffs.Runtime.Containers.vecSliceWidth16Bytes
-fn vec_slice_u128<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [u128]> {
+pub fn vec_slice_u128<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [u128]> {
     if begin > end { return None; }
     if end > len { return None; }
     let byte_begin: usize = begin.checked_mul(16)?;
@@ -743,7 +743,7 @@ fn vec_slice_u128<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize
 }
 
 // refines Luffs.Runtime.Containers.vecSliceWidth16Bytes
-fn vec_slice_mut_u128<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [u128]> {
+pub fn vec_slice_mut_u128<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [u128]> {
     if begin > end { return None; }
     if end > len { return None; }
     let byte_begin: usize = begin.checked_mul(16)?;
@@ -755,7 +755,7 @@ fn vec_slice_mut_u128<'a>(storage: &'a mut [u8], offset: usize, len: usize, begi
 }
 
 // refines Luffs.Runtime.Containers.vecSliceWidth1Bytes
-fn vec_slice_i8<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [i8]> {
+pub fn vec_slice_i8<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [i8]> {
     if begin > end { return None; }
     if end > len { return None; }
     let start: usize = offset.checked_add(begin)?;
@@ -765,7 +765,7 @@ fn vec_slice_i8<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, 
 }
 
 // refines Luffs.Runtime.Containers.vecSliceWidth1Bytes
-fn vec_slice_mut_i8<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [i8]> {
+pub fn vec_slice_mut_i8<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [i8]> {
     if begin > end { return None; }
     if end > len { return None; }
     let start: usize = offset.checked_add(begin)?;
@@ -775,7 +775,7 @@ fn vec_slice_mut_i8<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin:
 }
 
 // refines Luffs.Runtime.Containers.vecSliceU16Bytes
-fn vec_slice_i16<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [i16]> {
+pub fn vec_slice_i16<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [i16]> {
     if begin > end { return None; }
     if end > len { return None; }
     if end > usize::MAX / 2 { return None; }
@@ -789,7 +789,7 @@ fn vec_slice_i16<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize,
 }
 
 // refines Luffs.Runtime.Containers.vecSliceU16Bytes
-fn vec_slice_mut_i16<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [i16]> {
+pub fn vec_slice_mut_i16<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [i16]> {
     if begin > end { return None; }
     if end > len { return None; }
     if end > usize::MAX / 2 { return None; }
@@ -803,7 +803,7 @@ fn vec_slice_mut_i16<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin
 }
 
 // refines Luffs.Runtime.Containers.vecSliceWidth4Bytes
-fn vec_slice_i32<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [i32]> {
+pub fn vec_slice_i32<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [i32]> {
     if begin > end { return None; }
     if end > len { return None; }
     let byte_begin: usize = begin.checked_mul(4)?;
@@ -815,7 +815,7 @@ fn vec_slice_i32<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize,
 }
 
 // refines Luffs.Runtime.Containers.vecSliceWidth4Bytes
-fn vec_slice_mut_i32<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [i32]> {
+pub fn vec_slice_mut_i32<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [i32]> {
     if begin > end { return None; }
     if end > len { return None; }
     let byte_begin: usize = begin.checked_mul(4)?;
@@ -827,7 +827,7 @@ fn vec_slice_mut_i32<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin
 }
 
 // refines Luffs.Runtime.Containers.vecSliceWidth8Bytes
-fn vec_slice_i64<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [i64]> {
+pub fn vec_slice_i64<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [i64]> {
     if begin > end { return None; }
     if end > len { return None; }
     let byte_begin: usize = begin.checked_mul(8)?;
@@ -839,7 +839,7 @@ fn vec_slice_i64<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize,
 }
 
 // refines Luffs.Runtime.Containers.vecSliceWidth8Bytes
-fn vec_slice_mut_i64<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [i64]> {
+pub fn vec_slice_mut_i64<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [i64]> {
     if begin > end { return None; }
     if end > len { return None; }
     let byte_begin: usize = begin.checked_mul(8)?;
@@ -851,7 +851,7 @@ fn vec_slice_mut_i64<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin
 }
 
 // refines Luffs.Runtime.Containers.vecSliceWidth16Bytes
-fn vec_slice_i128<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [i128]> {
+pub fn vec_slice_i128<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [i128]> {
     if begin > end { return None; }
     if end > len { return None; }
     let byte_begin: usize = begin.checked_mul(16)?;
@@ -863,7 +863,7 @@ fn vec_slice_i128<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize
 }
 
 // refines Luffs.Runtime.Containers.vecSliceWidth16Bytes
-fn vec_slice_mut_i128<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [i128]> {
+pub fn vec_slice_mut_i128<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [i128]> {
     if begin > end { return None; }
     if end > len { return None; }
     let byte_begin: usize = begin.checked_mul(16)?;
@@ -875,7 +875,7 @@ fn vec_slice_mut_i128<'a>(storage: &'a mut [u8], offset: usize, len: usize, begi
 }
 
 // refines Luffs.Runtime.Containers.vecSliceWidth8Bytes
-fn vec_slice_usize<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [usize]> {
+pub fn vec_slice_usize<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [usize]> {
     if begin > end { return None; }
     if end > len { return None; }
     let byte_begin: usize = begin.checked_mul(8)?;
@@ -887,7 +887,7 @@ fn vec_slice_usize<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usiz
 }
 
 // refines Luffs.Runtime.Containers.vecSliceWidth8Bytes
-fn vec_slice_mut_usize<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [usize]> {
+pub fn vec_slice_mut_usize<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [usize]> {
     if begin > end { return None; }
     if end > len { return None; }
     let byte_begin: usize = begin.checked_mul(8)?;
@@ -899,7 +899,7 @@ fn vec_slice_mut_usize<'a>(storage: &'a mut [u8], offset: usize, len: usize, beg
 }
 
 // refines Luffs.Runtime.Containers.vecSliceWidth8Bytes
-fn vec_slice_isize<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [isize]> {
+pub fn vec_slice_isize<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a [isize]> {
     if begin > end { return None; }
     if end > len { return None; }
     let byte_begin: usize = begin.checked_mul(8)?;
@@ -911,7 +911,7 @@ fn vec_slice_isize<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usiz
 }
 
 // refines Luffs.Runtime.Containers.vecSliceWidth8Bytes
-fn vec_slice_mut_isize<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [isize]> {
+pub fn vec_slice_mut_isize<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize) -> Option<&'a mut [isize]> {
     if begin > end { return None; }
     if end > len { return None; }
     let byte_begin: usize = begin.checked_mul(8)?;

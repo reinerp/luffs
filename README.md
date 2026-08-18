@@ -15,6 +15,10 @@ facts, inline Lean proofs, shared/mutable slices, fixed arrays, and two slice fo
 
 Mutability is inferred from `&mut [T]`, as in Rust. Ordinary accesses use
 `omega` automatically; `by name` selects an explicitly declared proof.
+Rust-style `pub fn` visibility is preserved in generated libraries without
+changing the generated Lean semantics. The checked-in allocator and container
+modules use it for their verified handle-based API while keeping TLSF metadata
+helpers private.
 
 Integer storage can be exposed as a native typed slice with
 `native_slice::<T>(bytes[begin..<end])` or its mutable counterpart

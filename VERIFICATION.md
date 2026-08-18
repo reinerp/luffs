@@ -733,7 +733,7 @@ concurrency are later extensions and are not prerequisites for `Box` and
   signed and unsigned scalar widths and lowers arbitrary 8/16/32/64/128-bit
   `from_le_bytes` expressions plus byte-extraction stores. `usize`/`isize` use
   the enforced 64-bit target model.
-- [ ] `Vec<T>`: invariant `len <= capacity`, initialized prefix ownership,
+- [x] `Vec<T>`: invariant `len <= capacity`, initialized prefix ownership,
   spare-capacity ownership, checked layout arithmetic, growth without loss or
   double-drop, `push`, `pop`, indexing, shared/mutable slices, and drop.
   A first generic Vec core proves `len <= capacity` and
@@ -1145,8 +1145,15 @@ alias semantics. This removes the one-store restriction that blocked
   lifetime is now proved as well: returning the exclusive slice capability
   (possibly with updated values, but unchanged length) combines it with the
   retained prefix and suffix capabilities to restore sole ownership of the
-  whole updated Vec. The final public Vec surface remains before the overall
-  Vec item is complete.
+  whole updated Vec. Rust-style `pub fn` is now accepted without changing
+  proof/model recognition, and generated Rust preserves that visibility. The
+  verified scalar Box load/store and Vec push/get/slice operations, all scalar
+  TLSF-backed constructors and growth operations, type-erased drop paths, and
+  the public TLSF initialize/allocate/deallocate boundary are exported; bin,
+  physical-layout, and coalescing-stage helpers remain private. Because the
+  initial Luffs subset intentionally has no structs, this first complete
+  surface uses proved offset/length/capacity handles rather than pretending to
+  expose an unverified Rust struct representation.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.
   All four checked-in examples are currently accepted by Lean and compile to

@@ -1097,6 +1097,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   the offset array, size array, and active-count cell from the typed metadata
   layout, in addition to all five class fields. This complete postcondition is
   composed through candidate removal and exposed by the candidate-level WP.
+  A unified successful-public-allocation theorem now selects the concrete
+  whole or split mutation suffix from `allocateArrays` itself. Its program
+  witness is related to the exact candidate and physical-call equations, so
+  it cannot be replaced by an unrelated trivially safe program. The closed
+  Iris WP terminates with one canonical postcondition decoding all ten metadata
+  fields to the public `AllocateArraysResult`, identically for both branches.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

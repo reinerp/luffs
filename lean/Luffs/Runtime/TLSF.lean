@@ -21450,6 +21450,57 @@ def deallocateArraysOutcome (offsets sizes : List Nat)
       | .failure failed => .failure failed
       | .success afterLeft => .success afterLeft
 
+/-- A successful state-retaining public deallocation exposes the exact three
+source call boundaries. The left call is absent precisely on the `block = 0`
+CFG edge. -/
+theorem deallocateArraysOutcome_success_result
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat}
+    {count block returnedOffset returnedBytes : Nat}
+    {result : CoalesceClassResult}
+    (hsuccess : deallocateArraysOutcome offsets sizes isFree prevFree second
+      first heads next previous count block returnedOffset returnedBytes =
+        .success result) :
+    ∃ marked afterRight,
+      deallocateUncoalescedArraysOutcome offsets sizes isFree prevFree second
+          first heads next previous count block returnedOffset returnedBytes =
+        .success marked ∧
+      coalesceIfPossibleArraysOutcome offsets sizes marked.isFree marked.prevFree
+          marked.second marked.first marked.heads marked.next marked.previous
+          count block = .success afterRight ∧
+      ((block = 0 ∧ result = afterRight) ∨
+        (block ≠ 0 ∧ coalesceIfPossibleArraysOutcome afterRight.offsets
+          afterRight.sizes afterRight.isFree afterRight.prevFree afterRight.second
+          afterRight.first afterRight.heads afterRight.next afterRight.previous
+          afterRight.count (block - 1) = .success result)) := by
+  unfold deallocateArraysOutcome at hsuccess
+  cases hunco : deallocateUncoalescedArraysOutcome offsets sizes isFree prevFree
+      second first heads next previous count block returnedOffset returnedBytes with
+  | failure failed => simp [hunco] at hsuccess
+  | success marked =>
+    simp only [hunco] at hsuccess
+    cases hright : coalesceIfPossibleArraysOutcome offsets sizes marked.isFree
+        marked.prevFree marked.second marked.first marked.heads marked.next
+        marked.previous count block with
+    | failure failed => simp [hright] at hsuccess
+    | success afterRight =>
+      simp only [hright] at hsuccess
+      by_cases hblock : block = 0
+      · simp only [hblock, if_true, DeallocateOutcome.success.injEq] at hsuccess
+        exact ⟨marked, afterRight, hunco, hright,
+          Or.inl ⟨hblock, hsuccess.symm⟩⟩
+      · simp only [hblock, if_false] at hsuccess
+        cases hleft : coalesceIfPossibleArraysOutcome afterRight.offsets
+            afterRight.sizes afterRight.isFree afterRight.prevFree
+            afterRight.second afterRight.first afterRight.heads afterRight.next
+            afterRight.previous afterRight.count (block - 1) with
+        | failure failed => simp [hleft] at hsuccess
+        | success afterLeft =>
+          simp only [hleft, DeallocateOutcome.success.injEq] at hsuccess
+          subst afterLeft
+          exact ⟨marked, afterRight, hunco, hright, Or.inr ⟨hblock, hleft⟩⟩
+
 /-- Compositional public transactionality theorem. The two totality premises
 are deliberately stated at the actual intermediate states; later the complete
 allocator invariant discharges them for both optional coalescing calls. -/
@@ -24938,6 +24989,124 @@ theorem coalesceIfPossibleArraysOutcome_successfulProgram_wp
       hsizesMapped hfreeMapped hprevMapped hsecondMapped hfirstMapped hheadsMapped
       hnextMapped hpreviousMapped hoffsets hsizes hfree hprev hsecond hfirst hheads
       hnext hprevious hcount
+
+def storeDeallocatedCountWrites (countBase nextCount : Nat) :
+    List ElementWrite :=
+  [⟨countBase, 8, 0, InitializeProgram.usizeBytes nextCount⟩]
+
+def storeDeallocatedCountProgram (countBase nextCount : Nat) : Program :=
+  Program.writeElements (storeDeallocatedCountWrites countBase nextCount)
+
+/-- The public count write establishes the returned active count and frames
+every physical and class metadata array. -/
+theorem storeDeallocatedCountProgram_wp_encodes {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase nextCount : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (mem : Memory)
+    (layout : AllocateComposition.MetadataLayout offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets.length sizes.length isFree.length prevFree.length second.length
+      heads.length next.length previous.length)
+    (hcountMapped : ∀ i, i < 8 → mem.mapped (countBase + i))
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree))
+    (hsecond : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hfirst : mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase first)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous)) :
+    ⊢@{IProp GF} Program.wp
+      (storeDeallocatedCountProgram countBase nextCount) mem
+      (fun final =>
+        final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+            (InitializeProgram.encodeNats offsets) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+            (InitializeProgram.encodeNats sizes) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+            (AllocateProgram.encodeFlags isFree) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+            (AllocateProgram.encodeFlags prevFree) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u32 secondBase second ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 firstBase first ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+            (InitializeProgram.encodeNats heads) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+            (InitializeProgram.encodeNats next) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+            (InitializeProgram.encodeNats previous) ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 countBase
+            (BitVec.ofNat 64 nextCount)) := by
+  let write : ElementWrite :=
+    ⟨countBase, 8, 0, InitializeProgram.usizeBytes nextCount⟩
+  unfold storeDeallocatedCountProgram
+  apply Program.wp_mono
+    (Program.writeElements_wp_exact (GF := GF)
+      (storeDeallocatedCountWrites countBase nextCount) mem (by
+        intro element helement
+        simp [storeDeallocatedCountWrites] at helement
+        subst element
+        exact InitializeProgram.usizeBytes_length nextCount) (by
+        intro element helement i hi
+        simp [storeDeallocatedCountWrites] at helement
+        subst element
+        simpa using hcountMapped i hi))
+  intro final hfinal
+  subst final
+  have happly : ElementWrite.applyAll
+      (storeDeallocatedCountWrites countBase nextCount) mem = write.apply mem := by
+    rfl
+  rw [happly]
+  have frameArray {α : Type} (codec : Luffs.Memory.Codec α) (base : Nat)
+      (values : List α) (hencoded : mem.EncodesArray codec base values)
+      (hdisjoint : (ValueRegion Luffs.Memory.Scalar.u64 countBase).disjoint
+        (ArrayRegion codec base values.length)) :
+      (write.apply mem).EncodesArray codec base values := by
+    apply hencoded.applyAll_of_disjoint
+    intro element helement
+    simp at helement
+    subst element
+    simpa [write, ElementWrite.region, InitializeProgram.usizeBytes_length,
+      ValueRegion] using hdisjoint
+  have frameValue {α : Type} (codec : Luffs.Memory.Codec α) (base : Nat)
+      (value : α) (hencoded : mem.EncodesAt codec base value)
+      (hdisjoint : (ValueRegion Luffs.Memory.Scalar.u64 countBase).disjoint
+        (ValueRegion codec base)) :
+      (write.apply mem).EncodesAt codec base value := by
+    apply hencoded.applyAll_of_disjoint
+    intro element helement
+    simp at helement
+    subst element
+    simpa [write, ElementWrite.region, InitializeProgram.usizeBytes_length,
+      ValueRegion] using hdisjoint
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · exact frameArray _ _ _ hoffsets (disjoint_symmetric.mp
+      layout.physical.offsets_count)
+  · exact frameArray _ _ _ hsizes (disjoint_symmetric.mp
+      layout.physical.sizes_count)
+  · exact frameArray _ _ _ hfree (disjoint_symmetric.mp
+      layout.physical.isFree_count)
+  · exact frameArray _ _ _ hprev (disjoint_symmetric.mp
+      layout.physical.prevFree_count)
+  · exact frameArray _ _ _ hsecond (layout.cross .count .second)
+  · exact frameValue _ _ _ hfirst (layout.cross .count .first)
+  · exact frameArray _ _ _ hheads (layout.cross .count .heads)
+  · exact frameArray _ _ _ hnext (layout.cross .count .next)
+  · exact frameArray _ _ _ hprevious (layout.cross .count .previous)
+  · simpa [write, ElementWrite.apply, InitializeProgram.usizeBytes,
+      Luffs.Memory.Scalar.u64] using
+      Memory.writeElement_encodesAt Luffs.Memory.Scalar.u64 mem countBase 0
+        (BitVec.ofNat 64 nextCount)
 
 end DeallocateProgram
 

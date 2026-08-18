@@ -1253,6 +1253,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   branches establish the same full metadata postcondition and frame the stored
   input count, making this a composable unit for the right-then-left public
   deallocation sequence.
+  Public deallocation success now exposes those exact source call boundaries:
+  the uncoalesced result, the right-coalescing result, and either the `block = 0`
+  early return or the left-coalescing result. The final public count mutation
+  also has a closed WP: it writes the returned active count and frames all nine
+  physical/class metadata fields. Composing these witnesses into one public
+  program remains the final operational deallocation step.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

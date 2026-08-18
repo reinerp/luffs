@@ -799,14 +799,20 @@ concurrency are later extensions and are not prerequisites for `Box` and
   unsigned source connections now cover every distinct scalar width:
   `tlsf_vec_grow_u8/u16/u32/u64/u128`. They check the corresponding
   `len * size` and `new_capacity * size` arithmetic (with overflow), check TLSF
-  rounding, and copy exactly the initialized byte prefix. Generated Lean
-  identifies them with `vecGrowArrays` at the matching scalar codec, so the
-  generic refinement and Iris ownership laws apply directly. Their generated
+  rounding, and copy exactly the initialized byte prefix. Their generated Lean
+  state transformers now directly sequence the generated TLSF allocation,
+  recursively generated snapshot-copy, and generated deallocation models; no
+  unsigned width aliases the handwritten `vecGrow*Arrays` transaction. A
+  source-shaped generic bridge proves the literal rounding expression equal to
+  `Vec.allocationBytes` before identifying the transaction with `vecGrowArrays`
+  at the matching scalar codec, so the generic refinement and Iris ownership
+  laws apply directly. Their generated
   copy programs have closed weakest-precondition proofs for exactly
   `len * size` byte steps. Signed `i8/i16/i32/i64/i128` and target-word
   `usize/isize` Luffs entry points now delegate to the matching proved width
-  while their generated models retain the corresponding typed scalar codec;
-  consequently the same generic Iris law transfers the correctly typed
+  and their generated semantics composes with the same generated unsigned
+  dependency; the typed scalar codec is restored at the refinement boundary.
+  Consequently the same generic Iris law transfers the correctly typed
   `Vec.Owns` capability. Alias recognition depends on recognition of the
   underlying unsigned body. Source-shape regressions reject omission or
   corruption of initialized-length/capacity multiplications, reject a signed

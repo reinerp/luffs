@@ -4078,15 +4078,73 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
             model.name, model.name, model.refines, model.name
         ));
     }
+    if !module.tlsf_vec_grow_models.is_empty() {
+        out.push_str(
+            "def tlsf_vec_copy_byte_range_model (storage : List (Fin 256)) (source destination : Nat) : Nat → Option (List (Fin 256))\n  | 0 => some storage\n  | n + 1 => do\n      let copied ← tlsf_vec_copy_byte_range_model storage source destination n\n      let byte ← storage[source + n]?\n      if destination + n ≥ storage.length then none\n      pure (copied.set (destination + n) byte)\n\ntheorem tlsf_vec_copy_byte_range_refines : tlsf_vec_copy_byte_range_model = Luffs.Runtime.Containers.copyByteRange := by\n  funext storage source destination len\n  induction len with\n  | zero => rfl\n  | succ n ih => simp only [tlsf_vec_copy_byte_range_model, Luffs.Runtime.Containers.copyByteRange, ih]\n\n",
+        );
+    }
     for model in &module.tlsf_vec_grow_models {
-        out.push_str(&format!(
-            "def {}_model (storage : List (Fin 256)) (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (old_offset len old_capacity new_capacity : Nat) : Option Luffs.Runtime.Containers.VecGrowU8ArraysResult :=\n  {} storage offsets sizes is_free prev_free count second first heads next previous old_offset len old_capacity new_capacity\n\n",
-            model.name, model.refines
-        ));
-        out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
-            model.name, model.name, model.refines
-        ));
+        let unsigned_codec = match model.name.as_str() {
+            "tlsf_vec_grow_u8" => Some(("Luffs.Memory.Scalar.u8", true)),
+            "tlsf_vec_grow_u16" => Some(("Luffs.Memory.Scalar.u16", false)),
+            "tlsf_vec_grow_u32" => Some(("Luffs.Memory.Scalar.u32", false)),
+            "tlsf_vec_grow_u64" => Some(("Luffs.Memory.Scalar.u64", false)),
+            "tlsf_vec_grow_u128" => Some(("Luffs.Memory.Scalar.u128", false)),
+            _ => None,
+        };
+        if let Some((codec, byte_width)) = unsigned_codec {
+            let bad = if byte_width {
+                "len > old_capacity ∨ new_capacity ≤ old_capacity ∨\n      new_capacity > Luffs.Runtime.TLSF.usizeMax - 7".to_owned()
+            } else {
+                format!(
+                    "len > old_capacity ∨ new_capacity ≤ old_capacity ∨\n      len > Luffs.Runtime.TLSF.usizeMax / {codec}.size ∨\n      new_capacity > Luffs.Runtime.TLSF.usizeMax / {codec}.size ∨\n      new_capacity * {codec}.size > Luffs.Runtime.TLSF.usizeMax - 7"
+                )
+            };
+            let initialized = if byte_width {
+                "len".to_owned()
+            } else {
+                format!("len * {codec}.size")
+            };
+            let allocation = if byte_width {
+                "new_capacity".to_owned()
+            } else {
+                format!("new_capacity * {codec}.size")
+            };
+            out.push_str(&format!(
+                "def {}_model (storage : List (Fin 256)) (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (old_offset len old_capacity new_capacity : Nat) : Option Luffs.Runtime.Containers.VecGrowU8ArraysResult := do\n  if {bad} then none\n  let initialized_bytes := {initialized}\n  if old_offset + initialized_bytes ≥ 2 ^ 64 ∨ old_offset + initialized_bytes > storage.length then none\n  let allocated ← tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous\n    (Luffs.Allocator.TLSF.roundUp8 ({allocation}))\n  if allocated.allocatedOffset + initialized_bytes ≥ 2 ^ 64 ∨\n      allocated.allocatedOffset + initialized_bytes > storage.length then none\n  let copied ← tlsf_vec_copy_byte_range_model storage old_offset allocated.allocatedOffset initialized_bytes\n  let released ← tlsf_box_drop_u8_model allocated.offsets allocated.sizes allocated.isFree allocated.prevFree allocated.count allocated.second allocated.first allocated.heads allocated.next allocated.previous old_offset\n  pure ⟨released, copied, allocated.allocatedOffset, allocated.allocatedBytes⟩\n\n",
+                model.name
+            ));
+            if byte_width {
+                out.push_str(&format!(
+                    "theorem {}_refines : {}_model = {} := by\n  unfold {}_model\n  rw [tlsf_allocate_refines, tlsf_vec_copy_byte_range_refines, tlsf_box_drop_u8_refines]\n  change Luffs.Runtime.Containers.vecGrowU8RoundedArrays = {}\n  exact Luffs.Runtime.Containers.vecGrowU8RoundedArrays_eq\n\n",
+                    model.name, model.name, model.refines, model.name, model.refines
+                ));
+            } else {
+                out.push_str(&format!(
+                    "theorem {}_refines : {}_model = {} := by\n  unfold {}_model\n  rw [tlsf_allocate_refines, tlsf_vec_copy_byte_range_refines, tlsf_box_drop_u8_refines]\n  change Luffs.Runtime.Containers.vecGrowRoundedArrays {} = {}\n  unfold {}\n  exact Luffs.Runtime.Containers.vecGrowRoundedArrays_eq_generic {}\n\n",
+                    model.name, model.name, model.refines, model.name, codec,
+                    model.refines, model.refines, codec
+                ));
+            }
+        } else {
+            let dependency = match model.name.as_str() {
+                "tlsf_vec_grow_i8" => "tlsf_vec_grow_u8",
+                "tlsf_vec_grow_i16" => "tlsf_vec_grow_u16",
+                "tlsf_vec_grow_i32" => "tlsf_vec_grow_u32",
+                "tlsf_vec_grow_i64" => "tlsf_vec_grow_u64",
+                "tlsf_vec_grow_i128" => "tlsf_vec_grow_u128",
+                "tlsf_vec_grow_usize" | "tlsf_vec_grow_isize" => "tlsf_vec_grow_u64",
+                _ => unreachable!("recognized Vec growth model without a scalar width"),
+            };
+            out.push_str(&format!(
+                "def {}_model (storage : List (Fin 256)) (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (old_offset len old_capacity new_capacity : Nat) : Option Luffs.Runtime.Containers.VecGrowU8ArraysResult :=\n  {}_model storage offsets sizes is_free prev_free count second first heads next previous old_offset len old_capacity new_capacity\n\n",
+                model.name, dependency
+            ));
+            out.push_str(&format!(
+                "theorem {}_refines : {}_model = {} := by\n  unfold {}_model\n  rw [{}_refines]\n  rfl\n\n",
+                model.name, model.name, model.refines, model.name, dependency
+            ));
+        }
         let copied_len = match model.name.as_str() {
             "tlsf_vec_grow_u16" | "tlsf_vec_grow_i16" => "len * 2",
             "tlsf_vec_grow_u32" | "tlsf_vec_grow_i32" => "len * 4",
@@ -4547,6 +4605,23 @@ mod tests {
         ));
         assert!(generated.contains(
             "theorem tlsf_vec_grow_u16_refines : tlsf_vec_grow_u16_model = Luffs.Runtime.Containers.vecGrowU16Arrays"
+        ));
+        assert!(
+            generated.contains("def tlsf_vec_copy_byte_range_model (storage : List (Fin 256))")
+        );
+        assert!(generated.contains(
+            "let copied ← tlsf_vec_copy_byte_range_model storage old_offset allocated.allocatedOffset initialized_bytes"
+        ));
+        assert!(
+            generated.contains(
+                "let released ← tlsf_box_drop_u8_model allocated.offsets allocated.sizes"
+            )
+        );
+        assert!(!generated.contains(
+            "Option Luffs.Runtime.Containers.VecGrowU8ArraysResult :=\n  Luffs.Runtime.Containers.vecGrowU32Arrays"
+        ));
+        assert!(generated.contains(
+            "tlsf_vec_grow_u32_model storage offsets sizes is_free prev_free count second first heads next previous old_offset len old_capacity new_capacity"
         ));
         assert!(generated.contains(
             "Luffs.Memory.Program.forRange 0 (len * 2)\n        (Luffs.Memory.Program.copyLoopBody oldBase newBase)"

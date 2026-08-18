@@ -2391,6 +2391,73 @@ def vecGrowArrays {α : Type} (codec : Codec α) (storage : List Byte)
     allocated.first allocated.heads allocated.next allocated.previous oldOffset
   pure ⟨released, copied, allocated.allocatedOffset, allocated.allocatedBytes⟩
 
+/-- Source-shaped growth arithmetic. Unlike `vecGrowArrays`, the allocation
+request remains the literal rounding expression emitted from Luffs source. -/
+def vecGrowRoundedArrays {α : Type} (codec : Codec α) (storage : List Byte)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256)) (count : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat)
+    (oldOffset len oldCapacity newCapacity : Nat) :
+    Option VecGrowU8ArraysResult := do
+  if len > oldCapacity ∨ newCapacity ≤ oldCapacity ∨
+      len > Luffs.Runtime.TLSF.usizeMax / codec.size ∨
+      newCapacity > Luffs.Runtime.TLSF.usizeMax / codec.size ∨
+      newCapacity * codec.size > Luffs.Runtime.TLSF.usizeMax - 7 then none
+  let initializedBytes := len * codec.size
+  if oldOffset + initializedBytes ≥ 2 ^ 64 ∨
+      oldOffset + initializedBytes > storage.length then none
+  let allocated ← Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree
+    prevFree count second first heads next previous
+      (roundUp8 (newCapacity * codec.size))
+  if allocated.allocatedOffset + initializedBytes ≥ 2 ^ 64 ∨
+      allocated.allocatedOffset + initializedBytes > storage.length then none
+  let copied ← copyByteRange storage oldOffset allocated.allocatedOffset
+    initializedBytes
+  let released ← boxDropU8Arrays allocated.offsets allocated.sizes
+    allocated.isFree allocated.prevFree allocated.count allocated.second
+    allocated.first allocated.heads allocated.next allocated.previous oldOffset
+  pure ⟨released, copied, allocated.allocatedOffset, allocated.allocatedBytes⟩
+
+theorem vecGrowRoundedArrays_eq_generic {α : Type} (codec : Codec α) :
+    vecGrowRoundedArrays codec = vecGrowArrays codec := by
+  funext storage offsets sizes isFree prevFree count second first heads next
+    previous oldOffset len oldCapacity newCapacity
+  unfold vecGrowRoundedArrays vecGrowArrays
+  let bad := len > oldCapacity ∨ newCapacity ≤ oldCapacity ∨
+    len > Luffs.Runtime.TLSF.usizeMax / codec.size ∨
+    newCapacity > Luffs.Runtime.TLSF.usizeMax / codec.size ∨
+    newCapacity * codec.size > Luffs.Runtime.TLSF.usizeMax - 7
+  by_cases hbad : bad
+  · simp [bad, hbad]
+  · have hcapacity : 0 < newCapacity := by
+      have hlt : oldCapacity < newCapacity :=
+        Nat.lt_of_not_ge (fun h => hbad (Or.inr (Or.inl h)))
+      omega
+    simp only [bad, hbad, ↓reduceIte]
+    rw [Luffs.Containers.Vec.roundUp8_eq_allocationBytes codec hcapacity]
+
+/-- The byte-width source has fewer explicit multiplication guards because its
+element/byte counts coincide. Keep that exact CFG separate from the generic
+bridge instead of silently strengthening its semantics. -/
+def vecGrowU8RoundedArrays (storage : List Byte) (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (count : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat)
+    (oldOffset len oldCapacity newCapacity : Nat) :
+    Option VecGrowU8ArraysResult := do
+  if len > oldCapacity ∨ newCapacity ≤ oldCapacity ∨
+      newCapacity > Luffs.Runtime.TLSF.usizeMax - 7 then none
+  if oldOffset + len ≥ 2 ^ 64 ∨ oldOffset + len > storage.length then none
+  let allocated ← Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree
+    prevFree count second first heads next previous (roundUp8 newCapacity)
+  if allocated.allocatedOffset + len ≥ 2 ^ 64 ∨
+      allocated.allocatedOffset + len > storage.length then none
+  let copied ← copyByteRange storage oldOffset allocated.allocatedOffset len
+  let released ← boxDropU8Arrays allocated.offsets allocated.sizes
+    allocated.isFree allocated.prevFree allocated.count allocated.second
+    allocated.first allocated.heads allocated.next allocated.previous oldOffset
+  pure ⟨released, copied, allocated.allocatedOffset, allocated.allocatedBytes⟩
+
 theorem vecGrowArrays_result {α : Type} {codec : Codec α}
     {storage : List Byte} {offsets sizes : List Nat}
     {isFree prevFree : List (Fin 256)} {count : Nat}
@@ -2661,7 +2728,6 @@ def vecGrowU128Arrays := vecGrowArrays Scalar.u128
 
 /-- Signed and target-word growth retain their typed codec while reusing the
 same byte-width transition. -/
-def vecGrowI8Arrays := vecGrowArrays Scalar.i8
 def vecGrowI16Arrays := vecGrowArrays Scalar.i16
 def vecGrowI32Arrays := vecGrowArrays Scalar.i32
 def vecGrowI64Arrays := vecGrowArrays Scalar.i64
@@ -2690,6 +2756,32 @@ def vecGrowU8Arrays (storage : List Byte) (offsets sizes : List Nat)
     allocated.isFree allocated.prevFree allocated.count allocated.second
     allocated.first allocated.heads allocated.next allocated.previous oldOffset
   pure ⟨released, copied, allocated.allocatedOffset, allocated.allocatedBytes⟩
+
+theorem vecGrowU8RoundedArrays_eq :
+    vecGrowU8RoundedArrays = vecGrowU8Arrays := by
+  funext storage offsets sizes isFree prevFree count second first heads next
+    previous oldOffset len oldCapacity newCapacity
+  unfold vecGrowU8RoundedArrays vecGrowU8Arrays
+  let bad := len > oldCapacity ∨ newCapacity ≤ oldCapacity ∨
+    newCapacity > Luffs.Runtime.TLSF.usizeMax - 7
+  by_cases hbad : bad
+  · simp [bad, hbad]
+  · have hcapacity : 0 < newCapacity := by
+      have hlt : oldCapacity < newCapacity :=
+        Nat.lt_of_not_ge (fun h => hbad (Or.inr (Or.inl h)))
+      omega
+    simp only [bad, hbad, ↓reduceIte]
+    have hround : roundUp8 newCapacity =
+        Luffs.Containers.Vec.allocationBytes
+          (α := BitVec 8) Scalar.u8 newCapacity := by
+      simpa only [Scalar.u8, Nat.mul_one] using
+        (Luffs.Containers.Vec.roundUp8_eq_allocationBytes
+          (α := BitVec 8) Scalar.u8 hcapacity)
+    rw [hround]
+
+/-- Signed bytes have the same source CFG and representation as unsigned
+bytes; keeping this alias exact avoids strengthening the emitted semantics. -/
+def vecGrowI8Arrays := vecGrowU8Arrays
 
 theorem vecGrowU8Arrays_result
     {storage : List Byte} {offsets sizes : List Nat}

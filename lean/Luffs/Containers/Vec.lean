@@ -59,6 +59,31 @@ def Valid {α : Type} (codec : Codec α) (handle : Handle) : Prop :=
   handle.len ≤ handle.capacity ∧
     handle.capacity * codec.size ≤ handle.block.bytes
 
+/-- The allocator alignment is sufficient for native references to values of
+this codec, and consecutive encoded elements retain that alignment. This is
+separate from the codec's representation law: both are required before a byte
+allocation may be exposed as a Rust `&[T]`. -/
+def NativeAlignmentCompatible {α : Type} (codec : Codec α) : Prop :=
+  codec.align ∣ alignment ∧ codec.align ∣ codec.size
+
+/-- Every element address in an aligned TLSF block has the codec's native
+alignment. The mmap boundary supplies `hpool`; TLSF preserves `block.aligned`;
+and `NativeAlignmentCompatible` covers both the block offset and element
+stride. -/
+theorem elementBase_native_aligned {α : Type} {codec : Codec α}
+    {pool : Region} {block : Block} (hpool : codec.align ∣ pool.base)
+    (hcodec : NativeAlignmentCompatible codec) (hblock : block.aligned)
+    (index : Nat) :
+    codec.align ∣ (block.region pool).base + index * codec.size := by
+  have hoffset : codec.align ∣ block.offset :=
+    Nat.dvd_trans hcodec.1 hblock.1
+  have hstride : codec.align ∣ index * codec.size := by
+    obtain ⟨factor, hsize⟩ := hcodec.2
+    exact ⟨index * factor, by
+      rw [hsize]
+      ac_rfl⟩
+  exact Nat.dvd_add (Nat.dvd_add hpool hoffset) hstride
+
 def SliceValid (handle : Handle) (slice : SliceHandle) : Prop :=
   slice.begin ≤ slice.end ∧ slice.end ≤ handle.len
 
@@ -128,10 +153,10 @@ structure AllocResult where
 def allocationBytes {α : Type} (codec : Codec α) (capacity : Nat) : Nat :=
   Box.requestBytes (capacity * codec.size)
 
-theorem roundUp8_eq_allocationBytes {α : Type} (codec : Codec α)
+theorem roundUp16_eq_allocationBytes {α : Type} (codec : Codec α)
     {capacity : Nat} (hcapacity : 0 < capacity) :
-    roundUp8 (capacity * codec.size) = allocationBytes codec capacity := by
-  exact roundUp8_eq_linearBinUpper (capacity * codec.size)
+    roundUp16 (capacity * codec.size) = allocationBytes codec capacity := by
+  exact roundUp16_eq_linearBinUpper (capacity * codec.size)
     (Nat.mul_pos hcapacity codec.size_pos)
 
 theorem allocationBytes_positive {α : Type} (codec : Codec α) {capacity : Nat}

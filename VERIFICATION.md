@@ -116,7 +116,7 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   The Lean reference mapping returns `Fin 64 × Fin 32`; its high-range quotient
   is proved not to wrap and its selected interval is proved to contain the
   request. The corrected 32-bin linear branch is also proved to contain every
-  request through 256 bytes. Luffs now implements the 64-bit mapping-down path
+  request through 512 bytes. Luffs now implements the 64-bit mapping-down path
   used for free-block insertion: a source-shape checked refinement maps every
   accepted positive size to the encoded Lean `sizeClass`, whose result is
   proved below 2048. The mapping-down source model is no longer an alias of
@@ -932,7 +932,7 @@ concurrency are later extensions and are not prerequisites for `Box` and
   `vecNewArrays` codec specialization, so `vecNewArrays_refines_vec` supplies
   the empty exclusive typed Vec capability. Generated semantics for every
   unsigned width now independently contains the checked capacity/byte guards,
-  source-shaped `roundUp8`, and a call to the generated TLSF allocator model;
+  source-shaped `roundUp16`, and a call to the generated TLSF allocator model;
   it no longer aliases the handwritten codec wrapper. Signed and native-width
   source aliases compose with those generated unsigned models, retaining their
   typed codec only at the refinement boundary. A u128 mutation regression
@@ -968,10 +968,10 @@ concurrency are later extensions and are not prerequisites for `Box` and
   model with the verified byte-capacity request rather than directly aliasing
   the hand-written Vec constructor transformer. Allocation rounding no longer
   relies on a specially recognized word mask: Luffs computes
-  `((bytes + 7) / 8) * 8` after the checked addition. The general Lean theorem
-  `roundUp8_eq_linearBinUpper` proves this source-shaped arithmetic is exactly
+  `((bytes + 15) / 16) * 16` after the checked addition. The general Lean theorem
+  `roundUp16_eq_linearBinUpper` proves this source-shaped arithmetic is exactly
   TLSF's abstract linear-bin upper endpoint for every positive byte count, and
-  `roundUp8_eq_allocationBytes` lifts it to every codec. The generated u8
+  `roundUp16_eq_allocationBytes` lifts it to every codec. The generated u8
   constructor model now passes this arithmetic result to the generated TLSF
   allocator rather than inserting the abstract request by hand; all scalar
   constructors and growth bodies use the same checked expression.
@@ -1117,9 +1117,13 @@ alias semantics. This removes the one-store restriction that blocked
   every supported signed and unsigned scalar codec, and its Iris corollary
   splits ownership of exactly the selected encoded bytes from the parent Vec.
   These byte views deliberately avoid an unsound native-slice cast: TLSF's
-  base alignment alone does not establish every scalar's Rust alignment or
-  native representation. Any future native-layout view therefore still needs
-  its own alignment and representation proof before the overall Vec item is
+  alignment must establish every scalar's Rust alignment and native
+  representation. TLSF block alignment and request rounding are now 16 bytes,
+  its linear classifier has been re-proved for 32 sixteen-byte bins, and a
+  generic element-address theorem proves alignment from the mmap base through
+  every block offset and element stride. All twelve scalar codecs, including
+  `u128`/`i128`, are proved compatible with that alignment. A native-layout
+  view still needs its representation proof before the overall Vec item is
   complete.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.

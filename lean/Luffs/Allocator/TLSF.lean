@@ -8,7 +8,7 @@ open Luffs.Memory
 open Iris Iris.BI
 
 /-- Minimum block alignment. Metadata flags occupy the low alignment bits. -/
-def alignment : Nat := 8
+def alignment : Nat := 16
 
 def firstLevelCount : Nat := 64
 def secondLevelCount : Nat := 32
@@ -20,7 +20,7 @@ structure SizeClass where
   sl : Fin secondLevelCount
 deriving DecidableEq, Repr
 
-/-- Two-level size mapping. Requests through 256 bytes use 32 linear 8-byte
+/-- Two-level size mapping. Requests through 512 bytes use 32 linear 16-byte
 classes. Larger requests use logarithmic first-level classes and 32 subdivisions. -/
 def sizeClass (size : Nat) (hsize : 0 < size)
     (hmax : size < 2 ^ firstLevelCount) : SizeClass :=
@@ -73,13 +73,13 @@ def linearBinLower (size : Nat) : Nat := linearBinNumber size * alignment + 1
 def linearBinUpper (size : Nat) : Nat := (linearBinNumber size + 1) * alignment
 
 /-- Rust-shaped arithmetic rounding used by the Luffs implementation after its
-checked `size + 7`. Unlike a bit mask, this expression has a direct generic
+checked `size + 15`. Unlike a bit mask, this expression has a direct generic
 integer semantics in both generated Lean and Rust. -/
-def roundUp8 (size : Nat) : Nat := (size + 7) / 8 * 8
+def roundUp16 (size : Nat) : Nat := (size + 15) / 16 * 16
 
-theorem roundUp8_eq_linearBinUpper (size : Nat) (hsize : 0 < size) :
-    roundUp8 size = linearBinUpper size := by
-  simp [roundUp8, linearBinUpper, linearBinNumber, alignment]
+theorem roundUp16_eq_linearBinUpper (size : Nat) (hsize : 0 < size) :
+    roundUp16 size = linearBinUpper size := by
+  simp [roundUp16, linearBinUpper, linearBinNumber, alignment]
   omega
 
 theorem linear_sizeClass_values (size : Nat) (hsize : 0 < size)
@@ -88,7 +88,7 @@ theorem linear_sizeClass_values (size : Nat) (hsize : 0 < size)
       (sizeClass size hsize hmax).sl.val = linearBinNumber size := by
   simp [sizeClass, hlinear, linearBinNumber]
 
-/-- A request in the linear range belongs to the selected 8-byte bin. The
+/-- A request in the linear range belongs to the selected 16-byte bin. The
 upper endpoint is inclusive because allocation rounds upward to that boundary. -/
 theorem linear_sizeClass_covers (size : Nat) (hsize : 0 < size) :
     linearBinLower size ≤ size ∧ size ≤ linearBinUpper size := by
@@ -216,7 +216,7 @@ theorem high_requestKey (size : Nat) (hhigh : linearCutoff < size) :
   simp [requestKey, Nat.not_le_of_gt hhigh]
 
 /-- In the linear range, aligned free-block sizes are exactly the upper
-endpoints of their 8-byte bins. Thus sharing a mapping-down class with an
+endpoints of their 16-byte bins. Thus sharing a mapping-down class with an
 arbitrary request is already sufficient for the block to fit that request. -/
 theorem linear_same_class_suitable (request block : Nat)
     (hrequest : 0 < request) (hblock : 0 < block)

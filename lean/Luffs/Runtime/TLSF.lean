@@ -158,8 +158,8 @@ subtractions, quotient, and final encoded-index checks. -/
 def classifySizeBinLowered (size : Nat) : Option Nat :=
   if size > usizeMax then none
   else if size = 0 then none
-  else if size ≤ 256 then
-    some ((size - 1) >>> 3)
+  else if size ≤ 512 then
+    some ((size - 1) >>> 4)
   else
     let leading := leadingZeros64 size
     if leading > 63 then none
@@ -193,8 +193,8 @@ theorem classifySizeBinLowered_eq (size : Nat) :
       omega
     have hfl : 63 - (63 - size.log2) = size.log2 := by omega
     have hleading := leadingZeros64_eq hpositive hmax
-    by_cases hlinear : size ≤ 256
-    · have hshift : (size - 1) >>> 3 = (size - 1) / 8 := by
+    by_cases hlinear : size ≤ 512
+    · have hshift : (size - 1) >>> 4 = (size - 1) / 16 := by
         simp [Nat.shiftRight_eq_div_pow]
       simp [classifySizeBinLowered, classifySizeBin, hword, hzero, hlinear,
         hshift, sizeClass, linearCutoff, alignment, encodeSizeClass,
@@ -298,7 +298,7 @@ actual Luffs call graph. -/
 def classifyRequestBinLowered (request : Nat) : Option Nat :=
   if request > usizeMax then none
   else if request = 0 then none
-  else if request ≤ 256 then classifySizeBinLowered request
+  else if request ≤ 512 then classifySizeBinLowered request
   else do
     let key ← highRequestKeyLowered request
     classifySizeBinLowered key
@@ -319,7 +319,7 @@ theorem classifyRequestBinLowered_eq (request : Nat) :
   have hmax : request < 2 ^ 64 := by
     simp only [usizeMax] at hwordOut
     omega
-  by_cases hlinear : request ≤ 256
+  by_cases hlinear : request ≤ 512
   · have hlinearCutoff : request ≤ linearCutoff := by
       simpa [linearCutoff, alignment, secondLevelCount] using hlinear
     have hkeyMax : requestKey request < 2 ^ firstLevelCount := by
@@ -6714,9 +6714,9 @@ theorem allocateArrays_api
           (frame ∗ Luffs.Allocator.TLSF.Ownership.OwnsFree pool
             abstractResult.state.physical)) := by
   obtain ⟨hrequest, hkeyMax, abstractResult, habstract, hoffset, hbytes,
-      _, _, _, _, _, _, _⟩ := allocateArrays_ownsFree hvalid hsecond hfirst
-    hbins hdisjoint hphysical hsuccess
-  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, hphysicalStep, _⟩ :=
+      _, _, _, _, _, _, _⟩ := allocateArrays_ownsFree (PROP := PROP)
+    hvalid hsecond hfirst hbins hdisjoint hphysical hsuccess
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hphysicalStep, _⟩ :=
     allocateArrays_result hsuccess
   have haligned : alignment ∣ request :=
     (allocatePhysicalArrays_result hphysicalStep).1
@@ -7556,11 +7556,11 @@ theorem initialAllocator_valid (pool : Luffs.Memory.Region)
   have hbinsValid := Bins.insert_valid emptyBins_valid cls
     (initialBlock pool.bytes) hbelongs hfresh
   have hwell : wellFormed pool [initialBlock pool.bytes] := by
-    have haligned8 : 8 ∣ pool.bytes := by
+    have haligned16 : 16 ∣ pool.bytes := by
       simpa [alignment] using haligned
     simp [wellFormed, ordered, partitions, contiguousFrom, covers,
       boundaryTags, boundaryTagsFrom, initialBlock, Block.aligned,
-      alignment, hpositive, haligned8]
+      alignment, hpositive, haligned16]
   have hagreement : Bins.PhysicalAgreement [initialBlock pool.bytes]
       (emptyBins.insert cls (initialBlock pool.bytes)) := by
     constructor

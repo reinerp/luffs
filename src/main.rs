@@ -1767,9 +1767,9 @@ fn parse_tlsf_classify_size_models(source: &str) -> Vec<TlsfClassifySizeModel> {
     let body = lexical_function_body(&lines, index);
     let required = [
         "if size == 0 { return None; }",
-        "if size <= 256 {",
+        "if size <= 512 {",
         "let predecessor: usize = size - 1;",
-        "let sl: usize = predecessor >> 3;",
+        "let sl: usize = predecessor >> 4;",
         "return Some(sl);",
         "let leading: usize = size.leading_zeros() as usize;",
         "let fl: usize = 63 - leading;",
@@ -1820,7 +1820,7 @@ fn parse_tlsf_classify_request_models(source: &str) -> Vec<TlsfClassifySizeModel
     let body = lexical_function_body(&lines, index);
     let required = [
         "if request == 0 { return None; }",
-        "if request <= 256 {",
+        "if request <= 512 {",
         "return tlsf_classify_size(request);",
         "let leading: usize = request.leading_zeros() as usize;",
         "let fl: usize = 63 - leading;",
@@ -2150,7 +2150,7 @@ fn parse_tlsf_box_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
         (
             "tlsf_box_new_u8",
             vec![
-                "let offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, 8)?;",
+                "let offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, 16)?;",
                 "if offset >= pool.len() { return None; }",
                 "pool[offset] = value;",
                 "Some(offset)",
@@ -2159,7 +2159,7 @@ fn parse_tlsf_box_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
         (
             "tlsf_box_new_u16",
             vec![
-                "let offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, 8)?;",
+                "let offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, 16)?;",
                 "let end: usize = offset.checked_add(2)?;",
                 "if end > pool.len() { return None; }",
                 "pool[offset] = value as u8;",
@@ -2171,7 +2171,7 @@ fn parse_tlsf_box_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
         (
             "tlsf_box_new_u32",
             vec![
-                "let offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, 8)?;",
+                "let offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, 16)?;",
                 "let end: usize = offset.checked_add(4)?;",
                 "if end > pool.len() { return None; }",
                 "pool[offset] = value as u8;",
@@ -2184,7 +2184,7 @@ fn parse_tlsf_box_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
         (
             "tlsf_box_new_u64",
             vec![
-                "let offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, 8)?;",
+                "let offset: usize = tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, 16)?;",
                 "let end: usize = offset.checked_add(8)?;",
                 "if end > pool.len() { return None; }",
                 "pool[offset] = value as u8;",
@@ -2391,9 +2391,9 @@ fn parse_tlsf_vec_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
             "tlsf_vec_new_u8",
             vec![
                 "if capacity == 0 { return None; }",
-                "if capacity > usize::MAX - 7 { return None; }",
-                "let rounded: usize = capacity + 7;",
-                "let request: usize = (rounded / 8) * 8;",
+                "if capacity > usize::MAX - 15 { return None; }",
+                "let rounded: usize = capacity + 15;",
+                "let request: usize = (rounded / 16) * 16;",
                 "tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)",
             ],
         ),
@@ -2402,8 +2402,8 @@ fn parse_tlsf_vec_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
             vec![
                 "if capacity == 0 { return None; }",
                 "let bytes: usize = capacity.checked_mul(2)?;",
-                "let rounded: usize = bytes.checked_add(7)?;",
-                "let request: usize = (rounded / 8) * 8;",
+                "let rounded: usize = bytes.checked_add(15)?;",
+                "let request: usize = (rounded / 16) * 16;",
                 "tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)",
             ],
         ),
@@ -2425,8 +2425,8 @@ fn parse_tlsf_vec_new_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
         specifications.push((name, vec![
             "if capacity == 0 { return None; }",
             multiply,
-            "let rounded: usize = bytes.checked_add(7)?;",
-            "let request: usize = (rounded / 8) * 8;",
+            "let rounded: usize = bytes.checked_add(15)?;",
+            "let request: usize = (rounded / 16) * 16;",
             "tlsf_allocate(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, request)",
         ]));
     }
@@ -2614,7 +2614,7 @@ fn parse_tlsf_vec_grow_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
             vec![
                 "let initialized_bytes: usize = len.checked_mul(2)?;",
                 "let allocation_bytes: usize = new_capacity.checked_mul(2)?;",
-                "let rounded: usize = allocation_bytes.checked_add(7)?;",
+                "let rounded: usize = allocation_bytes.checked_add(15)?;",
             ],
         ),
         (
@@ -2623,7 +2623,7 @@ fn parse_tlsf_vec_grow_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
             vec![
                 "let initialized_bytes: usize = len.checked_mul(4)?;",
                 "let allocation_bytes: usize = new_capacity.checked_mul(4)?;",
-                "let rounded: usize = allocation_bytes.checked_add(7)?;",
+                "let rounded: usize = allocation_bytes.checked_add(15)?;",
             ],
         ),
         (
@@ -2632,7 +2632,7 @@ fn parse_tlsf_vec_grow_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
             vec![
                 "let initialized_bytes: usize = len.checked_mul(8)?;",
                 "let allocation_bytes: usize = new_capacity.checked_mul(8)?;",
-                "let rounded: usize = allocation_bytes.checked_add(7)?;",
+                "let rounded: usize = allocation_bytes.checked_add(15)?;",
             ],
         ),
         (
@@ -2641,7 +2641,7 @@ fn parse_tlsf_vec_grow_models(source: &str) -> Vec<TlsfCoalescePhysicalModel> {
             vec![
                 "let initialized_bytes: usize = len.checked_mul(16)?;",
                 "let allocation_bytes: usize = new_capacity.checked_mul(16)?;",
-                "let rounded: usize = allocation_bytes.checked_add(7)?;",
+                "let rounded: usize = allocation_bytes.checked_add(15)?;",
             ],
         ),
     ];
@@ -3950,7 +3950,7 @@ rfl\n\n",
     }
     for model in &module.tlsf_classify_size_models {
         out.push_str(&format!(
-            "def {}_model (size : Nat) : Option Nat :=\n  if size > Luffs.Runtime.TLSF.usizeMax then none\n  else if size = 0 then none\n  else if size ≤ 256 then some ((size - 1) >>> 3)\n  else\n    let leading := Luffs.Runtime.TLSF.leadingZeros64 size\n    if leading > 63 then none else\n    let fl := 63 - leading\n    if fl < 5 then none else\n    let base := 1 <<< fl\n    if base > size then none else\n    let shift := fl - 5\n    let step := 1 <<< shift\n    let delta := size - base\n    let sl := delta / step\n    if sl ≥ 32 then none else\n    let encoded_base := fl * 32\n    let encoded := encoded_base + sl\n    if encoded > Luffs.Runtime.TLSF.usizeMax then none else some encoded\n\n",
+            "def {}_model (size : Nat) : Option Nat :=\n  if size > Luffs.Runtime.TLSF.usizeMax then none\n  else if size = 0 then none\n  else if size ≤ 512 then some ((size - 1) >>> 4)\n  else\n    let leading := Luffs.Runtime.TLSF.leadingZeros64 size\n    if leading > 63 then none else\n    let fl := 63 - leading\n    if fl < 5 then none else\n    let base := 1 <<< fl\n    if base > size then none else\n    let shift := fl - 5\n    let step := 1 <<< shift\n    let delta := size - base\n    let sl := delta / step\n    if sl ≥ 32 then none else\n    let encoded_base := fl * 32\n    let encoded := encoded_base + sl\n    if encoded > Luffs.Runtime.TLSF.usizeMax then none else some encoded\n\n",
             model.name
         ));
         out.push_str(&format!(
@@ -3967,7 +3967,7 @@ rfl\n\n",
             "def tlsf_high_request_key_model (request : Nat) : Option Nat :=\n  let leading := Luffs.Runtime.TLSF.leadingZeros64 request\n  if leading > 63 then none else\n  let fl := 63 - leading\n  if fl < 5 then none else\n  let base := 1 <<< fl\n  if base > request then none else\n  let shift := fl - 5\n  let step := 1 <<< shift\n  let delta := request - base\n  let sl := delta / step\n  if sl ≥ 32 then none else\n  let lower_delta := sl * step\n  let lower := base + lower_delta\n  if lower > Luffs.Runtime.TLSF.usizeMax then none else\n  let key := lower + step\n  if key > Luffs.Runtime.TLSF.usizeMax then none else some key\n\ntheorem tlsf_high_request_key_lowered :\n    tlsf_high_request_key_model = Luffs.Runtime.TLSF.highRequestKeyLowered := by rfl\n\n",
         );
         out.push_str(&format!(
-            "def {}_model (request : Nat) : Option Nat :=\n  if request > Luffs.Runtime.TLSF.usizeMax then none\n  else if request = 0 then none\n  else if request ≤ 256 then tlsf_classify_size_model request\n  else do\n    let key ← tlsf_high_request_key_model request\n    tlsf_classify_size_model key\n\n",
+            "def {}_model (request : Nat) : Option Nat :=\n  if request > Luffs.Runtime.TLSF.usizeMax then none\n  else if request = 0 then none\n  else if request ≤ 512 then tlsf_classify_size_model request\n  else do\n    let key ← tlsf_high_request_key_model request\n    tlsf_classify_size_model key\n\n",
             model.name
         ));
         out.push_str(&format!(
@@ -4105,7 +4105,7 @@ rfl\n\n",
             continue;
         }
         out.push_str(&format!(
-            "def {}_model (storage : List (Fin 256)) (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (value : Fin 256) : Option Luffs.Runtime.Containers.BoxNewU8ArraysResult := do\n  let allocated ← tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous 8\n  if allocated.allocatedOffset ≥ storage.length then none else\n  pure {{\n    offsets := allocated.offsets\n    sizes := allocated.sizes\n    isFree := allocated.isFree\n    prevFree := allocated.prevFree\n    count := allocated.count\n    second := allocated.second\n    first := allocated.first\n    heads := allocated.heads\n    next := allocated.next\n    previous := allocated.previous\n    allocatedOffset := allocated.allocatedOffset\n    allocatedBytes := allocated.allocatedBytes\n    storage := storage.set allocated.allocatedOffset value }}\n\n",
+            "def {}_model (storage : List (Fin 256)) (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (value : Fin 256) : Option Luffs.Runtime.Containers.BoxNewU8ArraysResult := do\n  let allocated ← tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous 16\n  if allocated.allocatedOffset ≥ storage.length then none else\n  pure {{\n    offsets := allocated.offsets\n    sizes := allocated.sizes\n    isFree := allocated.isFree\n    prevFree := allocated.prevFree\n    count := allocated.count\n    second := allocated.second\n    first := allocated.first\n    heads := allocated.heads\n    next := allocated.next\n    previous := allocated.previous\n    allocatedOffset := allocated.allocatedOffset\n    allocatedBytes := allocated.allocatedBytes\n    storage := storage.set allocated.allocatedOffset value }}\n\n",
             model.name
         ));
         out.push_str(&format!(
@@ -4160,7 +4160,7 @@ rfl\n\n",
         };
         if let Some(codec) = unsigned_codec {
             out.push_str(&format!(
-                "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (capacity : Nat) : Option Luffs.Runtime.TLSF.AllocateArraysResult :=\n  if capacity = 0 ∨ capacity > Luffs.Runtime.TLSF.usizeMax / {}.size then none\n  else if capacity * {}.size > Luffs.Runtime.TLSF.usizeMax - 7 then none\n  else tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous\n    (Luffs.Allocator.TLSF.roundUp8 (capacity * {}.size))\n\n",
+                "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (capacity : Nat) : Option Luffs.Runtime.TLSF.AllocateArraysResult :=\n  if capacity = 0 ∨ capacity > Luffs.Runtime.TLSF.usizeMax / {}.size then none\n  else if capacity * {}.size > Luffs.Runtime.TLSF.usizeMax - 15 then none\n  else tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous\n    (Luffs.Allocator.TLSF.roundUp16 (capacity * {}.size))\n\n",
                 model.name, codec, codec, codec
             ));
             out.push_str(&format!(
@@ -4206,7 +4206,7 @@ rfl\n\n",
             continue;
         }
         out.push_str(&format!(
-            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (capacity : Nat) : Option Luffs.Runtime.TLSF.AllocateArraysResult :=\n  if capacity = 0 ∨ capacity > Luffs.Runtime.TLSF.usizeMax - 7 then none\n  else tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous\n    (Luffs.Allocator.TLSF.roundUp8 capacity)\n\n",
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (capacity : Nat) : Option Luffs.Runtime.TLSF.AllocateArraysResult :=\n  if capacity = 0 ∨ capacity > Luffs.Runtime.TLSF.usizeMax - 15 then none\n  else tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous\n    (Luffs.Allocator.TLSF.roundUp16 capacity)\n\n",
             model.name
         ));
         out.push_str(&format!(
@@ -4260,10 +4260,10 @@ rfl\n\n",
         };
         if let Some((codec, byte_width)) = unsigned_codec {
             let bad = if byte_width {
-                "len > old_capacity ∨ new_capacity ≤ old_capacity ∨\n      new_capacity > Luffs.Runtime.TLSF.usizeMax - 7".to_owned()
+                "len > old_capacity ∨ new_capacity ≤ old_capacity ∨\n      new_capacity > Luffs.Runtime.TLSF.usizeMax - 15".to_owned()
             } else {
                 format!(
-                    "len > old_capacity ∨ new_capacity ≤ old_capacity ∨\n      len > Luffs.Runtime.TLSF.usizeMax / {codec}.size ∨\n      new_capacity > Luffs.Runtime.TLSF.usizeMax / {codec}.size ∨\n      new_capacity * {codec}.size > Luffs.Runtime.TLSF.usizeMax - 7"
+                    "len > old_capacity ∨ new_capacity ≤ old_capacity ∨\n      len > Luffs.Runtime.TLSF.usizeMax / {codec}.size ∨\n      new_capacity > Luffs.Runtime.TLSF.usizeMax / {codec}.size ∨\n      new_capacity * {codec}.size > Luffs.Runtime.TLSF.usizeMax - 15"
                 )
             };
             let initialized = if byte_width {
@@ -4277,7 +4277,7 @@ rfl\n\n",
                 format!("new_capacity * {codec}.size")
             };
             out.push_str(&format!(
-                "def {}_model (storage : List (Fin 256)) (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (old_offset len old_capacity new_capacity : Nat) : Option Luffs.Runtime.Containers.VecGrowU8ArraysResult := do\n  if {bad} then none\n  let initialized_bytes := {initialized}\n  if old_offset + initialized_bytes ≥ 2 ^ 64 ∨ old_offset + initialized_bytes > storage.length then none\n  let allocated ← tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous\n    (Luffs.Allocator.TLSF.roundUp8 ({allocation}))\n  if allocated.allocatedOffset + initialized_bytes ≥ 2 ^ 64 ∨\n      allocated.allocatedOffset + initialized_bytes > storage.length then none\n  let copied ← tlsf_vec_copy_byte_range_model storage old_offset allocated.allocatedOffset initialized_bytes\n  let released ← tlsf_box_drop_u8_model allocated.offsets allocated.sizes allocated.isFree allocated.prevFree allocated.count allocated.second allocated.first allocated.heads allocated.next allocated.previous old_offset\n  pure ⟨released, copied, allocated.allocatedOffset, allocated.allocatedBytes⟩\n\n",
+                "def {}_model (storage : List (Fin 256)) (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (old_offset len old_capacity new_capacity : Nat) : Option Luffs.Runtime.Containers.VecGrowU8ArraysResult := do\n  if {bad} then none\n  let initialized_bytes := {initialized}\n  if old_offset + initialized_bytes ≥ 2 ^ 64 ∨ old_offset + initialized_bytes > storage.length then none\n  let allocated ← tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous\n    (Luffs.Allocator.TLSF.roundUp16 ({allocation}))\n  if allocated.allocatedOffset + initialized_bytes ≥ 2 ^ 64 ∨\n      allocated.allocatedOffset + initialized_bytes > storage.length then none\n  let copied ← tlsf_vec_copy_byte_range_model storage old_offset allocated.allocatedOffset initialized_bytes\n  let released ← tlsf_box_drop_u8_model allocated.offsets allocated.sizes allocated.isFree allocated.prevFree allocated.count allocated.second allocated.first allocated.heads allocated.next allocated.previous old_offset\n  pure ⟨released, copied, allocated.allocatedOffset, allocated.allocatedBytes⟩\n\n",
                 model.name
             ));
             if byte_width {
@@ -4707,7 +4707,7 @@ mod tests {
             "theorem tlsf_box_new_isize_refines : tlsf_box_new_isize_model = Luffs.Runtime.Containers.boxNewIsizeArrays"
         ));
         assert!(generated.contains(
-            "let allocated ← tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous 8"
+            "let allocated ← tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous 16"
         ));
         assert!(generated.contains(
             "let removed ← tlsf_take_candidate_class_model second first heads next previous"
@@ -4778,11 +4778,11 @@ mod tests {
             "theorem tlsf_vec_new_usize_refines : tlsf_vec_new_usize_model = Luffs.Runtime.Containers.vecNewUsizeArrays"
         ));
         assert!(generated.contains(
-            "else tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous\n    (Luffs.Allocator.TLSF.roundUp8 capacity)"
+            "else tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous\n    (Luffs.Allocator.TLSF.roundUp16 capacity)"
         ));
         assert!(
             generated.contains(
-                "Luffs.Allocator.TLSF.roundUp8 (capacity * Luffs.Memory.Scalar.u32.size)"
+                "Luffs.Allocator.TLSF.roundUp16 (capacity * Luffs.Memory.Scalar.u32.size)"
             )
         );
         assert!(generated.contains("def tlsf_vec_new_i32_model (offsets sizes : List Nat)"));
@@ -5107,7 +5107,7 @@ mod tests {
     #[test]
     fn tlsf_vec_new_refinement_rejects_wrong_rounding() {
         let source = include_str!("../stdlib/tlsf.luffs").replace(
-            "let request: usize = (rounded / 8) * 8;",
+            "let request: usize = (rounded / 16) * 16;",
             "let request: usize = (rounded / 4) * 4;",
         );
         let m = parse(&source).unwrap();
@@ -5146,8 +5146,8 @@ mod tests {
     #[test]
     fn tlsf_shape_recognition_does_not_leak_across_function_boundaries() {
         let source = include_str!("../stdlib/tlsf.luffs").replace(
-            "let bytes: usize = capacity.checked_mul(4)?;\n    let rounded: usize = bytes.checked_add(7)?;\n    let request: usize = (rounded / 8) * 8;",
-            "let bytes: usize = capacity.checked_mul(4)?;\n    let rounded: usize = bytes.checked_add(7)?;\n    let omitted_request: usize = (rounded / 8) * 8;",
+            "let bytes: usize = capacity.checked_mul(4)?;\n    let rounded: usize = bytes.checked_add(15)?;\n    let request: usize = (rounded / 16) * 16;",
+            "let bytes: usize = capacity.checked_mul(4)?;\n    let rounded: usize = bytes.checked_add(15)?;\n    let omitted_request: usize = (rounded / 16) * 16;",
         );
         let module = parse(&source).unwrap();
         assert!(

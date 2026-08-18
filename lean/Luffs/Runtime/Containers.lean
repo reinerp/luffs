@@ -9,6 +9,27 @@ namespace Luffs.Runtime.Containers
 open Luffs.Memory
 open Luffs.Allocator.TLSF
 
+/-- The 16-byte TLSF alignment covers every scalar type in the Luffs surface.
+Together with page alignment at mmap and `Vec.elementBase_native_aligned`, this
+discharges the address-alignment half of native Box/Vec references, including
+the formerly unsupported 128-bit case. -/
+theorem all_scalar_native_alignment_compatible :
+    Luffs.Containers.Vec.NativeAlignmentCompatible Scalar.u8 ∧
+    Luffs.Containers.Vec.NativeAlignmentCompatible Scalar.u16 ∧
+    Luffs.Containers.Vec.NativeAlignmentCompatible Scalar.u32 ∧
+    Luffs.Containers.Vec.NativeAlignmentCompatible Scalar.u64 ∧
+    Luffs.Containers.Vec.NativeAlignmentCompatible Scalar.u128 ∧
+    Luffs.Containers.Vec.NativeAlignmentCompatible Scalar.i8 ∧
+    Luffs.Containers.Vec.NativeAlignmentCompatible Scalar.i16 ∧
+    Luffs.Containers.Vec.NativeAlignmentCompatible Scalar.i32 ∧
+    Luffs.Containers.Vec.NativeAlignmentCompatible Scalar.i64 ∧
+    Luffs.Containers.Vec.NativeAlignmentCompatible Scalar.i128 ∧
+    Luffs.Containers.Vec.NativeAlignmentCompatible Scalar.usize ∧
+    Luffs.Containers.Vec.NativeAlignmentCompatible Scalar.isize := by
+  simp [Luffs.Containers.Vec.NativeAlignmentCompatible, Scalar.u8, Scalar.u16,
+    Scalar.u32, Scalar.u64, Scalar.u128, Scalar.i8, Scalar.i16, Scalar.i32,
+    Scalar.i64, Scalar.i128, Scalar.usize, Scalar.isize, alignment]
+
 structure BoxNewU8ArraysResult extends
     Luffs.Runtime.TLSF.AllocateArraysResult where
   storage : List Byte
@@ -615,7 +636,7 @@ def boxNewU8Arrays (storage : List Byte) (offsets sizes : List Nat)
     (heads next previous : List Nat) (value : Byte) :
     Option BoxNewU8ArraysResult := do
   let allocated ← Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree
-    prevFree count second first heads next previous 8
+    prevFree count second first heads next previous 16
   if allocated.allocatedOffset ≥ storage.length then none
   pure {
     offsets := allocated.offsets
@@ -642,13 +663,13 @@ theorem boxNewU8Arrays_result
       second first heads next previous value = some result) :
     ∃ allocated,
       Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree prevFree count
-          second first heads next previous 8 = some allocated ∧
+          second first heads next previous 16 = some allocated ∧
       allocated.allocatedOffset < storage.length ∧
       result.toAllocateArraysResult = allocated ∧
       result.storage = storage.set allocated.allocatedOffset value := by
   unfold boxNewU8Arrays at hsuccess
   cases halloc : Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree
-      prevFree count second first heads next previous 8 with
+      prevFree count second first heads next previous 16 with
   | none => simp [boxNewU8Arrays, halloc] at hsuccess
   | some allocated =>
       by_cases hbound : allocated.allocatedOffset ≥ storage.length
@@ -658,7 +679,7 @@ theorem boxNewU8Arrays_result
         exact ⟨allocated, rfl, Nat.lt_of_not_ge hbound, rfl, rfl⟩
 
 @[simp] theorem boxU8_requestBytes :
-    Luffs.Containers.Box.requestBytes Scalar.u8.size = 8 := by
+    Luffs.Containers.Box.requestBytes Scalar.u8.size = 16 := by
   decide
 
 theorem boxNewU8Arrays_eq_generic
@@ -673,7 +694,7 @@ theorem boxNewU8Arrays_eq_generic
   unfold boxNewU8Arrays boxNewArrays
   rw [boxU8_requestBytes]
   cases halloc : Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree prevFree
-      count second first heads next previous 8 with
+      count second first heads next previous 16 with
   | none => simp [halloc]
   | some allocated =>
       by_cases hbound : allocated.allocatedOffset ≥ storage.length
@@ -1258,7 +1279,7 @@ def vecNewArrays {α : Type} (codec : Codec α) (offsets sizes : List Nat)
     (heads next previous : List Nat) (capacity : Nat) :
     Option Luffs.Runtime.TLSF.AllocateArraysResult :=
   if capacity = 0 ∨ capacity > Luffs.Runtime.TLSF.usizeMax / codec.size then none
-  else if capacity * codec.size > Luffs.Runtime.TLSF.usizeMax - 7 then none
+  else if capacity * codec.size > Luffs.Runtime.TLSF.usizeMax - 15 then none
   else Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree prevFree count
     second first heads next previous
       (Luffs.Containers.Vec.allocationBytes codec capacity)
@@ -1271,9 +1292,9 @@ def vecNewRoundedArrays {α : Type} (codec : Codec α)
     (heads next previous : List Nat) (capacity : Nat) :
     Option Luffs.Runtime.TLSF.AllocateArraysResult :=
   if capacity = 0 ∨ capacity > Luffs.Runtime.TLSF.usizeMax / codec.size then none
-  else if capacity * codec.size > Luffs.Runtime.TLSF.usizeMax - 7 then none
+  else if capacity * codec.size > Luffs.Runtime.TLSF.usizeMax - 15 then none
   else Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree prevFree count
-    second first heads next previous (roundUp8 (capacity * codec.size))
+    second first heads next previous (roundUp16 (capacity * codec.size))
 
 theorem vecNewRoundedArrays_eq_generic {α : Type} (codec : Codec α) :
     vecNewRoundedArrays codec = vecNewArrays codec := by
@@ -1285,10 +1306,10 @@ theorem vecNewRoundedArrays_eq_generic {α : Type} (codec : Codec α) :
   · have hcapacity : 0 < capacity :=
       Nat.pos_of_ne_zero (fun hzero => hbad (Or.inl hzero))
     by_cases hround : capacity * codec.size >
-        Luffs.Runtime.TLSF.usizeMax - 7
+        Luffs.Runtime.TLSF.usizeMax - 15
     · simp [hbad, hround]
     · simp only [hbad, hround, ↓reduceIte]
-      rw [Luffs.Containers.Vec.roundUp8_eq_allocationBytes codec hcapacity]
+      rw [Luffs.Containers.Vec.roundUp16_eq_allocationBytes codec hcapacity]
 
 theorem vecNewArrays_result {α : Type} {codec : Codec α}
     {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
@@ -1299,7 +1320,7 @@ theorem vecNewArrays_result {α : Type} {codec : Codec α}
       first heads next previous capacity = some result) :
     0 < capacity ∧
       capacity ≤ Luffs.Runtime.TLSF.usizeMax / codec.size ∧
-      capacity * codec.size ≤ Luffs.Runtime.TLSF.usizeMax - 7 ∧
+      capacity * codec.size ≤ Luffs.Runtime.TLSF.usizeMax - 15 ∧
       Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree prevFree count
         second first heads next previous
           (Luffs.Containers.Vec.allocationBytes codec capacity) = some result := by
@@ -1858,10 +1879,10 @@ def vecNewU8Arrays (offsets sizes : List Nat)
     (second : List (BitVec 32)) (first : BitVec 64)
     (heads next previous : List Nat) (capacity : Nat) :
     Option Luffs.Runtime.TLSF.AllocateArraysResult :=
-  if capacity = 0 ∨ capacity > Luffs.Runtime.TLSF.usizeMax - 7 then none
+  if capacity = 0 ∨ capacity > Luffs.Runtime.TLSF.usizeMax - 15 then none
   else Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree prevFree count
     second first heads next previous
-      (roundUp8 capacity)
+      (roundUp16 capacity)
 
 theorem vecNewU8Arrays_eq_generic :
     vecNewU8Arrays = vecNewArrays Scalar.u8 := by
@@ -1869,17 +1890,17 @@ theorem vecNewU8Arrays_eq_generic :
   unfold vecNewU8Arrays vecNewArrays
   by_cases hzero : capacity = 0
   · simp [hzero, Scalar.u8]
-  · by_cases hlarge : capacity > Luffs.Runtime.TLSF.usizeMax - 7
-    · have hover : capacity * 1 > Luffs.Runtime.TLSF.usizeMax - 7 := by omega
+  · by_cases hlarge : capacity > Luffs.Runtime.TLSF.usizeMax - 15
+    · have hover : capacity * 1 > Luffs.Runtime.TLSF.usizeMax - 15 := by omega
       simp [hzero, hlarge, hover, Scalar.u8]
     · have hmax : capacity ≤ Luffs.Runtime.TLSF.usizeMax := by
         unfold Luffs.Runtime.TLSF.usizeMax at hlarge ⊢
         omega
-      have hmul : ¬capacity * 1 > Luffs.Runtime.TLSF.usizeMax - 7 := by omega
+      have hmul : ¬capacity * 1 > Luffs.Runtime.TLSF.usizeMax - 15 := by omega
       have hnmax : ¬Luffs.Runtime.TLSF.usizeMax < capacity :=
         Nat.not_lt_of_ge hmax
       have hpositive : 0 < capacity := Nat.pos_of_ne_zero hzero
-      rw [← Luffs.Containers.Vec.roundUp8_eq_allocationBytes Scalar.u8 hpositive]
+      rw [← Luffs.Containers.Vec.roundUp16_eq_allocationBytes Scalar.u8 hpositive]
       simp [hzero, hlarge, hnmax, hmul, Scalar.u8]
 
 theorem vecNewU8Arrays_result
@@ -1889,7 +1910,7 @@ theorem vecNewU8Arrays_result
     {result : Luffs.Runtime.TLSF.AllocateArraysResult}
     (hsuccess : vecNewU8Arrays offsets sizes isFree prevFree count second first
       heads next previous capacity = some result) :
-    0 < capacity ∧ capacity ≤ Luffs.Runtime.TLSF.usizeMax - 7 ∧
+    0 < capacity ∧ capacity ≤ Luffs.Runtime.TLSF.usizeMax - 15 ∧
       Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree prevFree count
         second first heads next previous
           (Luffs.Containers.Vec.allocationBytes Scalar.u8 capacity) =
@@ -1901,7 +1922,7 @@ theorem vecNewU8Arrays_result
     have hpositive := Nat.pos_of_ne_zero (fun hzero => hgood (Or.inl hzero))
     refine ⟨hpositive,
       Nat.le_of_not_gt (fun hlarge => hgood (Or.inr hlarge)), ?_⟩
-    rw [← Luffs.Containers.Vec.roundUp8_eq_allocationBytes Scalar.u8 hpositive]
+    rw [← Luffs.Containers.Vec.roundUp16_eq_allocationBytes Scalar.u8 hpositive]
     simpa only [Scalar.u8, Nat.mul_one] using hsuccess
 
 set_option maxHeartbeats 1200000 in
@@ -2375,7 +2396,7 @@ def vecGrowArrays {α : Type} (codec : Codec α) (storage : List Byte)
   if len > oldCapacity ∨ newCapacity ≤ oldCapacity ∨
       len > Luffs.Runtime.TLSF.usizeMax / codec.size ∨
       newCapacity > Luffs.Runtime.TLSF.usizeMax / codec.size ∨
-      newCapacity * codec.size > Luffs.Runtime.TLSF.usizeMax - 7 then none
+      newCapacity * codec.size > Luffs.Runtime.TLSF.usizeMax - 15 then none
   let initializedBytes := len * codec.size
   if oldOffset + initializedBytes ≥ 2 ^ 64 ∨
       oldOffset + initializedBytes > storage.length then none
@@ -2402,13 +2423,13 @@ def vecGrowRoundedArrays {α : Type} (codec : Codec α) (storage : List Byte)
   if len > oldCapacity ∨ newCapacity ≤ oldCapacity ∨
       len > Luffs.Runtime.TLSF.usizeMax / codec.size ∨
       newCapacity > Luffs.Runtime.TLSF.usizeMax / codec.size ∨
-      newCapacity * codec.size > Luffs.Runtime.TLSF.usizeMax - 7 then none
+      newCapacity * codec.size > Luffs.Runtime.TLSF.usizeMax - 15 then none
   let initializedBytes := len * codec.size
   if oldOffset + initializedBytes ≥ 2 ^ 64 ∨
       oldOffset + initializedBytes > storage.length then none
   let allocated ← Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree
     prevFree count second first heads next previous
-      (roundUp8 (newCapacity * codec.size))
+      (roundUp16 (newCapacity * codec.size))
   if allocated.allocatedOffset + initializedBytes ≥ 2 ^ 64 ∨
       allocated.allocatedOffset + initializedBytes > storage.length then none
   let copied ← copyByteRange storage oldOffset allocated.allocatedOffset
@@ -2426,7 +2447,7 @@ theorem vecGrowRoundedArrays_eq_generic {α : Type} (codec : Codec α) :
   let bad := len > oldCapacity ∨ newCapacity ≤ oldCapacity ∨
     len > Luffs.Runtime.TLSF.usizeMax / codec.size ∨
     newCapacity > Luffs.Runtime.TLSF.usizeMax / codec.size ∨
-    newCapacity * codec.size > Luffs.Runtime.TLSF.usizeMax - 7
+    newCapacity * codec.size > Luffs.Runtime.TLSF.usizeMax - 15
   by_cases hbad : bad
   · simp [bad, hbad]
   · have hcapacity : 0 < newCapacity := by
@@ -2434,7 +2455,7 @@ theorem vecGrowRoundedArrays_eq_generic {α : Type} (codec : Codec α) :
         Nat.lt_of_not_ge (fun h => hbad (Or.inr (Or.inl h)))
       omega
     simp only [bad, hbad, ↓reduceIte]
-    rw [Luffs.Containers.Vec.roundUp8_eq_allocationBytes codec hcapacity]
+    rw [Luffs.Containers.Vec.roundUp16_eq_allocationBytes codec hcapacity]
 
 /-- The byte-width source has fewer explicit multiplication guards because its
 element/byte counts coincide. Keep that exact CFG separate from the generic
@@ -2446,10 +2467,10 @@ def vecGrowU8RoundedArrays (storage : List Byte) (offsets sizes : List Nat)
     (oldOffset len oldCapacity newCapacity : Nat) :
     Option VecGrowU8ArraysResult := do
   if len > oldCapacity ∨ newCapacity ≤ oldCapacity ∨
-      newCapacity > Luffs.Runtime.TLSF.usizeMax - 7 then none
+      newCapacity > Luffs.Runtime.TLSF.usizeMax - 15 then none
   if oldOffset + len ≥ 2 ^ 64 ∨ oldOffset + len > storage.length then none
   let allocated ← Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree
-    prevFree count second first heads next previous (roundUp8 newCapacity)
+    prevFree count second first heads next previous (roundUp16 newCapacity)
   if allocated.allocatedOffset + len ≥ 2 ^ 64 ∨
       allocated.allocatedOffset + len > storage.length then none
   let copied ← copyByteRange storage oldOffset allocated.allocatedOffset len
@@ -2471,7 +2492,7 @@ theorem vecGrowArrays_result {α : Type} {codec : Codec α}
       len ≤ oldCapacity ∧ oldCapacity < newCapacity ∧
       len ≤ Luffs.Runtime.TLSF.usizeMax / codec.size ∧
       newCapacity ≤ Luffs.Runtime.TLSF.usizeMax / codec.size ∧
-      newCapacity * codec.size ≤ Luffs.Runtime.TLSF.usizeMax - 7 ∧
+      newCapacity * codec.size ≤ Luffs.Runtime.TLSF.usizeMax - 15 ∧
       oldOffset + len * codec.size < 2 ^ 64 ∧
       oldOffset + len * codec.size ≤ storage.length ∧
       Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree prevFree count
@@ -2491,7 +2512,7 @@ theorem vecGrowArrays_result {α : Type} {codec : Codec α}
   let badPre := len > oldCapacity ∨ newCapacity ≤ oldCapacity ∨
     len > Luffs.Runtime.TLSF.usizeMax / codec.size ∨
     newCapacity > Luffs.Runtime.TLSF.usizeMax / codec.size ∨
-    newCapacity * codec.size > Luffs.Runtime.TLSF.usizeMax - 7
+    newCapacity * codec.size > Luffs.Runtime.TLSF.usizeMax - 15
   let initializedBytes := len * codec.size
   let badOld := oldOffset + initializedBytes ≥ 2 ^ 64 ∨
     oldOffset + initializedBytes > storage.length
@@ -2744,7 +2765,7 @@ def vecGrowU8Arrays (storage : List Byte) (offsets sizes : List Nat)
     (heads next previous : List Nat) (oldOffset len oldCapacity newCapacity : Nat) :
     Option VecGrowU8ArraysResult := do
   if len > oldCapacity ∨ newCapacity ≤ oldCapacity ∨
-      newCapacity > Luffs.Runtime.TLSF.usizeMax - 7 then none
+      newCapacity > Luffs.Runtime.TLSF.usizeMax - 15 then none
   if oldOffset + len ≥ 2 ^ 64 ∨ oldOffset + len > storage.length then none
   let allocated ← Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree
     prevFree count second first heads next previous
@@ -2763,7 +2784,7 @@ theorem vecGrowU8RoundedArrays_eq :
     previous oldOffset len oldCapacity newCapacity
   unfold vecGrowU8RoundedArrays vecGrowU8Arrays
   let bad := len > oldCapacity ∨ newCapacity ≤ oldCapacity ∨
-    newCapacity > Luffs.Runtime.TLSF.usizeMax - 7
+    newCapacity > Luffs.Runtime.TLSF.usizeMax - 15
   by_cases hbad : bad
   · simp [bad, hbad]
   · have hcapacity : 0 < newCapacity := by
@@ -2771,11 +2792,11 @@ theorem vecGrowU8RoundedArrays_eq :
         Nat.lt_of_not_ge (fun h => hbad (Or.inr (Or.inl h)))
       omega
     simp only [bad, hbad, ↓reduceIte]
-    have hround : roundUp8 newCapacity =
+    have hround : roundUp16 newCapacity =
         Luffs.Containers.Vec.allocationBytes
           (α := BitVec 8) Scalar.u8 newCapacity := by
       simpa only [Scalar.u8, Nat.mul_one] using
-        (Luffs.Containers.Vec.roundUp8_eq_allocationBytes
+        (Luffs.Containers.Vec.roundUp16_eq_allocationBytes
           (α := BitVec 8) Scalar.u8 hcapacity)
     rw [hround]
 
@@ -2794,7 +2815,7 @@ theorem vecGrowU8Arrays_result
         some result) :
     ∃ allocated copied released,
       len ≤ oldCapacity ∧ oldCapacity < newCapacity ∧
-      newCapacity ≤ Luffs.Runtime.TLSF.usizeMax - 7 ∧
+      newCapacity ≤ Luffs.Runtime.TLSF.usizeMax - 15 ∧
       oldOffset + len < 2 ^ 64 ∧ oldOffset + len ≤ storage.length ∧
       Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree prevFree count
         second first heads next previous
@@ -2810,7 +2831,7 @@ theorem vecGrowU8Arrays_result
       result = ⟨released, copied, allocated.allocatedOffset,
         allocated.allocatedBytes⟩ := by
   let badPre := len > oldCapacity ∨ newCapacity ≤ oldCapacity ∨
-    newCapacity > Luffs.Runtime.TLSF.usizeMax - 7
+    newCapacity > Luffs.Runtime.TLSF.usizeMax - 15
   let badOld := oldOffset + len ≥ 2 ^ 64 ∨
     oldOffset + len > storage.length
   by_cases hpre : badPre
@@ -2849,7 +2870,7 @@ theorem vecGrowU8Arrays_result
                 Nat.le_of_not_gt (fun h => hpre (Or.inl h))
               have hcapacity : oldCapacity < newCapacity :=
                 Nat.lt_of_not_ge (fun h => hpre (Or.inr (Or.inl h)))
-              have hmax : newCapacity ≤ Luffs.Runtime.TLSF.usizeMax - 7 :=
+              have hmax : newCapacity ≤ Luffs.Runtime.TLSF.usizeMax - 15 :=
                 Nat.le_of_not_gt (fun h => hpre (Or.inr (Or.inr h)))
               have hold64 : oldOffset + len < 2 ^ 64 :=
                 Nat.lt_of_not_ge (fun h => hold (Or.inl h))
@@ -5439,7 +5460,7 @@ theorem vecLenAfterPop_owns_wp {GF : Iris.BundledGFunctors}
             ((handle.block.region pool).base + initValues.length * codec.size)
             (codec.encode last) mem ∧
           codec.decode (codec.encode last) = some last ∧
-          (⊢@{IProp GF} Program.wp
+          (⊢@{Iris.IProp GF} Program.wp
             (Program.readBytes
               ((handle.block.region pool).base +
                 initValues.length * codec.size)

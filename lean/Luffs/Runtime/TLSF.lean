@@ -21604,6 +21604,37 @@ theorem deallocateArraysOutcome_success_result
           subst afterLeft
           exact ⟨marked, afterRight, hunco, hright, Or.inr ⟨hblock, hleft⟩⟩
 
+/-- Successful state-retaining public execution is the same successful
+`Option` transition consumed by the abstract allocator and ownership proofs. -/
+theorem deallocateArraysOutcome_success_refines_option
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat}
+    {count block returnedOffset returnedBytes : Nat}
+    {result : CoalesceClassResult}
+    (hsuccess : deallocateArraysOutcome offsets sizes isFree prevFree second
+      first heads next previous count block returnedOffset returnedBytes =
+        .success result) :
+    deallocateArrays offsets sizes isFree prevFree second first heads next
+      previous count block returnedOffset returnedBytes = some result := by
+  obtain ⟨marked, afterRight, hunco, hright, hlast⟩ :=
+    deallocateArraysOutcome_success_result hsuccess
+  obtain ⟨markedOption, hmarkedOption, hfree, hprev, hsecond, hfirst,
+      hheads, hnext, hprevious⟩ :=
+    deallocateUncoalescedArraysOutcome_success_refines_option hunco
+  have hrightOption :=
+    coalesceIfPossibleArraysOutcome_success_refines_option hright
+  unfold deallocateArrays
+  rw [hmarkedOption]
+  simp only [Option.bind_some]
+  rw [hfree, hprev, hsecond, hfirst, hheads, hnext, hprevious]
+  rw [hrightOption]
+  simp only [Option.bind_some]
+  rcases hlast with ⟨hzero, rfl⟩ | ⟨hnonzero, hleft⟩
+  · simp [hzero]
+  · simp [hnonzero,
+      coalesceIfPossibleArraysOutcome_success_refines_option hleft]
+
 /-- Compositional public transactionality theorem. The two totality premises
 are deliberately stated at the actual intermediate states; later the complete
 allocator invariant discharges them for both optional coalescing calls. -/
@@ -22483,6 +22514,42 @@ theorem deallocateArrays_ownsFree
     hallocated hphysical hallocValid hpoolMax hcountMax hsecond hfirst hbins
     hdisjoint hfresh hsuccess
   exact ⟨abstractNext, habstract, Dealloc.deallocate_ownsFree habstract⟩
+
+/-- Iris allocator-API law for the state-retaining public execution consumed
+by the operational WP below. Thus one successful source-level outcome both
+determines the concrete metadata writes and consumes exactly the returned
+client region, restoring it to the allocator's exclusive free ownership. -/
+theorem deallocateArraysOutcome_ownsFree
+    {PROP : Type} [Iris.BI PROP] [Luffs.Memory.ByteRegionLogic PROP]
+    {pool : Luffs.Memory.Region} {blocks : List Block}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count i : Nat} {selected : Block} {state : Bins.State}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {result : CoalesceClassResult}
+    (hget : blocks[i]? = some selected)
+    (hallocated : selected.free = false)
+    (hphysical : RepresentsPhysicalArrays offsets sizes isFree prevFree count blocks)
+    (hallocValid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hcountMax : count ≤ usizeMax)
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hfresh : ∀ query, selected.offset ∉
+      (state.chains query).map Block.offset)
+    (hsuccess : deallocateArraysOutcome offsets sizes isFree prevFree second first
+      heads next previous count i selected.offset selected.bytes =
+        .success result) :
+    ∃ abstractNext,
+      Dealloc.deallocate pool { physical := blocks, bins := state } i
+          (selected.region pool) = some abstractNext ∧
+      (Luffs.Memory.OwnsBytes (PROP := PROP) (selected.region pool) ∗
+          Luffs.Allocator.TLSF.Ownership.OwnsFree pool blocks ⊣⊢
+        Luffs.Allocator.TLSF.Ownership.OwnsFree pool abstractNext.physical) := by
+  apply deallocateArrays_ownsFree hget hallocated hphysical hallocValid hpoolMax
+    hcountMax hsecond hfirst hbins hdisjoint hfresh
+  exact deallocateArraysOutcome_success_refines_option hsuccess
 
 /-- Iris ownership corollary for the concrete Luffs transaction. A successful
 array execution witnesses the corresponding abstract allocator transition;

@@ -1273,6 +1273,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   `block = 0`/left-coalescing branch, and the final count store. Its closed Iris
   WP establishes all ten returned metadata encodings, including the stored
   returned count. Operational public deallocation is therefore complete.
+  The state-retaining success result is now also proved equal to the exact
+  `Option` transformer used by abstract TLSF refinement. Its direct Iris
+  corollary consumes the client's returned `OwnsBytes` capability and restores
+  precisely the abstract successor's `OwnsFree`; the operational WP and the
+  allocator API law therefore share one public-execution witness rather than
+  relying on separately associated reference transitions.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

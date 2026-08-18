@@ -108,6 +108,11 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   consecutive metadata initialization loop from mapped element ranges. These
   representation-parametric rules are the building blocks for composing the
   three clearing loops in the concrete TLSF initializer.
+  A dedicated `wp_then_preserves_mapped` rule now composes such fragments while
+  threading mapped-domain preservation through the intermediate memory. This
+  avoids treating distinct metadata arrays as if they were unaffected by prior
+  writes and is the sequencing rule used by the forthcoming initializer
+  program.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

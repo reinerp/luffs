@@ -423,6 +423,23 @@ theorem Program.wp_then {GF : BundledGFunctors} {first tail : Program}
     pure_soundness (PROP := IProp GF) (htail split hsplit)
   exact hsplitTail.2 after hsuffix
 
+/-- Sequential composition specialized to metadata initialization: both
+fragments preserve the mapped domain, so the combined program does too. -/
+theorem Program.wp_then_preserves_mapped {GF : BundledGFunctors}
+    {first tail : Program} {before : Memory}
+    (hfirst : ⊢@{IProp GF} Program.wp first before
+      (fun middle => ∀ p, before.mapped p → middle.mapped p))
+    (htail : ∀ middle, (∀ p, before.mapped p → middle.mapped p) →
+      ⊢@{IProp GF} Program.wp tail middle
+        (fun final => ∀ p, middle.mapped p → final.mapped p)) :
+    ⊢@{IProp GF} Program.wp (first.then tail) before
+      (fun final => ∀ p, before.mapped p → final.mapped p) := by
+  apply Program.wp_then hfirst
+  intro middle hmiddle
+  apply Program.wp_mono (htail middle hmiddle)
+  intro final hfinal p hp
+  exact hfinal p (hmiddle p hp)
+
 /-- Pure CFG branch selection. Conditions are evaluated by the value semantics;
 the effect semantics records which memory-effect subprogram is executed. -/
 def Program.branch (condition : Bool) (thenProgram elseProgram : Program) :

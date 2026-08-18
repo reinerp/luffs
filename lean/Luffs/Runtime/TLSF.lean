@@ -21436,6 +21436,29 @@ theorem deallocateUncoalescedArraysOutcome_success_result
             subst state
             exact ⟨marked, bin, inserted, rfl, rfl, hinsert, rfl⟩
 
+theorem deallocateUncoalescedArraysOutcome_success_preserves_lengths
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat}
+    {count block returnedOffset returnedBytes : Nat}
+    {state : DeallocateMachineState}
+    (hsuccess : deallocateUncoalescedArraysOutcome offsets sizes isFree prevFree
+      second first heads next previous count block returnedOffset returnedBytes =
+        .success state) :
+    state.isFree.length = isFree.length ∧
+      state.prevFree.length = prevFree.length ∧
+      state.second.length = second.length ∧
+      state.heads.length = heads.length ∧
+      state.next.length = next.length ∧
+      state.previous.length = previous.length := by
+  obtain ⟨marked, bin, inserted, hmark, _, hinsert, hstate⟩ :=
+    deallocateUncoalescedArraysOutcome_success_result hsuccess
+  have hmarkLens := markFreeArrays_lengths hmark
+  have hinsertLens := insertClassArrays_preserves_lengths hinsert
+  subst state
+  exact ⟨hmarkLens.1, hmarkLens.2, hinsertLens.1, hinsertLens.2.1,
+    hinsertLens.2.2.1, hinsertLens.2.2.2⟩
+
 /-- Successful stateful execution is also a successful execution of the exact
 `Option` transformer consumed by the existing allocator refinement theorems. -/
 theorem deallocateUncoalescedArraysOutcome_success_refines_option
@@ -24144,6 +24167,79 @@ def coalesceClassProgram
       (withoutRight.heads[mergedBin]?.getD 0)
       (withoutRight.second[mergedBin / 32]?.getD 0) withoutRight.first)
 
+/-- Pure, memory-independent selection of the operational class-coalescing
+program. Failure arms are unreachable whenever `coalesceClassArrays`
+succeeds, but make the selector total and reusable between WP stages. -/
+def coalesceClassSelectedProgram
+    (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase
+      nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (count left : Nat) : Program :=
+  match offsets[left]?, offsets[left + 1]?, sizes[left]?, sizes[left + 1]? with
+  | some leftOffset, some rightOffset, some leftSize, some rightSize =>
+    match classifySizeBin leftSize, classifySizeBin rightSize with
+    | some leftBin, some rightBin =>
+      match removeClassArrays second first heads next previous leftBin leftOffset with
+      | some withoutLeft =>
+        match removeClassArrays withoutLeft.second withoutLeft.first
+            withoutLeft.heads withoutLeft.next withoutLeft.previous rightBin
+            rightOffset with
+        | some withoutRight =>
+          match coalescePhysicalArrays offsets sizes isFree prevFree count left with
+          | some physical =>
+            match physical.sizes[left]? with
+            | some mergedSize =>
+              match classifySizeBin mergedSize with
+              | some mergedBin =>
+                match insertClassArrays withoutRight.second withoutRight.first
+                    withoutRight.heads withoutRight.next withoutRight.previous
+                    mergedBin leftOffset with
+                | some _ =>
+                  coalesceClassProgram offsetsBase sizesBase isFreeBase
+                    prevFreeBase secondBase firstBase headsBase nextBase
+                    previousBase offsets sizes isFree prevFree second first heads
+                    next previous withoutLeft withoutRight count left leftOffset
+                    leftSize rightSize leftBin rightBin mergedBin
+                | none => .done
+              | none => .done
+            | none => .done
+          | none => .done
+        | none => .done
+      | none => .done
+    | _, _ => .done
+  | _, _, _, _ => .done
+
+theorem coalesceClassSelectedProgram_eq_of_success
+    (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase
+      nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (count left : Nat)
+    (result : CoalesceClassResult)
+    (hsuccess : coalesceClassArrays offsets sizes isFree prevFree second first
+      heads next previous count left = some result) :
+    ∃ leftOffset leftSize rightSize leftBin rightBin mergedBin withoutLeft
+        withoutRight,
+      coalesceClassSelectedProgram offsetsBase sizesBase isFreeBase prevFreeBase
+          secondBase firstBase headsBase nextBase previousBase offsets sizes
+          isFree prevFree second first heads next previous count left =
+        coalesceClassProgram offsetsBase sizesBase isFreeBase prevFreeBase
+          secondBase firstBase headsBase nextBase previousBase offsets sizes
+          isFree prevFree second first heads next previous withoutLeft
+          withoutRight count left leftOffset leftSize rightSize leftBin rightBin
+          mergedBin := by
+  obtain ⟨leftOffset, rightOffset, leftSize, rightSize, leftBin, rightBin,
+      withoutLeft, withoutRight, physical, mergedSize, mergedBin, inserted,
+      hleftOffset, hrightOffset, hleftSize, hrightSize, hleftBin, hrightBin,
+      hremoveLeft, hremoveRight, hphysical, hmergedSize, hmergedBin, hinsert, _⟩ :=
+    coalesceClassArrays_result hsuccess
+  refine ⟨leftOffset, leftSize, rightSize, leftBin, rightBin, mergedBin,
+    withoutLeft, withoutRight, ?_⟩
+  simp [coalesceClassSelectedProgram, hleftOffset, hrightOffset, hleftSize,
+    hrightSize, hleftBin, hrightBin, hremoveLeft, hremoveRight, hphysical,
+    hmergedSize, hmergedBin, hinsert]
+
 theorem coalesceClassWrites_width
     (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase
       nextBase previousBase : Nat)
@@ -24947,7 +25043,10 @@ theorem coalesceClassArrays_successfulProgram_wp_refines
     (hcount : mem.EncodesAt Luffs.Memory.Scalar.u64 countBase
       (BitVec.ofNat 64 count)) :
     ∃ program,
-      ⊢@{IProp GF} Program.wp program mem (fun final =>
+      program = coalesceClassSelectedProgram offsetsBase sizesBase isFreeBase
+        prevFreeBase secondBase firstBase headsBase nextBase previousBase offsets
+        sizes isFree prevFree second first heads next previous count left ∧
+      (⊢@{IProp GF} Program.wp program mem (fun final =>
         (final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
             (InitializeProgram.encodeNats result.offsets) ∧
         final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
@@ -24966,11 +25065,12 @@ theorem coalesceClassArrays_successfulProgram_wp_refines
             (InitializeProgram.encodeNats result.previous) ∧
         final.EncodesAt Luffs.Memory.Scalar.u64 countBase
             (BitVec.ofNat 64 count)) ∧
-        ∀ p, mem.mapped p → final.mapped p) := by
+        ∀ p, mem.mapped p → final.mapped p)) := by
   obtain ⟨leftOffset, rightOffset, leftSize, rightSize, leftBin, rightBin,
       withoutLeft, withoutRight, physical, mergedSize, mergedBin, inserted,
-      hleftOffset, hrightOffset, hleftSize, hrightSize, _, _, hremoveLeft,
-      hremoveRight, hphysical, _, _, hinsert, hresultOffsets, hresultSizes,
+      hleftOffset, hrightOffset, hleftSize, hrightSize, hleftBin, hrightBin,
+      hremoveLeft, hremoveRight, hphysical, hmergedSize, hmergedBin, hinsert,
+      hresultOffsets, hresultSizes,
       hresultFree, hresultPrev, _, hresultSecond, hresultFirst, hresultHeads,
       hresultNext, hresultPrevious⟩ := coalesceClassArrays_result hsuccess
   obtain ⟨_, _, _, _, physicalLeftOffset, physicalLeftSize, _,
@@ -24992,7 +25092,10 @@ theorem coalesceClassArrays_successfulProgram_wp_refines
     prevFreeBase secondBase firstBase headsBase nextBase previousBase offsets sizes
     isFree prevFree second first heads next previous withoutLeft withoutRight count
     left leftOffset leftSize rightSize leftBin rightBin mergedBin
-  refine ⟨program, ?_⟩
+  refine ⟨program, ?_, ?_⟩
+  · simp [program, coalesceClassSelectedProgram, hleftOffset, hrightOffset,
+      hleftSize, hrightSize, hleftBin, hrightBin, hremoveLeft, hremoveRight,
+      hphysical, hmergedSize, hmergedBin, hinsert]
   apply AllocateComposition.wp_and
   · apply Program.wp_mono
       (coalesceClassProgram_wp_refines_components (GF := GF) offsetsBase
@@ -25019,6 +25122,98 @@ theorem coalesceClassArrays_successfulProgram_wp_refines
     intro final hfinal p hp
     subst final
     exact ElementWrite.applyAll_mapped _ _ hp
+
+def coalesceIfPossibleSelectedProgram
+    (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase
+      nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (count left : Nat) : Program :=
+  if count > offsets.length ∨ count > sizes.length ∨
+      count > isFree.length ∨ count > prevFree.length then .done
+  else if left = usizeMax then .done
+  else
+    let right := left + 1
+    if right ≥ count then .done
+    else if isFree[left]? = some 0 then .done
+    else if isFree[right]? = some 0 then .done
+    else match offsets[left]?, sizes[left]?, offsets[right]? with
+      | some leftOffset, some leftSize, some rightOffset =>
+          if leftOffset + leftSize ≠ rightOffset then .done
+          else coalesceClassSelectedProgram offsetsBase sizesBase isFreeBase
+            prevFreeBase secondBase firstBase headsBase nextBase previousBase
+            offsets sizes isFree prevFree second first heads next previous count left
+      | _, _, _ => .done
+
+theorem coalesceIfPossibleSelectedProgram_spec
+    (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase
+      nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (count left : Nat)
+    (result : CoalesceClassResult)
+    (hsuccess : coalesceIfPossibleArrays offsets sizes isFree prevFree second
+      first heads next previous count left = some result) :
+    (result = allocatorArrays offsets sizes isFree prevFree second first heads next
+        previous count ∧
+      coalesceIfPossibleSelectedProgram offsetsBase sizesBase isFreeBase
+        prevFreeBase secondBase firstBase headsBase nextBase previousBase offsets
+        sizes isFree prevFree second first heads next previous count left = .done) ∨
+    (coalesceClassArrays offsets sizes isFree prevFree second first heads next
+        previous count left = some result ∧
+      coalesceIfPossibleSelectedProgram offsetsBase sizesBase isFreeBase
+        prevFreeBase secondBase firstBase headsBase nextBase previousBase offsets
+        sizes isFree prevFree second first heads next previous count left =
+      coalesceClassSelectedProgram offsetsBase sizesBase isFreeBase prevFreeBase
+        secondBase firstBase headsBase nextBase previousBase offsets sizes isFree
+        prevFree second first heads next previous count left) := by
+  unfold coalesceIfPossibleArrays at hsuccess
+  split at hsuccess <;> try contradiction
+  next hcapacity =>
+    dsimp only at hsuccess
+    split at hsuccess
+    next hmax =>
+      exact Or.inl ⟨(Option.some.inj hsuccess).symm, by
+        simp [coalesceIfPossibleSelectedProgram, hcapacity, hmax]⟩
+    next hmax =>
+      split at hsuccess
+      next hright =>
+        exact Or.inl ⟨(Option.some.inj hsuccess).symm, by
+          simp [coalesceIfPossibleSelectedProgram, hcapacity, hmax, hright]⟩
+      next hright =>
+        split at hsuccess
+        next hleftFree =>
+          exact Or.inl ⟨(Option.some.inj hsuccess).symm, by
+            simp [coalesceIfPossibleSelectedProgram, hcapacity, hmax, hright,
+              hleftFree]⟩
+        next hleftFree =>
+          split at hsuccess
+          next hrightFree =>
+            exact Or.inl ⟨(Option.some.inj hsuccess).symm, by
+              simp [coalesceIfPossibleSelectedProgram, hcapacity, hmax, hright,
+                hleftFree, hrightFree]⟩
+          next hrightFree =>
+            cases hleftOffset : offsets[left]? with
+            | none => simp [hleftOffset] at hsuccess
+            | some leftOffset =>
+              cases hleftSize : sizes[left]? with
+              | none => simp [hleftOffset, hleftSize] at hsuccess
+              | some leftSize =>
+                cases hrightOffset : offsets[left + 1]? with
+                | none => simp [hleftOffset, hleftSize, hrightOffset] at hsuccess
+                | some rightOffset =>
+                  simp only [hleftOffset, hleftSize, hrightOffset] at hsuccess
+                  split at hsuccess
+                  next hadjacent =>
+                    exact Or.inl ⟨(Option.some.inj hsuccess).symm, by
+                      simp [coalesceIfPossibleSelectedProgram, hcapacity, hmax,
+                        hright, hleftFree, hrightFree, hleftOffset, hleftSize,
+                        hrightOffset, hadjacent]⟩
+                  next hadjacent =>
+                    exact Or.inr ⟨hsuccess, by
+                      simp [coalesceIfPossibleSelectedProgram, hcapacity, hmax,
+                        hright, hleftFree, hrightFree, hleftOffset, hleftSize,
+                        hrightOffset, hadjacent]⟩
 
 /-- A successful state-retaining conditional coalescing call selects either
 the no-op program or the complete class-coalescing program, with one common
@@ -25073,7 +25268,11 @@ theorem coalesceIfPossibleArraysOutcome_successfulProgram_wp
     (hcount : mem.EncodesAt Luffs.Memory.Scalar.u64 countBase
       (BitVec.ofNat 64 count)) :
     ∃ program,
-      ⊢@{IProp GF} Program.wp program mem (fun final =>
+      program = coalesceIfPossibleSelectedProgram offsetsBase sizesBase
+        isFreeBase prevFreeBase secondBase firstBase headsBase nextBase
+        previousBase offsets sizes isFree prevFree second first heads next
+        previous count left ∧
+      (⊢@{IProp GF} Program.wp program mem (fun final =>
         (final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
             (InitializeProgram.encodeNats result.offsets) ∧
         final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
@@ -25092,20 +25291,27 @@ theorem coalesceIfPossibleArraysOutcome_successfulProgram_wp
             (InitializeProgram.encodeNats result.previous) ∧
         final.EncodesAt Luffs.Memory.Scalar.u64 countBase
             (BitVec.ofNat 64 count)) ∧
-        ∀ p, mem.mapped p → final.mapped p) := by
+        ∀ p, mem.mapped p → final.mapped p)) := by
   have hoption := coalesceIfPossibleArraysOutcome_success_refines_option hsuccess
-  rcases coalesceIfPossibleArrays_success_cases hoption with hidentity | hclass
-  · subst result
-    refine ⟨.done, Program.wp_done mem _ ?_⟩
+  rcases coalesceIfPossibleSelectedProgram_spec offsetsBase sizesBase isFreeBase
+      prevFreeBase secondBase firstBase headsBase nextBase previousBase offsets
+      sizes isFree prevFree second first heads next previous count left result
+      hoption with hidentity | hclass
+  · rcases hidentity with ⟨hresult, hprogram⟩
+    subst result
+    refine ⟨.done, hprogram.symm, Program.wp_done mem _ ?_⟩
     exact ⟨⟨hoffsets, hsizes, hfree, hprev, hsecond, hfirst, hheads, hnext,
       hprevious, hcount⟩, fun _ hp => hp⟩
-  · exact coalesceClassArrays_successfulProgram_wp_refines (GF := GF)
-      offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
-      headsBase nextBase previousBase offsets sizes isFree prevFree second first
-      heads next previous count left result mem hclass layout hoffsetsMapped
-      hsizesMapped hfreeMapped hprevMapped hsecondMapped hfirstMapped hheadsMapped
-      hnextMapped hpreviousMapped hoffsets hsizes hfree hprev hsecond hfirst hheads
-      hnext hprevious hcount
+  · rcases hclass with ⟨hclass, hprogram⟩
+    obtain ⟨program, hselected, hwp⟩ :=
+      coalesceClassArrays_successfulProgram_wp_refines (GF := GF) offsetsBase
+        sizesBase isFreeBase prevFreeBase countBase secondBase firstBase headsBase
+        nextBase previousBase offsets sizes isFree prevFree second first heads next
+        previous count left result mem hclass layout hoffsetsMapped hsizesMapped
+        hfreeMapped hprevMapped hsecondMapped hfirstMapped hheadsMapped hnextMapped
+        hpreviousMapped hoffsets hsizes hfree hprev hsecond hfirst hheads hnext
+        hprevious hcount
+    exact ⟨program, hselected.trans hprogram.symm, hwp⟩
 
 def storeDeallocatedCountWrites (countBase nextCount : Nat) :
     List ElementWrite :=
@@ -25224,6 +25430,275 @@ theorem storeDeallocatedCountProgram_wp_encodes {GF : BundledGFunctors}
       Luffs.Memory.Scalar.u64] using
       Memory.writeElement_encodesAt Luffs.Memory.Scalar.u64 mem countBase 0
         (BitVec.ofNat 64 nextCount)
+
+/-- Complete successful public deallocation execution: validate/mark/insert,
+conditionally coalesce right, conditionally coalesce left, and finally store
+the returned active count. -/
+theorem deallocateArraysOutcome_successfulProgram_wp {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat)
+    (count block returnedOffset returnedBytes : Nat)
+    (result : CoalesceClassResult) (mem : Memory)
+    (hsuccess : deallocateArraysOutcome offsets sizes isFree prevFree second first
+      heads next previous count block returnedOffset returnedBytes =
+        .success result)
+    (layout : AllocateComposition.MetadataLayout offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets.length sizes.length isFree.length prevFree.length second.length
+      heads.length next.length previous.length)
+    (hoffsetsMapped : ∀ index, index < offsets.length → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizesMapped : ∀ index, index < sizes.length → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hfreeMapped : ∀ index, index < isFree.length →
+      mem.mapped (isFreeBase + index))
+    (hprevMapped : ∀ index, index < prevFree.length →
+      mem.mapped (prevFreeBase + index))
+    (hcountMapped : ∀ i, i < 8 → mem.mapped (countBase + i))
+    (hsecondMapped : ∀ index, index < second.length → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheadsMapped : ∀ index, index < heads.length → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < next.length → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previous.length → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree))
+    (hcount : mem.EncodesAt Luffs.Memory.Scalar.u64 countBase
+      (BitVec.ofNat 64 count))
+    (hsecond : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hfirst : mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase first)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous)) :
+    ∃ program,
+      ⊢@{IProp GF} Program.wp program mem (fun final =>
+        final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+            (InitializeProgram.encodeNats result.offsets) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+            (InitializeProgram.encodeNats result.sizes) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+            (AllocateProgram.encodeFlags result.isFree) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+            (AllocateProgram.encodeFlags result.prevFree) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u32 secondBase result.second ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 firstBase result.first ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+            (InitializeProgram.encodeNats result.heads) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+            (InitializeProgram.encodeNats result.next) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+            (InitializeProgram.encodeNats result.previous) ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 countBase
+            (BitVec.ofNat 64 result.count)) := by
+  obtain ⟨marked, afterRight, hunco, hright, hlast⟩ :=
+    deallocateArraysOutcome_success_result hsuccess
+  obtain ⟨bin, uncoProgram, _, huncoProgram, huncoWp⟩ :=
+    deallocateUncoalescedArraysOutcome_successfulInterleavedProgram_wp (GF := GF)
+      offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase offsets sizes isFree prevFree second first
+      heads next previous count block returnedOffset returnedBytes marked mem hunco
+      layout hoffsetsMapped hsizesMapped hfreeMapped hprevMapped hsecondMapped
+      hfirstMapped hheadsMapped hnextMapped hpreviousMapped hoffsets hsizes hfree
+      hprev hcount hsecond hfirst hheads hnext hprevious
+  have hmarkedLens :=
+    deallocateUncoalescedArraysOutcome_success_preserves_lengths hunco
+  have layoutMarked : AllocateComposition.MetadataLayout offsetsBase sizesBase
+      isFreeBase prevFreeBase countBase secondBase firstBase headsBase nextBase
+      previousBase offsets.length sizes.length marked.isFree.length
+      marked.prevFree.length marked.second.length marked.heads.length
+      marked.next.length marked.previous.length := by
+    simpa [hmarkedLens.1, hmarkedLens.2.1, hmarkedLens.2.2.1,
+      hmarkedLens.2.2.2.1, hmarkedLens.2.2.2.2.1,
+      hmarkedLens.2.2.2.2.2] using layout
+  let rightProgram := coalesceIfPossibleSelectedProgram offsetsBase sizesBase
+    isFreeBase prevFreeBase secondBase firstBase headsBase nextBase previousBase
+    offsets sizes marked.isFree marked.prevFree marked.second marked.first
+    marked.heads marked.next marked.previous count block
+  have hrightLens :=
+    coalesceIfPossibleArraysOutcome_success_preserves_lengths hright
+  have layoutRight : AllocateComposition.MetadataLayout offsetsBase sizesBase
+      isFreeBase prevFreeBase countBase secondBase firstBase headsBase nextBase
+      previousBase afterRight.offsets.length afterRight.sizes.length
+      afterRight.isFree.length afterRight.prevFree.length afterRight.second.length
+      afterRight.heads.length afterRight.next.length afterRight.previous.length := by
+    simpa [hrightLens.1, hrightLens.2.1, hrightLens.2.2.1,
+      hrightLens.2.2.2.1, hrightLens.2.2.2.2.1,
+      hrightLens.2.2.2.2.2.1, hrightLens.2.2.2.2.2.2.1,
+      hrightLens.2.2.2.2.2.2.2] using layoutMarked
+  rcases hlast with hzero | hleft
+  · rcases hzero with ⟨hblock, hresult⟩
+    subst result
+    let program := uncoProgram.then
+      (rightProgram.then (storeDeallocatedCountProgram countBase afterRight.count))
+    refine ⟨program, ?_⟩
+    unfold program
+    apply Program.wp_then huncoWp
+    intro afterUnco hafterUnco
+    rcases hafterUnco with ⟨hencodedUnco, hmappedUnco⟩
+    rcases hencodedUnco with
+      ⟨hsecondUnco, hfirstUnco, hheadsUnco, hnextUnco, hpreviousUnco,
+        hoffsetsUnco, hsizesUnco, hfreeUnco, hprevUnco, hcountUnco⟩
+    obtain ⟨selectedRight, hselectedRight, hrightWp⟩ :=
+      coalesceIfPossibleArraysOutcome_successfulProgram_wp (GF := GF)
+        offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase
+        firstBase headsBase nextBase previousBase offsets sizes marked.isFree
+        marked.prevFree marked.second marked.first marked.heads marked.next
+        marked.previous count block afterRight afterUnco hright layoutMarked
+        (fun index hindex i hi => hmappedUnco _
+          (hoffsetsMapped index hindex i hi))
+        (fun index hindex i hi => hmappedUnco _
+          (hsizesMapped index hindex i hi))
+        (fun index hindex => hmappedUnco _ (hfreeMapped index (by
+          simpa [hmarkedLens.1] using hindex)))
+        (fun index hindex => hmappedUnco _ (hprevMapped index (by
+          simpa [hmarkedLens.2.1] using hindex)))
+        (fun index hindex i hi => hmappedUnco _ (hsecondMapped index (by
+          simpa [hmarkedLens.2.2.1] using hindex) i hi))
+        (fun i hi => hmappedUnco _ (hfirstMapped i hi))
+        (fun index hindex i hi => hmappedUnco _ (hheadsMapped index (by
+          simpa [hmarkedLens.2.2.2.1] using hindex) i hi))
+        (fun index hindex i hi => hmappedUnco _ (hnextMapped index (by
+          simpa [hmarkedLens.2.2.2.2.1] using hindex) i hi))
+        (fun index hindex i hi => hmappedUnco _ (hpreviousMapped index (by
+          simpa [hmarkedLens.2.2.2.2.2] using hindex) i hi))
+        hoffsetsUnco hsizesUnco hfreeUnco hprevUnco hsecondUnco hfirstUnco
+        hheadsUnco hnextUnco hpreviousUnco hcountUnco
+    rw [hselectedRight] at hrightWp
+    apply Program.wp_then hrightWp
+    intro afterRightMem hafterRightMem
+    rcases hafterRightMem with ⟨hencodedRight, hmappedRight⟩
+    rcases hencodedRight with
+      ⟨hoffsetsRight, hsizesRight, hfreeRight, hprevRight, hsecondRight,
+        hfirstRight, hheadsRight, hnextRight, hpreviousRight, _⟩
+    exact storeDeallocatedCountProgram_wp_encodes (GF := GF) offsetsBase
+      sizesBase isFreeBase prevFreeBase countBase secondBase firstBase headsBase
+      nextBase previousBase afterRight.count afterRight.offsets afterRight.sizes
+      afterRight.isFree afterRight.prevFree afterRight.second afterRight.first
+      afterRight.heads afterRight.next afterRight.previous afterRightMem layoutRight
+      (fun i hi => hmappedRight _ (hmappedUnco _ (hcountMapped i hi)))
+      hoffsetsRight hsizesRight hfreeRight hprevRight hsecondRight hfirstRight
+      hheadsRight hnextRight hpreviousRight
+  · rcases hleft with ⟨hblock, hleft⟩
+    let leftProgram := coalesceIfPossibleSelectedProgram offsetsBase sizesBase
+      isFreeBase prevFreeBase secondBase firstBase headsBase nextBase previousBase
+      afterRight.offsets afterRight.sizes afterRight.isFree afterRight.prevFree
+      afterRight.second afterRight.first afterRight.heads afterRight.next
+      afterRight.previous afterRight.count (block - 1)
+    have hleftLens :=
+      coalesceIfPossibleArraysOutcome_success_preserves_lengths hleft
+    have layoutLeft : AllocateComposition.MetadataLayout offsetsBase sizesBase
+        isFreeBase prevFreeBase countBase secondBase firstBase headsBase nextBase
+        previousBase result.offsets.length result.sizes.length result.isFree.length
+        result.prevFree.length result.second.length result.heads.length
+        result.next.length result.previous.length := by
+      simpa [hleftLens.1, hleftLens.2.1, hleftLens.2.2.1,
+        hleftLens.2.2.2.1, hleftLens.2.2.2.2.1,
+        hleftLens.2.2.2.2.2.1, hleftLens.2.2.2.2.2.2.1,
+        hleftLens.2.2.2.2.2.2.2] using layoutRight
+    let program := uncoProgram.then (rightProgram.then
+      (leftProgram.then (storeDeallocatedCountProgram countBase result.count)))
+    refine ⟨program, ?_⟩
+    unfold program
+    apply Program.wp_then huncoWp
+    intro afterUnco hafterUnco
+    rcases hafterUnco with ⟨hencodedUnco, hmappedUnco⟩
+    rcases hencodedUnco with
+      ⟨hsecondUnco, hfirstUnco, hheadsUnco, hnextUnco, hpreviousUnco,
+        hoffsetsUnco, hsizesUnco, hfreeUnco, hprevUnco, hcountUnco⟩
+    obtain ⟨selectedRight, hselectedRight, hrightWp⟩ :=
+      coalesceIfPossibleArraysOutcome_successfulProgram_wp (GF := GF)
+        offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase
+        firstBase headsBase nextBase previousBase offsets sizes marked.isFree
+        marked.prevFree marked.second marked.first marked.heads marked.next
+        marked.previous count block afterRight afterUnco hright layoutMarked
+        (fun index hindex i hi => hmappedUnco _
+          (hoffsetsMapped index hindex i hi))
+        (fun index hindex i hi => hmappedUnco _
+          (hsizesMapped index hindex i hi))
+        (fun index hindex => hmappedUnco _ (hfreeMapped index (by
+          simpa [hmarkedLens.1] using hindex)))
+        (fun index hindex => hmappedUnco _ (hprevMapped index (by
+          simpa [hmarkedLens.2.1] using hindex)))
+        (fun index hindex i hi => hmappedUnco _ (hsecondMapped index (by
+          simpa [hmarkedLens.2.2.1] using hindex) i hi))
+        (fun i hi => hmappedUnco _ (hfirstMapped i hi))
+        (fun index hindex i hi => hmappedUnco _ (hheadsMapped index (by
+          simpa [hmarkedLens.2.2.2.1] using hindex) i hi))
+        (fun index hindex i hi => hmappedUnco _ (hnextMapped index (by
+          simpa [hmarkedLens.2.2.2.2.1] using hindex) i hi))
+        (fun index hindex i hi => hmappedUnco _ (hpreviousMapped index (by
+          simpa [hmarkedLens.2.2.2.2.2] using hindex) i hi))
+        hoffsetsUnco hsizesUnco hfreeUnco hprevUnco hsecondUnco hfirstUnco
+        hheadsUnco hnextUnco hpreviousUnco hcountUnco
+    rw [hselectedRight] at hrightWp
+    apply Program.wp_then hrightWp
+    intro afterRightMem hafterRightMem
+    rcases hafterRightMem with ⟨hencodedRight, hmappedRight⟩
+    rcases hencodedRight with
+      ⟨hoffsetsRight, hsizesRight, hfreeRight, hprevRight, hsecondRight,
+        hfirstRight, hheadsRight, hnextRight, hpreviousRight, hcountRight⟩
+    obtain ⟨selectedLeft, hselectedLeft, hleftWp⟩ :=
+      coalesceIfPossibleArraysOutcome_successfulProgram_wp (GF := GF)
+        offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase
+        firstBase headsBase nextBase previousBase afterRight.offsets
+        afterRight.sizes afterRight.isFree afterRight.prevFree afterRight.second
+        afterRight.first afterRight.heads afterRight.next afterRight.previous
+        afterRight.count (block - 1) result afterRightMem hleft layoutRight
+        (fun index hindex i hi => hmappedRight _ (hmappedUnco _
+          (hoffsetsMapped index (by simpa [hrightLens.1] using hindex) i hi)))
+        (fun index hindex i hi => hmappedRight _ (hmappedUnco _
+          (hsizesMapped index (by simpa [hrightLens.2.1] using hindex) i hi)))
+        (fun index hindex => hmappedRight _ (hmappedUnco _
+          (hfreeMapped index (by simpa [hrightLens.2.2.1, hmarkedLens.1]
+            using hindex))))
+        (fun index hindex => hmappedRight _ (hmappedUnco _
+          (hprevMapped index (by simpa [hrightLens.2.2.2.1,
+            hmarkedLens.2.1] using hindex))))
+        (fun index hindex i hi => hmappedRight _ (hmappedUnco _
+          (hsecondMapped index (by simpa [hrightLens.2.2.2.2.1,
+            hmarkedLens.2.2.1] using hindex) i hi)))
+        (fun i hi => hmappedRight _ (hmappedUnco _ (hfirstMapped i hi)))
+        (fun index hindex i hi => hmappedRight _ (hmappedUnco _
+          (hheadsMapped index (by simpa [hrightLens.2.2.2.2.2.1,
+            hmarkedLens.2.2.2.1] using hindex) i hi)))
+        (fun index hindex i hi => hmappedRight _ (hmappedUnco _
+          (hnextMapped index (by simpa [hrightLens.2.2.2.2.2.2.1,
+            hmarkedLens.2.2.2.2.1] using hindex) i hi)))
+        (fun index hindex i hi => hmappedRight _ (hmappedUnco _
+          (hpreviousMapped index (by simpa [hrightLens.2.2.2.2.2.2.2,
+            hmarkedLens.2.2.2.2.2] using hindex) i hi)))
+        hoffsetsRight hsizesRight hfreeRight hprevRight hsecondRight hfirstRight
+        hheadsRight hnextRight hpreviousRight hcountRight
+    rw [hselectedLeft] at hleftWp
+    apply Program.wp_then hleftWp
+    intro afterLeftMem hafterLeftMem
+    rcases hafterLeftMem with ⟨hencodedLeft, hmappedLeft⟩
+    rcases hencodedLeft with
+      ⟨hoffsetsLeft, hsizesLeft, hfreeLeft, hprevLeft, hsecondLeft, hfirstLeft,
+        hheadsLeft, hnextLeft, hpreviousLeft, _⟩
+    exact storeDeallocatedCountProgram_wp_encodes (GF := GF) offsetsBase
+      sizesBase isFreeBase prevFreeBase countBase secondBase firstBase headsBase
+      nextBase previousBase result.count result.offsets result.sizes result.isFree
+      result.prevFree result.second result.first result.heads result.next
+      result.previous afterLeftMem layoutLeft
+      (fun i hi => hmappedLeft _ (hmappedRight _ (hmappedUnco _
+        (hcountMapped i hi)))) hoffsetsLeft hsizesLeft hfreeLeft hprevLeft
+      hsecondLeft hfirstLeft hheadsLeft hnextLeft hpreviousLeft
 
 end DeallocateProgram
 

@@ -1266,6 +1266,13 @@ concurrency are later extensions and are not prerequisites for `Box` and
   facts needed to instantiate the next source call at an arbitrary intermediate
   memory; only memory-independent packaging of the pure program witnesses
   remains before the public sequence can be closed.
+  That public sequence is now closed. Pure selectors mirror the class and
+  conditional-coalescing CFGs and are proved equal to the actual mutation
+  programs independently of memory. The successful public outcome selects one
+  fixed program comprising uncoalesced restoration, right coalescing, the
+  `block = 0`/left-coalescing branch, and the final count store. Its closed Iris
+  WP establishes all ten returned metadata encodings, including the stored
+  returned count. Operational public deallocation is therefore complete.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

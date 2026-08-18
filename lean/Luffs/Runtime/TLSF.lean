@@ -7595,6 +7595,63 @@ theorem clearBinsMemory_mapped (secondBase firstBase headsBase secondCount
   apply Memory.mapped_writeBytes
   exact Memory.mapped_fillElements _ _ _ _ _ _ hmapped
 
+theorem clearBinsMemory_encodes (secondBase firstBase headsBase secondCount
+    headsCount sentinel : Nat) (mem : Memory)
+    (hfirstSecond : (ValueRegion Luffs.Memory.Scalar.u64 firstBase).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u32 secondBase secondCount))
+    (hheadsSecond : (ArrayRegion Luffs.Memory.Scalar.u64 headsBase headsCount).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u32 secondBase secondCount))
+    (hheadsFirst : (ArrayRegion Luffs.Memory.Scalar.u64 headsBase headsCount).disjoint
+      (ValueRegion Luffs.Memory.Scalar.u64 firstBase)) :
+    let final := clearBinsMemory secondBase firstBase headsBase secondCount
+      headsCount sentinel mem
+    final.EncodesArray Luffs.Memory.Scalar.u32 secondBase
+        (List.replicate secondCount (0 : BitVec 32)) ∧
+      final.EncodesAt Luffs.Memory.Scalar.u64 firstBase (0 : BitVec 64) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+        (List.replicate headsCount (BitVec.ofNat 64 sentinel)) := by
+  dsimp only
+  let afterSecond := Memory.fillElements mem secondBase 4 0 secondCount
+    (u32Bytes 0)
+  let afterFirst := afterSecond.writeBytes firstBase (usizeBytes 0)
+  have hsecond0 : afterSecond.EncodesArray Luffs.Memory.Scalar.u32 secondBase
+      (List.replicate secondCount (0 : BitVec 32)) := by
+    simpa [afterSecond, u32Bytes, Luffs.Memory.Scalar.u32] using
+      Memory.fillElements_encodesArray Luffs.Memory.Scalar.u32 mem secondBase
+        secondCount (0 : BitVec 32)
+  have hsecond1 : afterFirst.EncodesArray Luffs.Memory.Scalar.u32 secondBase
+      (List.replicate secondCount (0 : BitVec 32)) := by
+    apply hsecond0.writeBytes_of_disjoint
+    simpa [afterFirst, usizeBytes, ValueRegion,
+      Luffs.Memory.Scalar.u64] using hfirstSecond
+  have hsecondFinal := hsecond1.fillElements_of_disjoint
+    (writeCodec := Luffs.Memory.Scalar.u64)
+    (value := BitVec.ofNat 64 sentinel) (start := 0) (count := headsCount) (by
+      intro index _ hindex
+      exact ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hindex
+        hheadsSecond)
+  have hfirst0 : afterFirst.EncodesAt Luffs.Memory.Scalar.u64 firstBase
+      (0 : BitVec 64) := by
+    simpa [afterFirst, usizeBytes, Luffs.Memory.Scalar.u64] using
+      Memory.writeBytes_encodesAt Luffs.Memory.Scalar.u64 afterSecond firstBase
+        (0 : BitVec 64)
+  have hfirstFinal := hfirst0.fillElements_of_disjoint
+    (base := headsBase) (width := 8) (bytes := usizeBytes sentinel)
+    (start := 0) (count := headsCount) (by
+      intro index _ hindex
+      simpa [ValueRegion, usizeBytes, Luffs.Memory.Scalar.u64] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hindex hheadsFirst)
+  have hheadsFinal :
+      (Memory.fillElements afterFirst headsBase 8 0 headsCount
+        (usizeBytes sentinel)).EncodesArray Luffs.Memory.Scalar.u64 headsBase
+          (List.replicate headsCount (BitVec.ofNat 64 sentinel)) := by
+    simpa [usizeBytes, Luffs.Memory.Scalar.u64] using
+      Memory.fillElements_encodesArray Luffs.Memory.Scalar.u64 afterFirst
+        headsBase headsCount (BitVec.ofNat 64 sentinel)
+  simpa [clearBinsMemory, afterSecond, afterFirst, usizeBytes,
+    Luffs.Memory.Scalar.u64] using
+    And.intro hsecondFinal (And.intro hfirstFinal hheadsFinal)
+
 theorem clearBins_wp {GF : BundledGFunctors}
     (secondBase firstBase headsBase secondCount headsCount sentinel : Nat)
     (mem : Memory)

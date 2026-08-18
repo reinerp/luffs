@@ -155,6 +155,11 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   every selected element is proved to contain the codec's exact bytes while
   all distinct element encodings are preserved via disjoint regions. This is
   the finite-array decoding rule used for the initializer's replicate loops.
+  The rule is now specialized to the initializer's bin-clearing phase:
+  `clearBinsMemory_encodes` proves the complete second-level bitmap array,
+  first-level bitmap scalar, and head array decode to their cleared values
+  after their interleaved stores. Cross-array preservation is justified by
+  whole-array region disjointness and element-subregion lemmas.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

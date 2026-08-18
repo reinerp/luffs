@@ -35,6 +35,9 @@ def Memory.EncodesArray {α : Type} (codec : Codec α) (mem : Memory)
   ∀ index, (hindex : index < values.length) →
     mem.EncodesAt codec (base + index * codec.size) values[index]
 
+def ArrayRegion {α : Type} (codec : Codec α) (base count : Nat) : Region :=
+  { base, bytes := count * codec.size }
+
 theorem Memory.writeBytes_encodesAt {α : Type} (codec : Codec α)
     (mem : Memory) (base : Addr) (value : α) :
     (mem.writeBytes base (codec.encode value)).EncodesAt codec base value := by
@@ -79,18 +82,18 @@ theorem Memory.writeElement_encodesAt {α : Type} (codec : Codec α)
 
 theorem Memory.EncodesAt.fillElements_of_disjoint {α : Type}
     {codec : Codec α} {mem : Memory} {valueBase base : Addr}
-    {value : α} {bytes : List Byte} {start count : Nat}
+    {value : α} {bytes : List Byte} {width start count : Nat}
     (hencoded : mem.EncodesAt codec valueBase value)
     (hdisjoint : ∀ index, start ≤ index → index < start + count →
-      (Region.mk (base + index * codec.size) bytes.length).disjoint
+      (Region.mk (base + index * width) bytes.length).disjoint
         (ValueRegion codec valueBase)) :
-    (Memory.fillElements mem base codec.size start count bytes).EncodesAt
+    (Memory.fillElements mem base width start count bytes).EncodesAt
       codec valueBase value := by
   induction count generalizing mem start with
   | zero => exact hencoded
   | succ count ih =>
       simp only [Memory.fillElements]
-      apply ih (mem := mem.writeBytes (base + start * codec.size) bytes)
+      apply ih (mem := mem.writeBytes (base + start * width) bytes)
         (start := start + 1)
       · exact hencoded.writeBytes_of_disjoint
           (hdisjoint start (by omega) (by omega))
@@ -126,6 +129,90 @@ theorem Memory.fillElements_encodesAt {α : Type} (codec : Codec α)
         · omega
         · intro other hlo hhi hne
           exact hdisjoint other (by omega) (by omega) hne
+
+theorem ValueRegion.element_disjoint {α : Type} (codec : Codec α)
+    (base left right : Nat) (hne : left ≠ right) :
+    (ValueRegion codec (base + left * codec.size)).disjoint
+      (ValueRegion codec (base + right * codec.size)) := by
+  rcases Nat.lt_or_gt_of_ne hne with hlt | hgt
+  · apply Or.inl
+    unfold ValueRegion Region.endAddr
+    change base + left * codec.size + codec.size ≤
+      base + right * codec.size
+    rw [Nat.add_assoc, ← Nat.succ_mul]
+    exact Nat.add_le_add_left
+      (Nat.mul_le_mul_right codec.size (Nat.succ_le_of_lt hlt)) base
+  · apply Or.inr
+    unfold ValueRegion Region.endAddr
+    change base + right * codec.size + codec.size ≤
+      base + left * codec.size
+    rw [Nat.add_assoc, ← Nat.succ_mul]
+    exact Nat.add_le_add_left
+      (Nat.mul_le_mul_right codec.size (Nat.succ_le_of_lt hgt)) base
+
+theorem ArrayRegion.disjoint_element {α : Type} (codec : Codec α)
+    {base count index : Nat} (hindex : index < count) {other : Region}
+    (hdisjoint : other.disjoint (ArrayRegion codec base count)) :
+    other.disjoint (ValueRegion codec (base + index * codec.size)) := by
+  change other.endAddr ≤ base ∨
+    base + count * codec.size ≤ other.base at hdisjoint
+  change other.endAddr ≤ base + index * codec.size ∨
+    base + index * codec.size + codec.size ≤ other.base
+  rcases hdisjoint with hbefore | hafter
+  · exact Or.inl (Nat.le_trans hbefore (Nat.le_add_right _ _))
+  · apply Or.inr
+    apply Nat.le_trans _ hafter
+    rw [Nat.add_assoc, ← Nat.succ_mul]
+    exact Nat.add_le_add_left
+      (Nat.mul_le_mul_right codec.size (Nat.succ_le_of_lt hindex)) base
+
+theorem ArrayRegion.element_disjoint {α : Type} (codec : Codec α)
+    {base count index : Nat} (hindex : index < count) {other : Region}
+    (hdisjoint : (ArrayRegion codec base count).disjoint other) :
+    (ValueRegion codec (base + index * codec.size)).disjoint other := by
+  have hother := ArrayRegion.disjoint_element codec hindex
+    (disjoint_symmetric.mp hdisjoint)
+  exact disjoint_symmetric.mp hother
+
+theorem Memory.EncodesArray.writeBytes_of_disjoint {α : Type}
+    {codec : Codec α} {mem : Memory} {base writeBase : Nat}
+    {values : List α} {bytes : List Byte}
+    (hencoded : mem.EncodesArray codec base values)
+    (hdisjoint : (Region.mk writeBase bytes.length).disjoint
+      (ArrayRegion codec base values.length)) :
+    (mem.writeBytes writeBase bytes).EncodesArray codec base values := by
+  intro index hindex
+  apply (hencoded index hindex).writeBytes_of_disjoint
+  exact ArrayRegion.disjoint_element codec hindex hdisjoint
+
+theorem Memory.EncodesArray.fillElements_of_disjoint {α β : Type}
+    {codec : Codec α} {writeCodec : Codec β} {mem : Memory}
+    {base writeBase : Nat} {values : List α} {value : β}
+    {start count : Nat}
+    (hencoded : mem.EncodesArray codec base values)
+    (hdisjoint : ∀ index, start ≤ index → index < start + count →
+      (ValueRegion writeCodec (writeBase + index * writeCodec.size)).disjoint
+        (ArrayRegion codec base values.length)) :
+    (Memory.fillElements mem writeBase writeCodec.size start count
+      (writeCodec.encode value)).EncodesArray codec base values := by
+  intro index hindex
+  apply (hencoded index hindex).fillElements_of_disjoint
+  intro writeIndex hlo hhi
+  simpa [ValueRegion, writeCodec.encode_length] using
+    ArrayRegion.disjoint_element codec hindex (hdisjoint writeIndex hlo hhi)
+
+theorem Memory.fillElements_encodesArray {α : Type} (codec : Codec α)
+    (mem : Memory) (base count : Nat) (value : α) :
+    (Memory.fillElements mem base codec.size 0 count
+      (codec.encode value)).EncodesArray codec base
+        (List.replicate count value) := by
+  intro index hindex
+  have hindex' : index < count := by simpa using hindex
+  have hencoded := Memory.fillElements_encodesAt codec mem base 0 count index
+    value ⟨by omega, by omega⟩ (by
+      intro other _ _ hne
+      exact ValueRegion.element_disjoint codec base other index hne)
+  simpa using hencoded
 
 /-- Exclusive allocated storage together with authoritative knowledge of its
 initialized byte contents. -/

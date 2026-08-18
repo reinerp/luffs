@@ -20474,6 +20474,86 @@ theorem coalesceIfPossibleArrays_success_cases
                   next => exact Or.inl (Option.some.inj hsuccess).symm
                   next => exact Or.inr hsuccess
 
+theorem insertClassArrays_preserves_lengths
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {bin block : Nat}
+    {result : InsertClassResult}
+    (hsuccess : insertClassArrays second first heads next previous bin block =
+      some result) :
+    result.second.length = second.length ∧ result.heads.length = heads.length ∧
+      result.next.length = next.length ∧
+      result.previous.length = previous.length := by
+  obtain ⟨hbin, hfl, hnext, hprevious, _, _, _⟩ :=
+    InsertProgram.insertClassArrays_result hsuccess
+  have hformula := InsertProgram.insertClassArrays_eq_of_bounds second first
+    heads next previous bin block hbin hfl hnext hprevious
+  have heq := Option.some.inj (hsuccess.symm.trans hformula)
+  subst result
+  simp
+
+theorem coalesceClassArrays_preserves_lengths
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {count left : Nat}
+    {result : CoalesceClassResult}
+    (hsuccess : coalesceClassArrays offsets sizes isFree prevFree second first
+      heads next previous count left = some result) :
+    result.offsets.length = offsets.length ∧
+      result.sizes.length = sizes.length ∧
+      result.isFree.length = isFree.length ∧
+      result.prevFree.length = prevFree.length ∧
+      result.second.length = second.length ∧
+      result.heads.length = heads.length ∧
+      result.next.length = next.length ∧
+      result.previous.length = previous.length := by
+  obtain ⟨_, _, _, _, _, _, withoutLeft, withoutRight, physical, _, _,
+      inserted, _, _, _, _, _, _, hremoveLeft, hremoveRight, hphysical, _, _,
+      hinsert, hresultOffsets, hresultSizes, hresultFree, hresultPrev, _,
+      hresultSecond, _, hresultHeads, hresultNext, hresultPrevious⟩ :=
+    coalesceClassArrays_result hsuccess
+  have hleftLens := removeClassArrays_preserves_lengths hremoveLeft
+  have hrightLens := removeClassArrays_preserves_lengths hremoveRight
+  have hphysicalLens := coalescePhysicalArrays_preserves_lengths hphysical
+  have hinsertLens := insertClassArrays_preserves_lengths hinsert
+  constructor
+  · rw [hresultOffsets, hphysicalLens.1]
+  constructor
+  · rw [hresultSizes, hphysicalLens.2.1]
+  constructor
+  · rw [hresultFree, hphysicalLens.2.2.1]
+  constructor
+  · rw [hresultPrev, hphysicalLens.2.2.2]
+  constructor
+  · rw [hresultSecond, hinsertLens.1, hrightLens.1, hleftLens.1]
+  constructor
+  · rw [hresultHeads, hinsertLens.2.1, hrightLens.2.1, hleftLens.2.1]
+  constructor
+  · rw [hresultNext, hinsertLens.2.2.1, hrightLens.2.2.1,
+      hleftLens.2.2.1]
+  · rw [hresultPrevious, hinsertLens.2.2.2, hrightLens.2.2.2,
+      hleftLens.2.2.2]
+
+theorem coalesceIfPossibleArraysOutcome_success_preserves_lengths
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {count left : Nat}
+    {result : CoalesceClassResult}
+    (hsuccess : coalesceIfPossibleArraysOutcome offsets sizes isFree prevFree
+      second first heads next previous count left = .success result) :
+    result.offsets.length = offsets.length ∧
+      result.sizes.length = sizes.length ∧
+      result.isFree.length = isFree.length ∧
+      result.prevFree.length = prevFree.length ∧
+      result.second.length = second.length ∧
+      result.heads.length = heads.length ∧
+      result.next.length = next.length ∧
+      result.previous.length = previous.length := by
+  have hoption := coalesceIfPossibleArraysOutcome_success_refines_option hsuccess
+  rcases coalesceIfPossibleArrays_success_cases hoption with hidentity | hclass
+  · subst result
+    simp [allocatorArrays]
+  · exact coalesceClassArrays_preserves_lengths hclass
+
 set_option maxHeartbeats 1000000 in
 /-- A conditionally coalescing call on a completely represented valid
 allocator cannot fail. Ineligible pairs return the identity state; eligible
@@ -23042,37 +23122,60 @@ theorem deallocateUncoalescedArraysOutcome_successfulInterleavedProgram_wp
         returnedOffset (bin / 32) (bin % 32) (heads[bin]?.getD 0)
         (second[bin / 32]?.getD 0) first ∧
       (⊢@{IProp GF} Program.wp program mem
-        (EncodesDeallocateMachineState offsetsBase sizesBase isFreeBase
-          prevFreeBase countBase secondBase firstBase headsBase nextBase
-          previousBase offsets sizes count state)) := by
+        (fun final =>
+          EncodesDeallocateMachineState offsetsBase sizesBase isFreeBase
+              prevFreeBase countBase secondBase firstBase headsBase nextBase
+              previousBase offsets sizes count state final ∧
+            ∀ p, mem.mapped p → final.mapped p)) := by
   obtain ⟨marked, bin, inserted, hmark, hclass, hinsert, hstate⟩ :=
     deallocateUncoalescedArraysOutcome_success_result hsuccess
   have hmarkResult := markFreeArrays_result hmark
+  obtain ⟨hbin, hfl, hblockNext, hblockPrevious, _, _, _⟩ :=
+    InsertProgram.insertClassArrays_result hinsert
   let program := deallocateUncoalescedInterleavedProgram offsetsBase sizesBase
     isFreeBase prevFreeBase secondBase firstBase headsBase nextBase previousBase
     block prevFree.length next.length previous.length bin returnedOffset
     (bin / 32) (bin % 32) (heads[bin]?.getD 0)
     (second[bin / 32]?.getD 0) first
   refine ⟨bin, program, hclass, rfl, ?_⟩
-  apply Program.wp_mono
-    (deallocateUncoalescedInterleavedProgram_wp_refines_components (GF := GF)
-      offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
-      headsBase nextBase previousBase block returnedOffset returnedBytes bin
-      offsets sizes isFree prevFree second first heads next previous count marked
-      inserted mem hmark hinsert layout
-      (hfreeMapped block hmarkResult.2.2.1)
-      (hoffsetsMapped block hmarkResult.1)
-      (hsizesMapped block hmarkResult.2.1)
-      (fun hsuccessor => hprevMapped (block + 1) hsuccessor)
-      hsecondMapped hfirstMapped hheadsMapped hnextMapped hpreviousMapped
-      hoffsets hsizes hfree hprev hcount hsecond hfirst hheads hnext hprevious)
-  intro final hfinal
-  subst state
-  rcases hfinal with
-    ⟨⟨hsecondFinal, hfirstFinal, hheadsFinal, hnextFinal, hpreviousFinal⟩,
+  apply AllocateComposition.wp_and
+  · apply Program.wp_mono
+      (deallocateUncoalescedInterleavedProgram_wp_refines_components (GF := GF)
+        offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase
+        firstBase headsBase nextBase previousBase block returnedOffset
+        returnedBytes bin offsets sizes isFree prevFree second first heads next
+        previous count marked inserted mem hmark hinsert layout
+        (hfreeMapped block hmarkResult.2.2.1)
+        (hoffsetsMapped block hmarkResult.1)
+        (hsizesMapped block hmarkResult.2.1)
+        (fun hsuccessor => hprevMapped (block + 1) hsuccessor)
+        hsecondMapped hfirstMapped hheadsMapped hnextMapped hpreviousMapped
+        hoffsets hsizes hfree hprev hcount hsecond hfirst hheads hnext hprevious)
+    intro final hfinal
+    subst state
+    rcases hfinal with
+      ⟨⟨hsecondFinal, hfirstFinal, hheadsFinal, hnextFinal, hpreviousFinal⟩,
+        hoffsetsFinal, hsizesFinal, hfreeFinal, hprevFinal, hcountFinal⟩
+    exact ⟨hsecondFinal, hfirstFinal, hheadsFinal, hnextFinal, hpreviousFinal,
       hoffsetsFinal, hsizesFinal, hfreeFinal, hprevFinal, hcountFinal⟩
-  exact ⟨hsecondFinal, hfirstFinal, hheadsFinal, hnextFinal, hpreviousFinal,
-    hoffsetsFinal, hsizesFinal, hfreeFinal, hprevFinal, hcountFinal⟩
+  · apply Program.wp_mono
+      (deallocateUncoalescedInterleavedProgram_wp_exact (GF := GF) offsetsBase
+        sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase nextBase
+        previousBase block prevFree.length next.length previous.length bin
+        returnedOffset (bin / 32) (bin % 32) (heads[bin]?.getD 0)
+        (second[bin / 32]?.getD 0) first mem
+        (hfreeMapped block hmarkResult.2.2.1)
+        (hoffsetsMapped block hmarkResult.1)
+        (hsizesMapped block hmarkResult.2.1)
+        (fun hsuccessor => hprevMapped (block + 1) hsuccessor)
+        (hheadsMapped bin hbin) (hnextMapped returnedOffset hblockNext)
+        (hpreviousMapped returnedOffset hblockPrevious)
+        (fun hold => hpreviousMapped (heads[bin]?.getD 0) hold)
+        (hsecondMapped (bin / 32) hfl) hfirstMapped)
+    intro final hfinal p hp
+    subst final
+    exact ElementWrite.applyAll_mapped _ _
+      (ElementWrite.applyAll_mapped _ _ hp)
 
 /-- Typed state transformer corresponding to the forward copy loop. -/
 def compactLoopState {α : Type} [Inhabited α] (source state : List α)
@@ -24845,7 +24948,7 @@ theorem coalesceClassArrays_successfulProgram_wp_refines
       (BitVec.ofNat 64 count)) :
     ∃ program,
       ⊢@{IProp GF} Program.wp program mem (fun final =>
-        final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+        (final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
             (InitializeProgram.encodeNats result.offsets) ∧
         final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
             (InitializeProgram.encodeNats result.sizes) ∧
@@ -24862,7 +24965,8 @@ theorem coalesceClassArrays_successfulProgram_wp_refines
         final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
             (InitializeProgram.encodeNats result.previous) ∧
         final.EncodesAt Luffs.Memory.Scalar.u64 countBase
-            (BitVec.ofNat 64 count)) := by
+            (BitVec.ofNat 64 count)) ∧
+        ∀ p, mem.mapped p → final.mapped p) := by
   obtain ⟨leftOffset, rightOffset, leftSize, rightSize, leftBin, rightBin,
       withoutLeft, withoutRight, physical, mergedSize, mergedBin, inserted,
       hleftOffset, hrightOffset, hleftSize, hrightSize, _, _, hremoveLeft,
@@ -24889,20 +24993,32 @@ theorem coalesceClassArrays_successfulProgram_wp_refines
     isFree prevFree second first heads next previous withoutLeft withoutRight count
     left leftOffset leftSize rightSize leftBin rightBin mergedBin
   refine ⟨program, ?_⟩
-  apply Program.wp_mono
-    (coalesceClassProgram_wp_refines_components (GF := GF) offsetsBase sizesBase
-      isFreeBase prevFreeBase countBase secondBase firstBase headsBase nextBase
-      previousBase offsets sizes isFree prevFree second first heads next previous
-      withoutLeft withoutRight physical inserted count left leftOffset leftSize
-      rightSize leftBin rightBin mergedBin mem hleftSize hrightSize hremoveLeft
-      hremoveRight hphysical hinsert layout hoffsetsMapped hsizesMapped hfreeMapped
-      hprevMapped hsecondMapped hfirstMapped hheadsMapped hnextMapped
-      hpreviousMapped hoffsets hsizes hfree hprev hsecond hfirst hheads hnext
-      hprevious hcount)
-  intro final hfinal
-  simpa [program, hresultOffsets, hresultSizes, hresultFree, hresultPrev,
-    hresultSecond, hresultFirst, hresultHeads, hresultNext,
-    hresultPrevious] using hfinal
+  apply AllocateComposition.wp_and
+  · apply Program.wp_mono
+      (coalesceClassProgram_wp_refines_components (GF := GF) offsetsBase
+        sizesBase isFreeBase prevFreeBase countBase secondBase firstBase headsBase
+        nextBase previousBase offsets sizes isFree prevFree second first heads next
+        previous withoutLeft withoutRight physical inserted count left leftOffset
+        leftSize rightSize leftBin rightBin mergedBin mem hleftSize hrightSize
+        hremoveLeft hremoveRight hphysical hinsert layout hoffsetsMapped
+        hsizesMapped hfreeMapped hprevMapped hsecondMapped hfirstMapped
+        hheadsMapped hnextMapped hpreviousMapped hoffsets hsizes hfree hprev
+        hsecond hfirst hheads hnext hprevious hcount)
+    intro final hfinal
+    simpa [program, hresultOffsets, hresultSizes, hresultFree, hresultPrev,
+      hresultSecond, hresultFirst, hresultHeads, hresultNext,
+      hresultPrevious] using hfinal
+  · apply Program.wp_mono
+      (coalesceClassProgram_wp_exact (GF := GF) offsetsBase sizesBase isFreeBase
+        prevFreeBase secondBase firstBase headsBase nextBase previousBase offsets
+        sizes isFree prevFree second first heads next previous withoutLeft
+        withoutRight count left leftOffset leftSize rightSize leftBin rightBin
+        mergedBin mem hremoveLeft hremoveRight (by simp [hphysical])
+        (by simp [hinsert]) hoffsetsMapped hsizesMapped hfreeMapped hprevMapped
+        hsecondMapped hfirstMapped hheadsMapped hnextMapped hpreviousMapped)
+    intro final hfinal p hp
+    subst final
+    exact ElementWrite.applyAll_mapped _ _ hp
 
 /-- A successful state-retaining conditional coalescing call selects either
 the no-op program or the complete class-coalescing program, with one common
@@ -24958,7 +25074,7 @@ theorem coalesceIfPossibleArraysOutcome_successfulProgram_wp
       (BitVec.ofNat 64 count)) :
     ∃ program,
       ⊢@{IProp GF} Program.wp program mem (fun final =>
-        final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+        (final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
             (InitializeProgram.encodeNats result.offsets) ∧
         final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
             (InitializeProgram.encodeNats result.sizes) ∧
@@ -24975,13 +25091,14 @@ theorem coalesceIfPossibleArraysOutcome_successfulProgram_wp
         final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
             (InitializeProgram.encodeNats result.previous) ∧
         final.EncodesAt Luffs.Memory.Scalar.u64 countBase
-            (BitVec.ofNat 64 count)) := by
+            (BitVec.ofNat 64 count)) ∧
+        ∀ p, mem.mapped p → final.mapped p) := by
   have hoption := coalesceIfPossibleArraysOutcome_success_refines_option hsuccess
   rcases coalesceIfPossibleArrays_success_cases hoption with hidentity | hclass
   · subst result
     refine ⟨.done, Program.wp_done mem _ ?_⟩
-    exact ⟨hoffsets, hsizes, hfree, hprev, hsecond, hfirst, hheads, hnext,
-      hprevious, hcount⟩
+    exact ⟨⟨hoffsets, hsizes, hfree, hprev, hsecond, hfirst, hheads, hnext,
+      hprevious, hcount⟩, fun _ hp => hp⟩
   · exact coalesceClassArrays_successfulProgram_wp_refines (GF := GF)
       offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
       headsBase nextBase previousBase offsets sizes isFree prevFree second first

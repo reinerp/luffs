@@ -1259,6 +1259,13 @@ concurrency are later extensions and are not prerequisites for `Box` and
   also has a closed WP: it writes the returned active count and frames all nine
   physical/class metadata fields. Composing these witnesses into one public
   program remains the final operational deallocation step.
+  Every selected uncoalesced or conditional-coalescing program now additionally
+  proves preservation of the entire mapped domain, derived from its exact write
+  trace. Successful insertion, class coalescing, and conditional coalescing are
+  also proved to preserve all fixed-array capacities. These are the transport
+  facts needed to instantiate the next source call at an arbitrary intermediate
+  memory; only memory-independent packaging of the pure program witnesses
+  remains before the public sequence can be closed.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

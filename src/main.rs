@@ -3403,7 +3403,8 @@ fn validate(module: &Module) -> Result<(), String> {
 
 fn lean(module: &Module) -> String {
     let mut out = String::from("import Init.Omega\n");
-    if !module.copy_models.is_empty()
+    if !module.scalar_models.is_empty()
+        || !module.copy_models.is_empty()
         || !module.array_models.is_empty()
         || !module.read_models.is_empty()
     {
@@ -3518,6 +3519,31 @@ fn lean(module: &Module) -> String {
             out.push_str(target);
             out.push_str(", Nat.pos_iff_ne_zero]\n\n");
         }
+        out.push_str(&format!("def {}_program", model.name));
+        if !model.params.is_empty() {
+            out.push_str(" (");
+            out.push_str(&model.params.join(" "));
+            out.push_str(" : Nat)");
+        }
+        out.push_str(" : Luffs.Memory.Program := .done\n\n");
+        out.push_str(&format!(
+            "theorem {}_program_wp {{GF : Iris.BundledGFunctors}}",
+            model.name
+        ));
+        if !model.params.is_empty() {
+            out.push_str(" (");
+            out.push_str(&model.params.join(" "));
+            out.push_str(" : Nat)");
+        }
+        out.push_str(
+            " (mem : Luffs.Memory.Memory) :\n    ⊢@{Iris.IProp GF} Luffs.Memory.Program.wp (",
+        );
+        out.push_str(&format!("{}_program", model.name));
+        for param in &model.params {
+            out.push(' ');
+            out.push_str(param);
+        }
+        out.push_str(") mem (fun final => final = mem) := by\n  exact Luffs.Memory.Program.wp_done mem _ rfl\n\n");
     }
     for model in &module.array_models {
         out.push_str("def ");
@@ -5858,6 +5884,11 @@ mod tests {
         assert!(generated.contains("if len = 0 then none else"));
         assert!(generated.contains("let next := len - 1"));
         assert!(generated.contains("some (next)"));
+        assert!(
+            generated.contains("def pop_len_program (len : Nat) : Luffs.Memory.Program := .done")
+        );
+        assert!(generated.contains("theorem pop_len_program_wp"));
+        assert!(generated.contains("Luffs.Memory.Program.wp_done mem _ rfl"));
     }
 
     #[test]

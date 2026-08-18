@@ -95,6 +95,11 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   has both trace-based and mapped-address WPs; get emits the symmetric nested
   read program and unchanged-memory WP. These programs are emitted only when
   the same complete source shape that enables their refinement is recognized.
+  Pure scalar functions now participate in the same operational layer instead
+  of disappearing from it: lowering emits `Program.done` and a closed
+  unchanged-memory WP. This supplies the compositional base case for the public
+  representation-independent Vec pop-length transition and other pure CFG
+  fragments.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

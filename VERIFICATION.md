@@ -1240,6 +1240,13 @@ concurrency are later extensions and are not prerequisites for `Box` and
   the four changed physical encodings together with unchanged class metadata
   and count. This matches the Luffs helper: it returns the decremented count,
   while only the eventual public boundary writes that count back to memory.
+  The four operational stages are now decoded jointly. Starting from the full
+  metadata representation, the proof threads both class removals, the physical
+  result, and the final insertion through their exact intermediate memories.
+  Successful `coalesceClassArrays` selects this program and establishes every
+  returned physical and class encoding; the stored count is deliberately still
+  the input count at this helper boundary. The remaining deallocation work is
+  the two conditional coalescing calls followed by the public count store.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

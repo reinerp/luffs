@@ -6965,6 +6965,23 @@ theorem coalescePhysicalArrays_success_eq {offsets sizes : List Nat}
                       hcapacity.2.1, hcapacity.2.2.1, hcapacity.2.2.2,
                       Nat.lt_of_not_ge hright, hleftSize, hrightSize, rfl⟩
 
+theorem coalescePhysicalArrays_preserves_lengths
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count left : Nat} {result : CoalescePhysicalResult}
+    (hsuccess : coalescePhysicalArrays offsets sizes isFree prevFree count left =
+      some result) :
+    result.offsets.length = offsets.length ∧
+      result.sizes.length = sizes.length ∧
+      result.isFree.length = isFree.length ∧
+      result.prevFree.length = prevFree.length := by
+  obtain ⟨leftSize, rightSize, hcountOffsets, hcountSizes, hcountFree,
+      hcountPrev, hright, _, _, hresult⟩ :=
+    coalescePhysicalArrays_success_eq hsuccess
+  subst result
+  simp only [compactActive, List.length_append, List.length_take,
+    List.length_drop, List.length_set]
+  omega
+
 /-- The checked physical compaction has no post-preflight failure edge. -/
 theorem coalescePhysicalArrays_ne_none_of_preflight
     {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
@@ -24149,6 +24166,10 @@ theorem coalescePhysicalProgram_wp_refines_frames_class
             (AllocateProgram.encodeFlags result.isFree) ∧
          final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
             (AllocateProgram.encodeFlags result.prevFree)) ∧
+        final = ElementWrite.applyAll
+          (coalescePhysicalWrites offsetsBase sizesBase isFreeBase prevFreeBase
+            offsets sizes isFree prevFree count left
+            (sizes[left]?.getD 0 + sizes[left + 1]?.getD 0)) mem ∧
         final.EncodesArray Luffs.Memory.Scalar.u32 secondBase second ∧
         final.EncodesAt Luffs.Memory.Scalar.u64 firstBase first ∧
         final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
@@ -24177,7 +24198,8 @@ theorem coalescePhysicalProgram_wp_refines_frames_class
         isFreeBase prevFreeBase countBase offsets sizes isFree prevFree count left
         (leftSize + rightSize) mem hright hcountOffsets hcountSizes hcountFree
         hcountPrev layout.physical hoffsets hsizes hfree hprev
-      refine ⟨hphysical, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      refine ⟨hphysical, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · simp [hleftSize, hrightSize]
       · apply hsecond.applyAll_of_disjoint
         intro write hwrite
         exact coalescePhysicalWrites_disjoint_class offsetsBase sizesBase
@@ -24224,6 +24246,218 @@ theorem coalescePhysicalProgram_wp_refines_frames_class
           isFreeBase prevFreeBase countBase offsets sizes isFree prevFree count
           left (leftSize + rightSize) layout.physical hcountOffsets hcountSizes
           hcountFree hcountPrev hright)
+
+/-- The complete class-coalescing program decodes all physical and class
+metadata fields. The stored count is framed because this helper returns, but
+does not itself store, the decremented active count. -/
+theorem coalesceClassProgram_wp_refines_components {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat)
+    (withoutLeft withoutRight : RemoveClassResult)
+    (physical : CoalescePhysicalResult) (inserted : InsertClassResult)
+    (count left leftOffset leftSize rightSize leftBin rightBin mergedBin : Nat)
+    (mem : Memory)
+    (hleftSize : sizes[left]? = some leftSize)
+    (hrightSize : sizes[left + 1]? = some rightSize)
+    (hremoveLeft : removeClassArrays second first heads next previous leftBin
+      leftOffset = some withoutLeft)
+    (hremoveRight : removeClassArrays withoutLeft.second withoutLeft.first
+      withoutLeft.heads withoutLeft.next withoutLeft.previous rightBin
+      (leftOffset + leftSize) = some withoutRight)
+    (hphysical : coalescePhysicalArrays offsets sizes isFree prevFree count left =
+      some physical)
+    (hinsert : insertClassArrays withoutRight.second withoutRight.first
+      withoutRight.heads withoutRight.next withoutRight.previous mergedBin
+      leftOffset = some inserted)
+    (layout : AllocateComposition.MetadataLayout offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets.length sizes.length isFree.length prevFree.length second.length
+      heads.length next.length previous.length)
+    (hoffsetsMapped : ∀ index, index < offsets.length → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizesMapped : ∀ index, index < sizes.length → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hfreeMapped : ∀ index, index < isFree.length →
+      mem.mapped (isFreeBase + index))
+    (hprevMapped : ∀ index, index < prevFree.length →
+      mem.mapped (prevFreeBase + index))
+    (hsecondMapped : ∀ index, index < second.length → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheadsMapped : ∀ index, index < heads.length → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < next.length → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previous.length → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree))
+    (hsecond : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hfirst : mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase first)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous))
+    (hcount : mem.EncodesAt Luffs.Memory.Scalar.u64 countBase
+      (BitVec.ofNat 64 count)) :
+    ⊢@{IProp GF} Program.wp
+      (coalesceClassProgram offsetsBase sizesBase isFreeBase prevFreeBase
+        secondBase firstBase headsBase nextBase previousBase offsets sizes isFree
+        prevFree second first heads next previous withoutLeft withoutRight count
+        left leftOffset leftSize rightSize leftBin rightBin mergedBin) mem
+      (fun final =>
+        final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+            (InitializeProgram.encodeNats physical.offsets) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+            (InitializeProgram.encodeNats physical.sizes) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+            (AllocateProgram.encodeFlags physical.isFree) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+            (AllocateProgram.encodeFlags physical.prevFree) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u32 secondBase inserted.second ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 firstBase inserted.first ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+            (InitializeProgram.encodeNats inserted.heads) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+            (InitializeProgram.encodeNats inserted.next) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+            (InitializeProgram.encodeNats inserted.previous) ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 countBase
+            (BitVec.ofNat 64 count)) := by
+  have hleftLens := removeClassArrays_preserves_lengths hremoveLeft
+  have hrightLens := removeClassArrays_preserves_lengths hremoveRight
+  have hphysicalLens := coalescePhysicalArrays_preserves_lengths hphysical
+  have layoutLeft : AllocateComposition.MetadataLayout offsetsBase sizesBase
+      isFreeBase prevFreeBase countBase secondBase firstBase headsBase nextBase
+      previousBase offsets.length sizes.length isFree.length prevFree.length
+      withoutLeft.second.length withoutLeft.heads.length withoutLeft.next.length
+      withoutLeft.previous.length := by
+    simpa [hleftLens.1, hleftLens.2.1, hleftLens.2.2.1,
+      hleftLens.2.2.2] using layout
+  have layoutRight : AllocateComposition.MetadataLayout offsetsBase sizesBase
+      isFreeBase prevFreeBase countBase secondBase firstBase headsBase nextBase
+      previousBase offsets.length sizes.length isFree.length prevFree.length
+      withoutRight.second.length withoutRight.heads.length
+      withoutRight.next.length withoutRight.previous.length := by
+    simpa [hrightLens.1, hrightLens.2.1, hrightLens.2.2.1,
+      hrightLens.2.2.2] using layoutLeft
+  have layoutPhysical : AllocateComposition.MetadataLayout offsetsBase sizesBase
+      isFreeBase prevFreeBase countBase secondBase firstBase headsBase nextBase
+      previousBase physical.offsets.length physical.sizes.length
+      physical.isFree.length physical.prevFree.length withoutRight.second.length
+      withoutRight.heads.length withoutRight.next.length
+      withoutRight.previous.length := by
+    simpa [hphysicalLens.1, hphysicalLens.2.1, hphysicalLens.2.2.1,
+      hphysicalLens.2.2.2] using layoutRight
+  unfold coalesceClassProgram
+  apply Program.wp_then
+    (AllocateComposition.removeClassProgram_wp_refines_frames_physical
+      (GF := GF) offsetsBase sizesBase isFreeBase prevFreeBase countBase
+      secondBase firstBase headsBase nextBase previousBase offsets sizes count
+      second first heads next previous isFree prevFree leftBin leftOffset
+      withoutLeft mem hremoveLeft layout hsecondMapped hfirstMapped hheadsMapped
+      hnextMapped hpreviousMapped hsecond hfirst hheads hnext hprevious hfree hprev
+      hoffsets hsizes hcount)
+  intro afterLeft hafterLeft
+  rcases hafterLeft with
+    ⟨⟨hclassLeft, hafterLeftEq, hfreeLeft, hprevLeft⟩, hoffsetsLeft,
+      hsizesLeft, hcountLeft⟩
+  subst afterLeft
+  apply Program.wp_then
+    (AllocateComposition.removeClassProgram_wp_refines_frames_physical
+      (GF := GF) offsetsBase sizesBase isFreeBase prevFreeBase countBase
+      secondBase firstBase headsBase nextBase previousBase offsets sizes count
+      withoutLeft.second withoutLeft.first withoutLeft.heads withoutLeft.next
+      withoutLeft.previous isFree prevFree rightBin (leftOffset + leftSize)
+      withoutRight _ hremoveRight layoutLeft
+      (fun index hindex i hi => ElementWrite.applyAll_mapped _ _
+        (hsecondMapped index (by simpa [hleftLens.1] using hindex) i hi))
+      (fun i hi => ElementWrite.applyAll_mapped _ _ (hfirstMapped i hi))
+      (fun index hindex i hi => ElementWrite.applyAll_mapped _ _
+        (hheadsMapped index (by simpa [hleftLens.2.1] using hindex) i hi))
+      (fun index hindex i hi => ElementWrite.applyAll_mapped _ _
+        (hnextMapped index (by simpa [hleftLens.2.2.1] using hindex) i hi))
+      (fun index hindex i hi => ElementWrite.applyAll_mapped _ _
+        (hpreviousMapped index (by simpa [hleftLens.2.2.2] using hindex) i hi))
+      hclassLeft.1 hclassLeft.2.1 hclassLeft.2.2.1 hclassLeft.2.2.2.1
+      hclassLeft.2.2.2.2 hfreeLeft hprevLeft hoffsetsLeft hsizesLeft hcountLeft)
+  intro afterRight hafterRight
+  rcases hafterRight with
+    ⟨⟨hclassRight, hafterRightEq, hfreeRight, hprevRight⟩, hoffsetsRight,
+      hsizesRight, hcountRight⟩
+  subst afterRight
+  apply Program.wp_then
+  · simpa [hleftSize, hrightSize] using
+      coalescePhysicalProgram_wp_refines_frames_class (GF := GF) offsetsBase
+        sizesBase isFreeBase prevFreeBase countBase secondBase firstBase headsBase
+        nextBase previousBase offsets sizes isFree prevFree withoutRight.second
+        withoutRight.first withoutRight.heads withoutRight.next
+        withoutRight.previous count left physical _ hphysical layoutRight
+        (fun index hindex i hi => ElementWrite.applyAll_mapped _ _
+          (ElementWrite.applyAll_mapped _ _
+            (hoffsetsMapped index hindex i hi)))
+        (fun index hindex i hi => ElementWrite.applyAll_mapped _ _
+          (ElementWrite.applyAll_mapped _ _
+            (hsizesMapped index hindex i hi)))
+        (fun index hindex => ElementWrite.applyAll_mapped _ _
+          (ElementWrite.applyAll_mapped _ _ (hfreeMapped index hindex)))
+        (fun index hindex => ElementWrite.applyAll_mapped _ _
+          (ElementWrite.applyAll_mapped _ _ (hprevMapped index hindex)))
+        hoffsetsRight hsizesRight hfreeRight hprevRight hclassRight.1
+        hclassRight.2.1 hclassRight.2.2.1 hclassRight.2.2.2.1
+        hclassRight.2.2.2.2 hcountRight
+  intro afterPhysical hafterPhysical
+  rcases hafterPhysical with
+    ⟨hphysicalFinal, hafterPhysicalEq, hsecondPhysical, hfirstPhysical,
+      hheadsPhysical, hnextPhysical, hpreviousPhysical, hcountPhysical⟩
+  subst afterPhysical
+  apply Program.wp_mono
+    (AllocateComposition.insertClassProgram_wp_refines_frames_physical
+      (GF := GF) offsetsBase sizesBase isFreeBase prevFreeBase countBase
+      secondBase firstBase headsBase nextBase previousBase physical.offsets
+      physical.sizes physical.isFree physical.prevFree count withoutRight.second
+      withoutRight.first withoutRight.heads withoutRight.next
+      withoutRight.previous mergedBin leftOffset inserted _ hinsert layoutPhysical
+      (fun index hindex i hi => ElementWrite.applyAll_mapped _ _
+        (ElementWrite.applyAll_mapped _ _ (ElementWrite.applyAll_mapped _ _
+          (hsecondMapped index (by
+            simpa [hrightLens.1, hleftLens.1] using hindex) i hi))))
+      (fun i hi => ElementWrite.applyAll_mapped _ _
+        (ElementWrite.applyAll_mapped _ _ (ElementWrite.applyAll_mapped _ _
+          (hfirstMapped i hi))))
+      (fun index hindex i hi => ElementWrite.applyAll_mapped _ _
+        (ElementWrite.applyAll_mapped _ _ (ElementWrite.applyAll_mapped _ _
+          (hheadsMapped index (by
+            simpa [hrightLens.2.1, hleftLens.2.1] using hindex) i hi))))
+      (fun index hindex i hi => ElementWrite.applyAll_mapped _ _
+        (ElementWrite.applyAll_mapped _ _ (ElementWrite.applyAll_mapped _ _
+          (hnextMapped index (by
+            simpa [hrightLens.2.2.1, hleftLens.2.2.1] using hindex) i hi))))
+      (fun index hindex i hi => ElementWrite.applyAll_mapped _ _
+        (ElementWrite.applyAll_mapped _ _ (ElementWrite.applyAll_mapped _ _
+          (hpreviousMapped index (by
+            simpa [hrightLens.2.2.2, hleftLens.2.2.2] using hindex) i hi))))
+      hsecondPhysical hheadsPhysical hnextPhysical hpreviousPhysical
+      hphysicalFinal.1 hphysicalFinal.2.1 hphysicalFinal.2.2.1
+      hphysicalFinal.2.2.2 hcountPhysical)
+  intro final hfinal
+  rcases hfinal with
+    ⟨hclassFinal, hoffsetsFinal, hsizesFinal, hfreeFinal, hprevFinal,
+      hcountFinal⟩
+  exact ⟨hoffsetsFinal, hsizesFinal, hfreeFinal, hprevFinal, hclassFinal.1,
+    hclassFinal.2.1, hclassFinal.2.2.1, hclassFinal.2.2.2.1,
+    hclassFinal.2.2.2.2, hcountFinal⟩
 
 /-- Exact deterministic WP for the complete four-stage class-coalescing
 transaction. Component success supplies every bound; mappedness is retained
@@ -24462,6 +24696,119 @@ theorem coalesceClassArrays_successfulProgram_wp_exact
     hremoveRight (by simp [hphysical]) (by simp [hinsert]) hoffsetsMapped
     hsizesMapped hfreeMapped hprevMapped hsecondMapped hfirstMapped hheadsMapped
     hnextMapped hpreviousMapped
+
+/-- A successful `coalesceClassArrays` result has a concrete source-ordered
+program whose closed WP decodes every returned metadata array. The count word
+still encodes the input count, exactly as at this helper boundary. -/
+theorem coalesceClassArrays_successfulProgram_wp_refines
+    {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (count left : Nat)
+    (result : CoalesceClassResult) (mem : Memory)
+    (hsuccess : coalesceClassArrays offsets sizes isFree prevFree second first
+      heads next previous count left = some result)
+    (layout : AllocateComposition.MetadataLayout offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets.length sizes.length isFree.length prevFree.length second.length
+      heads.length next.length previous.length)
+    (hoffsetsMapped : ∀ index, index < offsets.length → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizesMapped : ∀ index, index < sizes.length → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hfreeMapped : ∀ index, index < isFree.length →
+      mem.mapped (isFreeBase + index))
+    (hprevMapped : ∀ index, index < prevFree.length →
+      mem.mapped (prevFreeBase + index))
+    (hsecondMapped : ∀ index, index < second.length → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheadsMapped : ∀ index, index < heads.length → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < next.length → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previous.length → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree))
+    (hsecond : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hfirst : mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase first)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous))
+    (hcount : mem.EncodesAt Luffs.Memory.Scalar.u64 countBase
+      (BitVec.ofNat 64 count)) :
+    ∃ program,
+      ⊢@{IProp GF} Program.wp program mem (fun final =>
+        final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+            (InitializeProgram.encodeNats result.offsets) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+            (InitializeProgram.encodeNats result.sizes) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+            (AllocateProgram.encodeFlags result.isFree) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+            (AllocateProgram.encodeFlags result.prevFree) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u32 secondBase result.second ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 firstBase result.first ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+            (InitializeProgram.encodeNats result.heads) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+            (InitializeProgram.encodeNats result.next) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+            (InitializeProgram.encodeNats result.previous) ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 countBase
+            (BitVec.ofNat 64 count)) := by
+  obtain ⟨leftOffset, rightOffset, leftSize, rightSize, leftBin, rightBin,
+      withoutLeft, withoutRight, physical, mergedSize, mergedBin, inserted,
+      hleftOffset, hrightOffset, hleftSize, hrightSize, _, _, hremoveLeft,
+      hremoveRight, hphysical, _, _, hinsert, hresultOffsets, hresultSizes,
+      hresultFree, hresultPrev, _, hresultSecond, hresultFirst, hresultHeads,
+      hresultNext, hresultPrevious⟩ := coalesceClassArrays_result hsuccess
+  obtain ⟨_, _, _, _, physicalLeftOffset, physicalLeftSize, _,
+      hphysicalLeftOffset, hphysicalLeftSize, hphysicalRightOffset, _⟩ :=
+    coalescePhysicalArrays_result hphysical
+  have hphysicalLeftOffsetEq : physicalLeftOffset = leftOffset := by
+    rw [hleftOffset] at hphysicalLeftOffset
+    exact (Option.some.inj hphysicalLeftOffset).symm
+  have hphysicalLeftSizeEq : physicalLeftSize = leftSize := by
+    rw [hleftSize] at hphysicalLeftSize
+    exact (Option.some.inj hphysicalLeftSize).symm
+  subst physicalLeftOffset
+  subst physicalLeftSize
+  have hadjacent : leftOffset + leftSize = rightOffset := by
+    rw [hrightOffset] at hphysicalRightOffset
+    exact Option.some.inj hphysicalRightOffset
+  rw [← hadjacent] at hremoveRight
+  let program := coalesceClassProgram offsetsBase sizesBase isFreeBase
+    prevFreeBase secondBase firstBase headsBase nextBase previousBase offsets sizes
+    isFree prevFree second first heads next previous withoutLeft withoutRight count
+    left leftOffset leftSize rightSize leftBin rightBin mergedBin
+  refine ⟨program, ?_⟩
+  apply Program.wp_mono
+    (coalesceClassProgram_wp_refines_components (GF := GF) offsetsBase sizesBase
+      isFreeBase prevFreeBase countBase secondBase firstBase headsBase nextBase
+      previousBase offsets sizes isFree prevFree second first heads next previous
+      withoutLeft withoutRight physical inserted count left leftOffset leftSize
+      rightSize leftBin rightBin mergedBin mem hleftSize hrightSize hremoveLeft
+      hremoveRight hphysical hinsert layout hoffsetsMapped hsizesMapped hfreeMapped
+      hprevMapped hsecondMapped hfirstMapped hheadsMapped hnextMapped
+      hpreviousMapped hoffsets hsizes hfree hprev hsecond hfirst hheads hnext
+      hprevious hcount)
+  intro final hfinal
+  simpa [program, hresultOffsets, hresultSizes, hresultFree, hresultPrev,
+    hresultSecond, hresultFirst, hresultHeads, hresultNext,
+    hresultPrevious] using hfinal
 
 end DeallocateProgram
 

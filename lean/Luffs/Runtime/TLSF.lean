@@ -2,6 +2,8 @@ import Luffs.Allocator.TLSF.FreeList
 import Luffs.Allocator.TLSF.Bitmap
 import Luffs.Allocator.TLSF.Bins
 import Luffs.Allocator.TLSF.API
+import Luffs.Memory.Semantics
+import Luffs.Memory.Scalar
 
 set_option autoImplicit false
 
@@ -7307,6 +7309,228 @@ structure InitializeArraysResult where
   next : List Nat
   previous : List Nat
 deriving DecidableEq, Repr
+
+namespace InitializeProgram
+
+open Luffs.Memory
+
+/-- The target representation of a native `usize` metadata value. Luffs
+currently targets 64-bit Rust, so metadata indices use the little-endian u64
+codec also used by generated scalar loads and stores. -/
+def usizeBytes (value : Nat) : List Byte :=
+  Luffs.Memory.Scalar.encode64 (BitVec.ofNat 64 value)
+
+def u8Bytes (value : Nat) : List Byte :=
+  Luffs.Memory.Scalar.encode8 (BitVec.ofNat 8 value)
+
+def u32Bytes (value : Nat) : List Byte :=
+  Luffs.Memory.Scalar.encode32 (BitVec.ofNat 32 value)
+
+@[simp] theorem usizeBytes_length (value : Nat) :
+    (usizeBytes value).length = 8 := rfl
+
+@[simp] theorem u8Bytes_length (value : Nat) :
+    (u8Bytes value).length = 1 := rfl
+
+@[simp] theorem u32Bytes_length (value : Nat) :
+    (u32Bytes value).length = 4 := rfl
+
+/-- The six assignments in one iteration of `tlsf_initialize`'s physical
+metadata clearing loop, in source execution order. -/
+def clearPhysicalRow (offsetsBase sizesBase isFreeBase prevFreeBase
+    nextBase previousBase sentinel index : Nat) : Program :=
+  (Program.writeElement offsetsBase 8 index (usizeBytes 0)).then
+  ((Program.writeElement sizesBase 8 index (usizeBytes 0)).then
+  ((Program.writeElement isFreeBase 1 index (u8Bytes 0)).then
+  ((Program.writeElement prevFreeBase 1 index (u8Bytes 0)).then
+  ((Program.writeElement nextBase 8 index (usizeBytes sentinel)).then
+    (Program.writeElement previousBase 8 index (usizeBytes sentinel))))))
+
+theorem clearPhysicalRow_wp {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
+      sentinel index : Nat) (mem : Memory)
+    (hoffsets : ∀ i, i < 8 → mem.mapped (offsetsBase + index * 8 + i))
+    (hsizes : ∀ i, i < 8 → mem.mapped (sizesBase + index * 8 + i))
+    (hisFree : ∀ i, i < 1 → mem.mapped (isFreeBase + index + i))
+    (hprevFree : ∀ i, i < 1 → mem.mapped (prevFreeBase + index + i))
+    (hnext : ∀ i, i < 8 → mem.mapped (nextBase + index * 8 + i))
+    (hprevious : ∀ i, i < 8 → mem.mapped (previousBase + index * 8 + i)) :
+    ⊢@{IProp GF} Program.wp
+      (clearPhysicalRow offsetsBase sizesBase isFreeBase prevFreeBase
+        nextBase previousBase sentinel index) mem
+      (fun final ⇒ ∀ p, mem.mapped p → final.mapped p) := by
+  unfold clearPhysicalRow
+  apply Program.wp_then_preserves_mapped
+    (Program.writeElement_wp_preserves_mapped offsetsBase 8 index
+      (usizeBytes 0) mem (by simp) hoffsets)
+  intro mem1 hmem1
+  apply Program.wp_then_preserves_mapped
+    (Program.writeElement_wp_preserves_mapped sizesBase 8 index
+      (usizeBytes 0) mem1 (by simp) (by
+        intro i hi
+        exact hmem1 _ (hsizes i hi)))
+  intro mem2 hmem2
+  apply Program.wp_then_preserves_mapped
+    (Program.writeElement_wp_preserves_mapped isFreeBase 1 index
+      (u8Bytes 0) mem2 (by simp) (by
+        intro i hi
+        simpa using hmem2 _ (hisFree i hi)))
+  intro mem3 hmem3
+  apply Program.wp_then_preserves_mapped
+    (Program.writeElement_wp_preserves_mapped prevFreeBase 1 index
+      (u8Bytes 0) mem3 (by simp) (by
+        intro i hi
+        simpa using hmem3 _ (hprevFree i hi)))
+  intro mem4 hmem4
+  apply Program.wp_then_preserves_mapped
+    (Program.writeElement_wp_preserves_mapped nextBase 8 index
+      (usizeBytes sentinel) mem4 (by simp) (by
+        intro i hi
+        exact hmem4 _ (hnext i hi)))
+  intro mem5 hmem5
+  apply Program.wp_mono
+    (Program.writeElement_wp_preserves_mapped previousBase 8 index
+      (usizeBytes sentinel) mem5 (by simp) (by
+        intro i hi
+        exact hmem5 _ (hprevious i hi)))
+  intro final hfinal p hp
+  exact hfinal p (hmem5 p (hmem4 p (hmem3 p (hmem2 p (hmem1 p hp)))))
+
+def clearPhysical (offsetsBase sizesBase isFreeBase prevFreeBase
+    nextBase previousBase count sentinel : Nat) : Program :=
+  Program.forRange 0 count (clearPhysicalRow offsetsBase sizesBase isFreeBase
+    prevFreeBase nextBase previousBase sentinel)
+
+theorem clearPhysical_wp {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
+      count sentinel : Nat) (mem : Memory)
+    (hoffsets : ∀ index, index < count → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizes : ∀ index, index < count → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hisFree : ∀ index, index < count →
+      mem.mapped (isFreeBase + index))
+    (hprevFree : ∀ index, index < count →
+      mem.mapped (prevFreeBase + index))
+    (hnext : ∀ index, index < count → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hprevious : ∀ index, index < count → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i)) :
+    ⊢@{IProp GF} Program.wp
+      (clearPhysical offsetsBase sizesBase isFreeBase prevFreeBase nextBase
+        previousBase count sentinel) mem
+      (fun final ⇒ ∀ p, mem.mapped p → final.mapped p) := by
+  unfold clearPhysical
+  apply Program.wp_forRange_bounded _
+    (fun _ current ⇒ ∀ p, mem.mapped p → current.mapped p)
+    0 count mem (by simp)
+  intro index current _ hindex hinvariant
+  apply Program.wp_mono
+    (clearPhysicalRow_wp offsetsBase sizesBase isFreeBase prevFreeBase
+      nextBase previousBase sentinel index current
+      (fun i hi ⇒ hinvariant _ (hoffsets index (by omega) i hi))
+      (fun i hi ⇒ hinvariant _ (hsizes index (by omega) i hi))
+      (fun i hi ⇒ by simpa using hinvariant _ (hisFree index (by omega)))
+      (fun i hi ⇒ by simpa using hinvariant _ (hprevFree index (by omega)))
+      (fun i hi ⇒ hinvariant _ (hnext index (by omega) i hi))
+      (fun i hi ⇒ hinvariant _ (hprevious index (by omega) i hi)))
+  intro final hfinal p hp
+  exact hfinal p (hinvariant p hp)
+
+/-- The remaining clearing loops: zero every second-level bitmap word, zero
+the first-level bitmap, and initialize every free-list head to the physical
+metadata sentinel. -/
+def clearBins (secondBase firstBase headsBase secondCount headsCount sentinel :
+    Nat) : Program :=
+  (Program.fillElements secondBase 4 0 secondCount (u32Bytes 0)).then
+  ((Program.writeElement firstBase 8 0 (usizeBytes 0)).then
+    (Program.fillElements headsBase 8 0 headsCount (usizeBytes sentinel)))
+
+theorem clearBins_wp {GF : BundledGFunctors}
+    (secondBase firstBase headsBase secondCount headsCount sentinel : Nat)
+    (mem : Memory)
+    (hsecond : ∀ index, index < secondCount → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirst : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheads : ∀ index, index < headsCount → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i)) :
+    ⊢@{IProp GF} Program.wp
+      (clearBins secondBase firstBase headsBase secondCount headsCount sentinel)
+      mem (fun final ⇒ ∀ p, mem.mapped p → final.mapped p) := by
+  unfold clearBins
+  apply Program.wp_then_preserves_mapped
+    (Program.fillElements_wp secondBase 4 0 secondCount (u32Bytes 0) mem
+      (by simp) (by
+        intro index _ hindex i hi
+        exact hsecond index (by omega) i hi))
+  intro mem1 hmem1
+  apply Program.wp_then_preserves_mapped
+    (Program.writeElement_wp_preserves_mapped firstBase 8 0
+      (usizeBytes 0) mem1 (by simp) (by
+        intro i hi
+        simpa using hmem1 _ (hfirst i hi)))
+  intro mem2 hmem2
+  apply Program.wp_mono
+    (Program.fillElements_wp headsBase 8 0 headsCount (usizeBytes sentinel)
+      mem2 (by simp) (by
+        intro index _ hindex i hi
+        exact hmem2 _ (hmem1 _ (hheads index (by omega) i hi))))
+  intro final hfinal p hp
+  exact hfinal p (hmem2 p (hmem1 p hp))
+
+/-- All three bounded clearing loops in `tlsf_initialize`, including the
+scalar first-level bitmap reset. -/
+def clearMetadata (offsetsBase sizesBase isFreeBase prevFreeBase nextBase
+    previousBase secondBase firstBase headsBase physicalCount secondCount
+    headsCount sentinel : Nat) : Program :=
+  (clearPhysical offsetsBase sizesBase isFreeBase prevFreeBase nextBase
+    previousBase physicalCount sentinel).then
+  (clearBins secondBase firstBase headsBase secondCount headsCount sentinel)
+
+theorem clearMetadata_wp {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
+      secondBase firstBase headsBase physicalCount secondCount headsCount
+      sentinel : Nat) (mem : Memory)
+    (hoffsets : ∀ index, index < physicalCount → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizes : ∀ index, index < physicalCount → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hisFree : ∀ index, index < physicalCount →
+      mem.mapped (isFreeBase + index))
+    (hprevFree : ∀ index, index < physicalCount →
+      mem.mapped (prevFreeBase + index))
+    (hnext : ∀ index, index < physicalCount → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hprevious : ∀ index, index < physicalCount → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hsecond : ∀ index, index < secondCount → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirst : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheads : ∀ index, index < headsCount → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i)) :
+    ⊢@{IProp GF} Program.wp
+      (clearMetadata offsetsBase sizesBase isFreeBase prevFreeBase nextBase
+        previousBase secondBase firstBase headsBase physicalCount secondCount
+        headsCount sentinel) mem
+      (fun final ⇒ ∀ p, mem.mapped p → final.mapped p) := by
+  unfold clearMetadata
+  apply Program.wp_then_preserves_mapped
+    (clearPhysical_wp offsetsBase sizesBase isFreeBase prevFreeBase nextBase
+      previousBase physicalCount sentinel mem hoffsets hsizes hisFree hprevFree
+      hnext hprevious)
+  intro middle hmiddle
+  apply Program.wp_mono
+    (clearBins_wp secondBase firstBase headsBase secondCount headsCount sentinel
+      middle
+      (fun index hindex i hi ⇒
+        hmiddle _ (hsecond index hindex i hi))
+      (fun i hi ⇒ hmiddle _ (hfirst i hi))
+      (fun index hindex i hi ⇒
+        hmiddle _ (hheads index hindex i hi)))
+  intro final hfinal p hp
+  exact hfinal p (hmiddle p hp)
+
+end InitializeProgram
 
 /-- Exact pure state transformer for `tlsf_initialize`. All fixed-capacity
 metadata is reset before the single mmap-backed free block is inserted. -/

@@ -113,6 +113,12 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   avoids treating distinct metadata arrays as if they were unaffected by prior
   writes and is the sequencing rule used by the forthcoming initializer
   program.
+  The concrete TLSF initializer now uses those rules for all three bounded
+  clearing loops. Its byte-level program performs the six physical metadata
+  assignments in source order for every row, clears all second-level bitmap
+  words, clears the first-level bitmap, and fills every free-list head with
+  the sentinel. Closed Iris WPs derive every store from mapped native-element
+  ranges and prove that the complete clearing prefix cannot get stuck.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

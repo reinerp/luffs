@@ -2678,6 +2678,44 @@ theorem vecDropArrays_owns
   intro values contents _
   exact Luffs.Containers.Vec.drop_owns codec values contents hvecDrop
 
+/-- Operational adequacy of a successful `Vec` drop. The element codec, live
+length, and capacity affect logical ownership but not the allocator program:
+at run time every `Vec<T>` drop returns its backing block through the same
+verified TLSF deallocation trace as `Box<T>`. -/
+theorem vecDropArrays_successfulProgram_safe
+    {GF : Iris.BundledGFunctors.{0, 0, 0}} {α : Type} (_codec : Codec α)
+    {pool : Region} {blocks : List Block} {state : Bins.State}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {offset len capacity : Nat}
+    {result : Luffs.Runtime.TLSF.CoalesceClassResult} {mem : Memory}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hcountMax : count ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins { heads, next, previous } state)
+    (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
+    (hsuccess : boxDropU8Arrays offsets sizes isFree prevFree count second first
+      heads next previous offset = some result)
+    (hmem : Luffs.Runtime.TLSF.AllocateComposition.EncodedMetadata offsetsBase
+      sizesBase isFreeBase prevFreeBase countBase secondBase firstBase headsBase
+      nextBase previousBase offsets sizes isFree prevFree second first heads next
+      previous count mem) :
+    ∃ program, Program.Safe program mem ∧
+      ∀ final, Program.Exec program mem final →
+        Luffs.Runtime.TLSF.DeallocateProgram.EncodesResult offsetsBase sizesBase
+          isFreeBase prevFreeBase countBase secondBase firstBase headsBase
+          nextBase previousBase result final := by
+  exact boxDropU8Arrays_successfulProgram_safe (GF := GF) offsetsBase sizesBase
+    isFreeBase prevFreeBase countBase secondBase firstBase headsBase nextBase
+    previousBase hvalid hpoolMax hcountMax hsecond hfirst hbins hdisjoint
+    hphysical hsuccess hmem
+
 theorem vecDropU8Arrays_owns
     {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
     [G : Luffs.Memory.ByteContentsGS GF]

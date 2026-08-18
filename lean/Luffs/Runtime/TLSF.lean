@@ -14469,6 +14469,102 @@ structure EncodedMetadata
   previousEncoded : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
     (InitializeProgram.encodeNats previous)
 
+/-- The mmap-backed allocation pool does not overlap the allocator's concrete
+metadata. This is separate from `MetadataLayout`: the latter describes
+non-aliasing among metadata fields, while this contract permits arbitrary
+payload reads and writes without invalidating their encodings. -/
+structure PoolMetadataDisjoint
+    (pool : Region)
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase offsetsLength sizesLength isFreeLength
+      prevFreeLength secondLength headsLength nextLength previousLength : Nat) :
+    Prop where
+  physical : ∀ field, pool.disjoint
+    (physicalRegion offsetsBase sizesBase isFreeBase prevFreeBase countBase
+      offsetsLength sizesLength isFreeLength prevFreeLength field)
+  classes : ∀ field, pool.disjoint
+    (classRegion secondBase firstBase headsBase nextBase previousBase secondLength
+      headsLength nextLength previousLength field)
+
+/-- A payload write contained in the disjoint pool preserves the complete
+concrete allocator representation. Mappedness is unchanged by `writeBytes`;
+the pool/metadata separation contract preserves each encoded field. -/
+theorem EncodedMetadata.writeBytes_in_pool
+    {pool : Region}
+    {offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase writeBase : Nat}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {count : Nat} {mem : Memory}
+    {bytes : List Byte}
+    (hmem : EncodedMetadata offsetsBase sizesBase isFreeBase prevFreeBase
+      countBase secondBase firstBase headsBase nextBase previousBase offsets
+      sizes isFree prevFree second first heads next previous count mem)
+    (hpool : PoolMetadataDisjoint pool offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets.length sizes.length isFree.length prevFree.length second.length
+      heads.length next.length previous.length)
+    (hbase : pool.base ≤ writeBase)
+    (hend : writeBase + bytes.length ≤ pool.endAddr) :
+    EncodedMetadata offsetsBase sizesBase isFreeBase prevFreeBase countBase
+      secondBase firstBase headsBase nextBase previousBase offsets sizes isFree
+      prevFree second first heads next previous count
+      (mem.writeBytes writeBase bytes) := by
+  let written : Region := ⟨writeBase, bytes.length⟩
+  have hphysical (field : PhysicalField) : written.disjoint
+      (physicalRegion offsetsBase sizesBase isFreeBase prevFreeBase countBase
+        offsets.length sizes.length isFree.length prevFree.length field) :=
+    Region.subregion_disjoint_left hbase hend (hpool.physical field)
+  have hclass (field : ClassField) : written.disjoint
+      (classRegion secondBase firstBase headsBase nextBase previousBase
+        second.length heads.length next.length previous.length field) :=
+    Region.subregion_disjoint_left hbase hend (hpool.classes field)
+  constructor
+  · exact hmem.layout
+  · intro index hindex i hi
+    exact Memory.mapped_writeBytes (hmem.offsetsMapped index hindex i hi)
+  · intro index hindex i hi
+    exact Memory.mapped_writeBytes (hmem.sizesMapped index hindex i hi)
+  · intro index hindex
+    exact Memory.mapped_writeBytes (hmem.freeMapped index hindex)
+  · intro index hindex
+    exact Memory.mapped_writeBytes (hmem.prevMapped index hindex)
+  · intro i hi
+    exact Memory.mapped_writeBytes (hmem.countMapped i hi)
+  · intro index hindex i hi
+    exact Memory.mapped_writeBytes (hmem.secondMapped index hindex i hi)
+  · intro i hi
+    exact Memory.mapped_writeBytes (hmem.firstMapped i hi)
+  · intro index hindex i hi
+    exact Memory.mapped_writeBytes (hmem.headsMapped index hindex i hi)
+  · intro index hindex i hi
+    exact Memory.mapped_writeBytes (hmem.nextMapped index hindex i hi)
+  · intro index hindex i hi
+    exact Memory.mapped_writeBytes (hmem.previousMapped index hindex i hi)
+  · apply hmem.offsetsEncoded.writeBytes_of_disjoint
+    simpa [written, physicalRegion, InitializeProgram.encodeNats] using
+      hphysical .offsets
+  · apply hmem.sizesEncoded.writeBytes_of_disjoint
+    simpa [written, physicalRegion, InitializeProgram.encodeNats] using
+      hphysical .sizes
+  · apply hmem.freeEncoded.writeBytes_of_disjoint
+    simpa [written, physicalRegion, AllocateProgram.encodeFlags] using
+      hphysical .isFree
+  · apply hmem.prevEncoded.writeBytes_of_disjoint
+    simpa [written, physicalRegion, AllocateProgram.encodeFlags] using
+      hphysical .prevFree
+  · exact hmem.countEncoded.writeBytes_of_disjoint (hphysical .count)
+  · exact hmem.secondEncoded.writeBytes_of_disjoint (hclass .second)
+  · exact hmem.firstEncoded.writeBytes_of_disjoint (hclass .first)
+  · apply hmem.headsEncoded.writeBytes_of_disjoint
+    simpa [written, classRegion, InitializeProgram.encodeNats] using
+      hclass .heads
+  · apply hmem.nextEncoded.writeBytes_of_disjoint
+    simpa [written, classRegion, InitializeProgram.encodeNats] using hclass .next
+  · apply hmem.previousEncoded.writeBytes_of_disjoint
+    simpa [written, classRegion, InitializeProgram.encodeNats] using
+      hclass .previous
+
 theorem MetadataLayout.cross_symm
     {offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
       headsBase nextBase previousBase offsetsLength sizesLength isFreeLength

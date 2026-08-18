@@ -45,6 +45,18 @@ theorem disjoint_symmetric {a b : Region} :
     a.disjoint b ↔ b.disjoint a := by
   simp only [Region.disjoint, or_comm]
 
+/-- Disjointness is inherited by a subregion of the left-hand region. This is
+the arithmetic bridge used when an allocation payload write is known to stay
+inside a pool that is disjoint from allocator metadata. -/
+theorem Region.subregion_disjoint_left {inner outer other : Region}
+    (hbase : outer.base ≤ inner.base)
+    (hend : inner.endAddr ≤ outer.endAddr)
+    (hdisjoint : outer.disjoint other) : inner.disjoint other := by
+  unfold Region.disjoint Region.endAddr at hdisjoint ⊢
+  rcases hdisjoint with hbefore | hafter
+  · exact Or.inl (Nat.le_trans hend hbefore)
+  · exact Or.inr (Nat.le_trans hafter hbase)
+
 theorem not_contains_of_disjoint {a b : Region} (h : a.disjoint b)
     {p : Addr} (hp : a.contains p) : ¬b.contains p := by
   simp only [Region.disjoint, Region.endAddr] at h

@@ -1160,8 +1160,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   That insertion helper now has its own exact trace: it loads the old bin head,
   performs the intrusive-link stores, loads and stores the second-level bitmap,
   then loads and stores the first-level bitmap. Its Iris WP is proved exactly
-  equal to the existing `insertClassWrites` transformer. Composing this trace
-  into the complete split transaction remains next.
+  equal to the existing `insertClassWrites` transformer. This trace is now
+  composed into the complete split transaction. Candidate removal, physical
+  header reads and shifting, and remainder insertion form one source-ordered
+  program whose final Iris postcondition decodes all ten allocator metadata
+  fields. Selecting this witness from the public `allocateArrays` branch
+  theorem remains next.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

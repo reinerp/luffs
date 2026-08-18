@@ -17,6 +17,23 @@ def Memory.regionMapped (mem : Memory) (r : Region) : Prop :=
 def Memory.regionUnmapped (mem : Memory) (r : Region) : Prop :=
   ∀ p, r.contains p -> mem p = none
 
+/-- Two memories have identical bytes throughout a region. This is the
+semantic frame relation used to show allocator metadata programs cannot alter
+container payloads. -/
+def Memory.AgreesOn (r : Region) (left right : Memory) : Prop :=
+  ∀ p, r.contains p → right p = left p
+
+@[refl] theorem Memory.AgreesOn.refl (r : Region) (mem : Memory) :
+    mem.AgreesOn r mem := by
+  intro _ _
+  rfl
+
+theorem Memory.AgreesOn.trans {r : Region} {first middle last : Memory}
+    (hfirst : first.AgreesOn r middle) (hlast : middle.AgreesOn r last) :
+    first.AgreesOn r last := by
+  intro p hp
+  exact (hlast p hp).trans (hfirst p hp)
+
 def Memory.write (mem : Memory) (p : Addr) (v : Byte) : Memory :=
   fun q => if q = p then some v else mem q
 
@@ -464,6 +481,27 @@ theorem Program.exec_then_iff (first tail : Program) (before after : Memory) :
   · rintro ⟨middle, hfirst, htail⟩
     exact Program.exec_then hfirst htail
 
+/-- A closed effect program frames a region when every one of its executions
+leaves all bytes in that region unchanged. -/
+def Program.PreservesRegion (program : Program) (region : Region) : Prop :=
+  ∀ ⦃before after⦄, Program.Exec program before after →
+    before.AgreesOn region after
+
+@[simp] theorem Program.done_preservesRegion (region : Region) :
+    Program.done.PreservesRegion region := by
+  intro before after hexec
+  cases hexec
+  exact Memory.AgreesOn.refl region before
+
+theorem Program.PreservesRegion.then {first tail : Program} {region : Region}
+    (hfirst : first.PreservesRegion region)
+    (htail : tail.PreservesRegion region) :
+    (first.then tail).PreservesRegion region := by
+  intro before after hexec
+  obtain ⟨middle, hfirstExec, htailExec⟩ :=
+    (Program.exec_then_iff first tail before after).1 hexec
+  exact (hfirst hfirstExec).trans (htail htailExec)
+
 def Program.Safe (program : Program) (mem : Memory) : Prop :=
   ∃ final, Program.Exec program mem final
 
@@ -766,6 +804,17 @@ def Program.readBytes (base : Addr) : Nat → Program
   | 0 => .done
   | count + 1 => .call (.load base) (fun _ => readBytes (base + 1) count)
 
+theorem Program.readBytes_preservesRegion (base count : Nat) (region : Region) :
+    (Program.readBytes base count).PreservesRegion region := by
+  induction count generalizing base with
+  | zero => simp [Program.readBytes]
+  | succ count ih =>
+      intro before after hexec
+      cases hexec with
+      | call hload htail =>
+          cases hload
+          exact ih (base := base + 1) htail
+
 @[simp] theorem Program.readBytes_doesNotUnmap (base count : Nat) :
     (Program.readBytes base count).DoesNotUnmap := by
   induction count generalizing base with
@@ -936,6 +985,38 @@ def Program.writeBytes (base : Addr) : List Byte → Program
   | [] => .done
   | value :: rest =>
       .call (.store base value) (fun _ => writeBytes (base + 1) rest)
+
+theorem Program.writeBytes_preservesRegion_of_disjoint
+    (base : Addr) (values : List Byte) (region : Region)
+    (hdisjoint : (Region.mk base values.length).disjoint region) :
+    (Program.writeBytes base values).PreservesRegion region := by
+  induction values generalizing base with
+  | nil => simp [Program.writeBytes]
+  | cons value rest ih =>
+      intro before after hexec
+      cases hexec with
+      | call hstore htail =>
+          cases hstore with
+          | store hold =>
+              have hbaseInside :
+                  (Region.mk base (value :: rest).length).contains base := by
+                exact contains_offset _ 0 (by simp)
+              have hbaseOutside : ¬region.contains base :=
+                not_contains_of_disjoint hdisjoint hbaseInside
+              have hhead : before.AgreesOn region (before.write base value) := by
+                intro p hp
+                have hne : p ≠ base := by
+                  intro heq
+                  exact hbaseOutside (heq ▸ hp)
+                simp [Memory.write, hne]
+              have htailDisjoint :
+                  (Region.mk (base + 1) rest.length).disjoint region := by
+                apply Region.subregion_disjoint_left
+                    (outer := Region.mk base (value :: rest).length)
+                · simp
+                · simp [Region.endAddr, Nat.add_assoc, Nat.add_comm 1]
+                · exact hdisjoint
+              exact hhead.trans (ih (base := base + 1) htailDisjoint htail)
 
 @[simp] theorem Program.writeBytes_doesNotUnmap (base : Addr)
     (values : List Byte) : (Program.writeBytes base values).DoesNotUnmap := by
@@ -1142,6 +1223,13 @@ structure ElementWrite where
 def ElementWrite.program (write : ElementWrite) : Program :=
   Program.writeElement write.base write.width write.index write.bytes
 
+theorem ElementWrite.program_preservesRegion_of_disjoint
+    (write : ElementWrite) (region : Region)
+    (hdisjoint : (Region.mk (write.base + write.index * write.width)
+      write.bytes.length).disjoint region) :
+    write.program.PreservesRegion region := by
+  exact Program.writeBytes_preservesRegion_of_disjoint _ _ _ hdisjoint
+
 def ElementWrite.apply (write : ElementWrite) (mem : Memory) : Memory :=
   mem.writeBytes (write.base + write.index * write.width) write.bytes
 
@@ -1162,6 +1250,20 @@ execution order. -/
 def Program.writeElements : List ElementWrite → Program
   | [] => .done
   | write :: rest => write.program.then (Program.writeElements rest)
+
+theorem Program.writeElements_preservesRegion_of_disjoint
+    (writes : List ElementWrite) (region : Region)
+    (hdisjoint : ∀ write, write ∈ writes →
+      (Region.mk (write.base + write.index * write.width)
+        write.bytes.length).disjoint region) :
+    (Program.writeElements writes).PreservesRegion region := by
+  induction writes with
+  | nil => simp [Program.writeElements]
+  | cons write rest ih =>
+      apply Program.PreservesRegion.then
+      · exact write.program_preservesRegion_of_disjoint region
+          (hdisjoint write (by simp))
+      · exact ih (fun tail htail => hdisjoint tail (by simp [htail]))
 
 @[simp] theorem Program.writeElements_doesNotUnmap (writes : List ElementWrite) :
     (Program.writeElements writes).DoesNotUnmap := by

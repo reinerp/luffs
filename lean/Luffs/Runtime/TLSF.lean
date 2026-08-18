@@ -6534,6 +6534,79 @@ theorem allocateArrays_success_branches
         hremainderBytes, _, _, _, _⟩
       exact Or.inr ⟨hsmall, hremainderOffset, hremainderBytes, hresult⟩
 
+/-- Physical allocation retains the capacities of all four header arrays in
+both its split and whole-block branches. -/
+theorem allocatePhysicalArrays_preserves_lengths
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count block request : Nat} {result : AllocatePhysicalResult}
+    (hsuccess : allocatePhysicalArrays offsets sizes isFree prevFree count block
+      request = some result) :
+    result.offsets.length = offsets.length ∧
+      result.sizes.length = sizes.length ∧
+      result.isFree.length = isFree.length ∧
+      result.prevFree.length = prevFree.length := by
+  obtain ⟨_, _, _, _, _, hblock, _, selectedOffset, selectedSize, _, _, _, _, _,
+      hcase⟩ := allocatePhysicalArrays_result hsuccess
+  rcases hcase with hsplit | hwhole
+  · obtain ⟨_, hcapOffsets, hcapSizes, hcapFree, hcapPrev, _, _, _, _,
+      hoffsets, hsizes, hfree, hprev⟩ := hsplit
+    rw [hoffsets, hsizes, hfree, hprev,
+      expandActive_length offsets count (block + 1) _ (by omega) hcapOffsets,
+      expandActive_length (sizes.set block request) count (block + 1) _
+        (by omega) (by simpa using hcapSizes),
+      expandActive_length (isFree.set block 0) count (block + 1) _
+        (by omega) (by simpa using hcapFree),
+      allocateSplitPrevFree_length prevFree count block (by omega) hcapPrev]
+    simp
+  · obtain ⟨_, _, _, _, _, hoffsets, hsizes, hfree, hprev⟩ := hwhole
+    rw [hoffsets, hsizes, hfree, hprev]
+    exact ⟨rfl, rfl, List.length_set,
+      allocateWholePrevFree_length prevFree count block⟩
+
+/-- Public allocation mutates entries and may increase the active physical
+count, but all concrete metadata arrays retain their fixed capacities. -/
+theorem allocateArrays_preserves_metadata_lengths
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count : Nat} {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {request : Nat}
+    {result : AllocateArraysResult}
+    (hsuccess : allocateArrays offsets sizes isFree prevFree count second first
+      heads next previous request = some result) :
+    result.offsets.length = offsets.length ∧
+      result.sizes.length = sizes.length ∧
+      result.isFree.length = isFree.length ∧
+      result.prevFree.length = prevFree.length ∧
+      result.second.length = second.length ∧
+      result.heads.length = heads.length ∧
+      result.next.length = next.length ∧
+      result.previous.length = previous.length := by
+  obtain ⟨_, _, _, _, _, _, removed, physical, htake, hphysical, _, _,
+      hbranch⟩ := allocateArrays_success_branches hsuccess
+  have hremovedMetadata :=
+    takeCandidateClassArrays_preserves_metadata_lengths htake
+  have hremovedSecond := takeCandidateClassArrays_preserves_second_length htake
+  rcases hbranch with hsplit | hwhole
+  · obtain ⟨_, hremainderOffset, _, inserted, hinsert, hresult⟩ := hsplit
+    have hphysicalLengths := allocatePhysicalArrays_preserves_lengths hphysical
+    have hinsertMetadata := insertClassArrays_preserves_metadata_lengths hinsert
+    have hinsertResult := insertClassArrays_result hinsert
+    subst result
+    simp only
+    exact ⟨hphysicalLengths.1, hphysicalLengths.2.1,
+      hphysicalLengths.2.2.1, hphysicalLengths.2.2.2,
+      (congrArg List.length hinsertResult.2.2.2.2.2.1).trans
+        (by simpa using hremovedSecond),
+      hinsertMetadata.1.trans hremovedMetadata.1,
+      hinsertMetadata.2.1.trans hremovedMetadata.2.1,
+      hinsertMetadata.2.2.trans hremovedMetadata.2.2⟩
+  · obtain ⟨_, _, _, hresult⟩ := hwhole
+    have hphysicalLengths := allocatePhysicalArrays_preserves_lengths hphysical
+    subst result
+    simp only
+    exact ⟨hphysicalLengths.1, hphysicalLengths.2.1,
+      hphysicalLengths.2.2.1, hphysicalLengths.2.2.2, hremovedSecond,
+      hremovedMetadata.1, hremovedMetadata.2.1, hremovedMetadata.2.2⟩
+
 theorem allocateArrays_count_le_offsets
     {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
     {count : Nat} {second : List (BitVec 32)} {first : BitVec 64}
@@ -19735,6 +19808,73 @@ theorem allocateArrays_successfulProgram_safe_of_encoded_metadata
       hmem.previousEncoded hmem.offsetsEncoded hmem.sizesEncoded hmem.freeEncoded
       hmem.prevEncoded hmem.countEncoded
   exact ⟨program, hprogram, hprogram.doesNotUnmap, Program.wp_adequacy hwp⟩
+
+/-- Repackage the exact postcondition of a successful allocation execution as
+the metadata precondition for a following transaction. Fixed-capacity lengths
+preserve the layout, while no-unmap execution preserves mappedness. -/
+theorem EncodesAllocateArraysResult.toEncodedMetadata
+    {offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {count request : Nat}
+    {result : AllocateArraysResult} {program : Program} {before after : Memory}
+    (hinput : EncodedMetadata offsetsBase sizesBase isFreeBase prevFreeBase
+      countBase secondBase firstBase headsBase nextBase previousBase offsets
+      sizes isFree prevFree second first heads next previous count before)
+    (hsuccess : allocateArrays offsets sizes isFree prevFree count second first
+      heads next previous request = some result)
+    (hencoded : EncodesAllocateArraysResult offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      result after)
+    (hnoUnmap : program.DoesNotUnmap)
+    (hexec : Program.Exec program before after) :
+    EncodedMetadata offsetsBase sizesBase isFreeBase prevFreeBase countBase
+      secondBase firstBase headsBase nextBase previousBase result.offsets
+      result.sizes result.isFree result.prevFree result.second result.first
+      result.heads result.next result.previous result.count after := by
+  have hlens := allocateArrays_preserves_metadata_lengths hsuccess
+  have hmapped := hnoUnmap.exec_mapped_preserved hexec
+  rcases hencoded with ⟨hoffsets, hsizes, hfree, hprev, hcount, hsecond,
+    hfirst, hheads, hnext, hprevious⟩
+  constructor
+  · simpa [hlens.1, hlens.2.1, hlens.2.2.1, hlens.2.2.2.1,
+      hlens.2.2.2.2.1, hlens.2.2.2.2.2.1, hlens.2.2.2.2.2.2.1,
+      hlens.2.2.2.2.2.2.2] using hinput.layout
+  · intro index hindex i hi
+    exact hmapped _ (hinput.offsetsMapped index (by simpa [hlens.1] using hindex) i hi)
+  · intro index hindex i hi
+    exact hmapped _ (hinput.sizesMapped index (by simpa [hlens.2.1] using hindex) i hi)
+  · intro index hindex
+    exact hmapped _ (hinput.freeMapped index (by simpa [hlens.2.2.1] using hindex))
+  · intro index hindex
+    exact hmapped _ (hinput.prevMapped index (by simpa [hlens.2.2.2.1] using hindex))
+  · intro i hi
+    exact hmapped _ (hinput.countMapped i hi)
+  · intro index hindex i hi
+    exact hmapped _ (hinput.secondMapped index
+      (by simpa [hlens.2.2.2.2.1] using hindex) i hi)
+  · intro i hi
+    exact hmapped _ (hinput.firstMapped i hi)
+  · intro index hindex i hi
+    exact hmapped _ (hinput.headsMapped index
+      (by simpa [hlens.2.2.2.2.2.1] using hindex) i hi)
+  · intro index hindex i hi
+    exact hmapped _ (hinput.nextMapped index
+      (by simpa [hlens.2.2.2.2.2.2.1] using hindex) i hi)
+  · intro index hindex i hi
+    exact hmapped _ (hinput.previousMapped index
+      (by simpa [hlens.2.2.2.2.2.2.2] using hindex) i hi)
+  · exact hoffsets
+  · exact hsizes
+  · exact hfree
+  · exact hprev
+  · exact hcount
+  · exact hsecond
+  · exact hfirst
+  · exact hheads
+  · exact hnext
+  · exact hprevious
 
 end AllocateComposition
 

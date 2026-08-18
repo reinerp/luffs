@@ -539,6 +539,19 @@ fn parse(source: &str) -> Result<Module, String> {
     if module.tlsf_remove_models.is_empty() {
         module.tlsf_remove_class_models.clear();
     }
+    if module.tlsf_classify_request_models.is_empty()
+        || module.tlsf_find_nonempty_class_models.is_empty()
+        || module.tlsf_take_candidate_class_models.is_empty()
+        || module.tlsf_allocate_physical_models.is_empty()
+        || module.tlsf_classify_size_models.is_empty()
+    {
+        module.tlsf_allocate_models.clear();
+    }
+    if module.tlsf_allocate_models.is_empty() {
+        module.tlsf_box_new_models.clear();
+        module.tlsf_vec_new_models.clear();
+        module.tlsf_vec_grow_models.clear();
+    }
     if module.tlsf_mark_free_models.is_empty()
         || module.tlsf_classify_size_models.is_empty()
         || module.tlsf_insert_class_models.is_empty()
@@ -3990,12 +4003,12 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
     }
     for model in &module.tlsf_allocate_models {
         out.push_str(&format!(
-            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (request : Nat) : Option Luffs.Runtime.TLSF.AllocateArraysResult :=\n  {} offsets sizes is_free prev_free count second first heads next previous request\n\n",
-            model.name, model.refines
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count : Nat) (second : List (BitVec 32)) (first : BitVec 64) (heads next previous : List Nat) (request : Nat) : Option Luffs.Runtime.TLSF.AllocateArraysResult := do\n  if request = 0 ∨ request % Luffs.Allocator.TLSF.alignment ≠ 0 then none\n  let start_bin ← tlsf_classify_request_model request\n  let found_bin ← tlsf_find_nonempty_class_model second first\n    (start_bin / Luffs.Allocator.TLSF.secondLevelCount) (start_bin % Luffs.Allocator.TLSF.secondLevelCount)\n  if found_bin ≥ heads.length then none\n  let selected_offset ← heads[found_bin]?\n  if selected_offset ≥ next.length ∨ selected_offset ≥ previous.length ∨\n      count = 0 ∨ count > offsets.length ∨ count > sizes.length ∨\n      count > is_free.length ∨ count > prev_free.length then none\n  let block ← Luffs.Runtime.TLSF.findOffsetIndex offsets count selected_offset\n  let selected_size ← sizes[block]?\n  if is_free[block]? = some 0 ∨ selected_size < request then none\n  let remainder_size := selected_size - request\n  let split := Luffs.Allocator.TLSF.minimumBlockBytes ≤ remainder_size\n  let remainder_offset := selected_offset + request\n  if split ∧ (count ≥ offsets.length ∨ count ≥ sizes.length ∨\n      count ≥ is_free.length ∨ count ≥ prev_free.length) then none\n  if split ∧ (remainder_offset ≥ 2 ^ 64 ∨ remainder_offset ≥ next.length ∨\n      remainder_offset ≥ previous.length) then none\n  let remainder_bin ← if split then tlsf_classify_size_model remainder_size else some 0\n  if split ∧ (remainder_bin ≥ heads.length ∨\n      remainder_bin / Luffs.Allocator.TLSF.secondLevelCount ≥ second.length) then none\n  let removed ← tlsf_take_candidate_class_model second first heads next previous\n    (start_bin / Luffs.Allocator.TLSF.secondLevelCount) (start_bin % Luffs.Allocator.TLSF.secondLevelCount)\n  let physical ← tlsf_allocate_physical_model offsets sizes is_free prev_free count block request\n  Luffs.Runtime.TLSF.finishAllocateArrays removed physical split remainder_bin remainder_offset\n\n",
+            model.name
         ));
         out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
-            model.name, model.name, model.refines
+            "theorem {}_refines : {}_model = {} := by\n  unfold {}_model tlsf_find_nonempty_class_model\n  rw [tlsf_classify_request_refines, tlsf_classify_size_refines, tlsf_take_candidate_class_refines, tlsf_allocate_physical_refines]\n  rfl\n\n",
+            model.name, model.name, model.refines, model.name
         ));
     }
     for model in &module.tlsf_box_new_models {
@@ -4581,6 +4594,15 @@ mod tests {
         ));
         assert!(generated.contains(
             "let allocated ← tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous 8"
+        ));
+        assert!(generated.contains(
+            "let removed ← tlsf_take_candidate_class_model second first heads next previous"
+        ));
+        assert!(generated.contains(
+            "let physical ← tlsf_allocate_physical_model offsets sizes is_free prev_free count block request"
+        ));
+        assert!(!generated.contains(
+            "Option Luffs.Runtime.TLSF.AllocateArraysResult :=\n  Luffs.Runtime.TLSF.allocateArrays"
         ));
         assert!(generated.contains(
             "theorem tlsf_box_drop_u8_refines : tlsf_box_drop_u8_model = Luffs.Runtime.Containers.boxDropArrays"

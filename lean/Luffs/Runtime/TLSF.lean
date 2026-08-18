@@ -17609,6 +17609,74 @@ theorem allocateSplitAndInsertFromCandidateInterleavedProgram_wp_refines
       hphysical.1 hphysical.2.1 hphysical.2.2.1 hphysical.2.2.2.1
       hphysical.2.2.2.2
 
+/-- Source-ordered header reads performed by `tlsf_allocate_physical` after its
+shape checks and before either mutation branch. -/
+def allocatePhysicalHeaderReadProgram
+    (countBase offsetsBase sizesBase isFreeBase block : Nat) : Program :=
+  (Program.readBytes countBase 8).then
+  ((Program.readBytes (isFreeBase + block) 1).then
+  ((Program.readBytes (offsetsBase + block * 8) 8).then
+    (Program.readBytes (sizesBase + block * 8) 8)))
+
+theorem allocatePhysicalHeaderReadProgram_wp {GF : BundledGFunctors}
+    (countBase offsetsBase sizesBase isFreeBase block : Nat) (mem : Memory)
+    (hcount : ∀ i, i < 8 → mem.mapped (countBase + i))
+    (hfree : mem.mapped (isFreeBase + block))
+    (hoffsets : ∀ i, i < 8 → mem.mapped (offsetsBase + block * 8 + i))
+    (hsizes : ∀ i, i < 8 → mem.mapped (sizesBase + block * 8 + i)) :
+    ⊢@{IProp GF} Program.wp
+      (allocatePhysicalHeaderReadProgram countBase offsetsBase sizesBase
+        isFreeBase block) mem (fun final => final = mem) := by
+  unfold allocatePhysicalHeaderReadProgram
+  apply Program.wp_then (Program.readBytes_wp countBase 8 mem hcount)
+  intro middle hmiddle
+  subst middle
+  apply Program.wp_then
+    (Program.readBytes_wp (isFreeBase + block) 1 mem (by
+      intro i hi
+      have : i = 0 := by omega
+      subst i
+      simpa using hfree))
+  intro middle hmiddle
+  subst middle
+  apply Program.wp_then
+    (Program.readBytes_wp (offsetsBase + block * 8) 8 mem hoffsets)
+  intro middle hmiddle
+  subst middle
+  exact Program.readBytes_wp (sizesBase + block * 8) 8 mem hsizes
+
+def allocatePhysicalWholeInterleavedProgram
+    (countBase offsetsBase sizesBase isFreeBase prevFreeBase block count : Nat) :
+    Program :=
+  (allocatePhysicalHeaderReadProgram countBase offsetsBase sizesBase isFreeBase
+    block).then
+  (AllocateProgram.allocateWholeProgram isFreeBase prevFreeBase block count)
+
+theorem allocatePhysicalWholeInterleavedProgram_wp_exact
+    {GF : BundledGFunctors}
+    (countBase offsetsBase sizesBase isFreeBase prevFreeBase block count : Nat)
+    (mem : Memory)
+    (hcount : ∀ i, i < 8 → mem.mapped (countBase + i))
+    (hfree : mem.mapped (isFreeBase + block))
+    (hoffsets : ∀ i, i < 8 → mem.mapped (offsetsBase + block * 8 + i))
+    (hsizes : ∀ i, i < 8 → mem.mapped (sizesBase + block * 8 + i))
+    (hprev : block + 1 < count →
+      mem.mapped (prevFreeBase + (block + 1))) :
+    ⊢@{IProp GF} Program.wp
+      (allocatePhysicalWholeInterleavedProgram countBase offsetsBase sizesBase
+        isFreeBase prevFreeBase block count) mem
+      (fun final => final = ElementWrite.applyAll
+        (AllocateProgram.allocateWholeWrites isFreeBase prevFreeBase block count)
+        mem) := by
+  unfold allocatePhysicalWholeInterleavedProgram
+  apply Program.wp_then
+    (allocatePhysicalHeaderReadProgram_wp (GF := GF) countBase offsetsBase
+      sizesBase isFreeBase block mem hcount hfree hoffsets hsizes)
+  intro middle hmiddle
+  subst middle
+  exact AllocateProgram.allocateWholeProgram_wp_exact isFreeBase prevFreeBase
+    block count mem hfree hprev
+
 end AllocateComposition
 
 /-- Exact pure state transformer for `tlsf_initialize`. All fixed-capacity

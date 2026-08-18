@@ -1178,6 +1178,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   prefix composes in front of it. The resulting closed Iris WP covers the
   successful public allocation path through all helper-local reads and stores
   and establishes the canonical ten-field result encoding.
+  Operational deallocation coverage now begins with `tlsf_mark_free`. Its
+  source-ordered program reads the current allocation flag, returned offset,
+  and returned size before either mutation, then stores the free flag and the
+  conditional successor boundary tag. The exact Iris WP is lifted to the pure
+  `markFreeArrays` result, proving the two final encoded flag arrays rather
+  than merely asserting that the stores are mapped.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

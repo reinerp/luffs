@@ -1798,6 +1798,47 @@ theorem vecSlice_owns {GF : Iris.BundledGFunctors}
     Luffs.Containers.Vec.mutSlice_split codec pool handle values hlen
       ⟨begin, end_⟩ hvalid hslice⟩
 
+/-- A successful encoded slice is ready for the native mutable-reference
+lowering and carries exactly the exclusive Iris borrow that justifies it.
+The theorem leaves the target's native-byte function abstract, so concrete
+scalar instantiations need only supply their representation theorem. -/
+theorem vecSlice_native_mut_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [Luffs.Memory.ByteContentsGS GF]
+    {α : Type} {codec : Codec α} {nativeBytes : α → List Byte}
+    {pool : Region} {storage selectedBytes : List Byte}
+    {handle : Luffs.Containers.Vec.Handle} {values : List α}
+    {begin end_ : Nat} {trailing : List Byte}
+    (hpool : codec.align ∣ pool.base)
+    (hcodec : Luffs.Containers.Vec.NativeAlignmentCompatible codec)
+    (hnative : ∀ value, codec.encode value = nativeBytes value)
+    (hblock : handle.block.aligned)
+    (hvalid : Luffs.Containers.Vec.Valid codec handle)
+    (hlen : values.length = handle.len)
+    (hstorage : storage.drop handle.block.offset =
+      Luffs.Containers.Vec.encodeValues codec values ++ trailing)
+    (hsuccess : vecSlice codec storage handle.block.offset handle.len
+      begin end_ = some selectedBytes) :
+    let selected : Luffs.Containers.Vec.SliceHandle := ⟨begin, end_⟩
+    let selectedValues := Luffs.Containers.Vec.sliceValues values selected
+    Luffs.Containers.Vec.NativeSliceReady codec nativeBytes
+        (Luffs.Containers.Vec.sliceRegion codec pool handle selected)
+        selectedBytes selectedValues ∧
+      (Luffs.Containers.Vec.Owns (GF := GF) codec pool handle values ⊣⊢
+        Luffs.Containers.Vec.MutSliceOwns codec pool handle selected
+            selectedValues ∗
+          Luffs.Containers.Vec.MutSliceRest codec pool handle selected
+            (values.take begin) (values.drop end_)) := by
+  dsimp only
+  have hresult := vecSlice_result hsuccess
+  have howned := vecSlice_owns (GF := GF) (pool := pool)
+    hvalid hlen hstorage hsuccess
+  refine ⟨?_, howned.2⟩
+  apply Luffs.Containers.Vec.slice_native_ready hpool hcodec hnative hblock
+  · simp [Luffs.Containers.Vec.sliceValues, List.length_take,
+      List.length_drop]
+    omega
+  · exact howned.1
+
 /-- The single width-parameterized Luffs slice body inherits the generic Iris
 ownership theorem whenever its width argument is the proved codec size. -/
 theorem vecSliceBytes_owns {GF : Iris.BundledGFunctors}

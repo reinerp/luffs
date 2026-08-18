@@ -66,6 +66,30 @@ allocation may be exposed as a Rust `&[T]`. -/
 def NativeAlignmentCompatible {α : Type} (codec : Codec α) : Prop :=
   codec.align ∣ alignment ∧ codec.align ∣ codec.size
 
+/-- All conditions on the pure layout of a byte range needed to view it as a
+native Rust slice. Ownership and borrow exclusivity remain separate Iris
+resources: this predicate records alignment, element count, and the fact that
+the bytes are native object representations rather than merely a reversible
+serialization. -/
+def NativeSliceReady {α : Type} (codec : Codec α)
+    (nativeBytes : α → List Byte) (region : Region) (bytes : List Byte)
+    (values : List α) : Prop :=
+  codec.align ∣ region.base ∧
+    region.bytes = values.length * codec.size ∧
+    bytes = values.flatMap nativeBytes
+
+theorem encodeValues_eq_nativeBytes {α : Type} (codec : Codec α)
+    (nativeBytes : α → List Byte)
+    (hnative : ∀ value, codec.encode value = nativeBytes value)
+    (values : List α) :
+    encodeValues codec values = values.flatMap nativeBytes := by
+  induction values with
+  | nil => rfl
+  | cons value rest ih =>
+      simp only [encodeValues, List.flatMap_cons]
+      rw [hnative value]
+      simpa [encodeValues] using congrArg (nativeBytes value ++ ·) ih
+
 /-- Every element address in an aligned TLSF block has the codec's native
 alignment. The mmap boundary supplies `hpool`; TLSF preserves `block.aligned`;
 and `NativeAlignmentCompatible` covers both the block offset and element
@@ -94,6 +118,24 @@ def sliceRegion {α : Type} (codec : Codec α) (pool : Region)
     (handle : Handle) (slice : SliceHandle) : Region :=
   { base := (handle.block.region pool).base + slice.begin * codec.size
     bytes := (slice.end - slice.begin) * codec.size }
+
+theorem slice_native_ready {α : Type} {codec : Codec α}
+    {nativeBytes : α → List Byte} {pool : Region} {handle : Handle}
+    {slice : SliceHandle} {values : List α} {bytes : List Byte}
+    (hpool : codec.align ∣ pool.base)
+    (hcodec : NativeAlignmentCompatible codec)
+    (hnative : ∀ value, codec.encode value = nativeBytes value)
+    (hblock : handle.block.aligned)
+    (hlength : values.length = slice.end - slice.begin)
+    (hbytes : bytes = encodeValues codec values) :
+    NativeSliceReady codec nativeBytes (sliceRegion codec pool handle slice)
+      bytes values := by
+  refine ⟨?_, ?_, ?_⟩
+  · simpa [sliceRegion] using
+      elementBase_native_aligned hpool hcodec hblock slice.begin
+  · simp [sliceRegion, hlength]
+  · rw [hbytes]
+    exact encodeValues_eq_nativeBytes codec nativeBytes hnative values
 
 theorem sliceRegion_fits {α : Type} {codec : Codec α} {handle : Handle}
     (hvalid : Valid codec handle) {slice : SliceHandle}

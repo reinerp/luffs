@@ -1126,9 +1126,15 @@ alias semantics. This removes the one-store restriction that blocked
   `u128`/`i128`, are proved compatible with that alignment. `nativeBytesLE`
   defines the enforced target's scalar object bytes, and all twelve codecs are
   proved exactly equal to that native representation (not merely reversible
-  serializations). A native-layout view still needs verified typed-slice
-  lowering that connects the aligned owned byte region to Rust's reference
-  operation before the overall Vec item is complete.
+  serializations). `NativeSliceReady` now packages the three pure premises for
+  Rust slice construction: aligned base, exact element-count byte length, and
+  exact native object bytes. `vecSlice_native_mut_owns` derives that predicate
+  for every successful generic Vec slice while simultaneously splitting out
+  the exact exclusive Iris region and its initialized contents. Thus the
+  unsafe operation's complete precondition is now proved without treating the
+  cast itself as an allocator axiom. The compiler still needs a restricted
+  typed-slice lowering whose only entry point consumes this verified boundary
+  before the overall Vec item is complete.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.
   All four checked-in examples are currently accepted by Lean and compile to

@@ -611,7 +611,7 @@ pub fn vec_slice_mut_u8<'a>(storage: &'a mut [u8], len: usize, begin: usize, end
 // Codec-generic encoded slice boundary. Callers pass the proved codec size;
 // the Lean bridge instantiates this one body for every supported scalar.
 // refines Luffs.Runtime.Containers.vecSliceBytes
-pub fn vec_slice_bytes<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize, width: usize) -> Option<&'a [u8]> {
+fn vec_slice_bytes<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize, width: usize) -> Option<&'a [u8]> {
     if begin > end { return None; }
     if end > len { return None; }
     let byte_begin: usize = begin.checked_mul(width)?;
@@ -631,7 +631,7 @@ pub fn vec_slice_bytes<'a>(storage: &'a [u8], offset: usize, len: usize, begin: 
 }
 
 // refines Luffs.Runtime.Containers.vecSliceBytes
-pub fn vec_slice_mut_bytes<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize, width: usize) -> Option<&'a mut [u8]> {
+fn vec_slice_mut_bytes<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize, width: usize) -> Option<&'a mut [u8]> {
     if begin > end { return None; }
     if end > len { return None; }
     let byte_begin: usize = begin.checked_mul(width)?;

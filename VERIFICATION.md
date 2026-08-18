@@ -1166,8 +1166,11 @@ alias semantics. This removes the one-store restriction that blocked
   verified scalar Box load/store and Vec push/get/slice operations, all scalar
   TLSF-backed constructors and growth operations, type-erased drop paths, and
   the public TLSF initialize/allocate/deallocate boundary are exported; bin,
-  physical-layout, and coalescing-stage helpers remain private. Because the
-  initial Luffs subset intentionally has no structs, this first complete
+  physical-layout, and coalescing-stage helpers remain private. The
+  width-parameterized byte-slice helpers are likewise private; callers receive
+  only the scalar-typed slice entry points whose alignment and representation
+  premises are proved. Because the initial Luffs subset intentionally has no
+  structs, this first complete
   surface uses proved offset/length/capacity handles rather than pretending to
   expose an unverified Rust struct representation.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and

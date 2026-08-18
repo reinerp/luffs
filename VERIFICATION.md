@@ -119,6 +119,14 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   words, clears the first-level bitmap, and fills every free-list head with
   the sentinel. Closed Iris WPs derive every store from mapped native-element
   ranges and prove that the complete clearing prefix cannot get stuck.
+  The successful initializer path now continues through the initial-block and
+  empty-bin insertion stores: block-zero physical fields, intrusive links and
+  head, and both bitmap levels are encoded at their native widths. A reusable
+  heterogeneous `Program.writeElements` rule preserves source order and proves
+  the composed store transaction non-stuck from its mapped-element premises.
+  The closed `initializeProgram_wp` composes this transaction with every
+  clearing loop, using the classifier's head and bitmap bounds for the selected
+  bin.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

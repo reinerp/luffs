@@ -7530,6 +7530,132 @@ theorem clearMetadata_wp {GF : BundledGFunctors}
   intro final hfinal p hp
   exact hfinal p (hmiddle p hp)
 
+/-- The writes after the clearing loops: construct physical block zero and
+perform `tlsf_insert_class` into its initially empty bin. Since every head was
+set to `sentinel`, insertion writes that sentinel to both links, installs block
+zero as the head, and sets exactly one bit at each bitmap level. -/
+def seedInitialWrites (offsetsBase sizesBase isFreeBase prevFreeBase secondBase
+    firstBase headsBase nextBase previousBase poolBytes sentinel bin : Nat) :
+    List ElementWrite :=
+  [⟨offsetsBase, 8, 0, usizeBytes 0⟩,
+   ⟨sizesBase, 8, 0, usizeBytes poolBytes⟩,
+   ⟨isFreeBase, 1, 0, u8Bytes 1⟩,
+   ⟨prevFreeBase, 1, 0, u8Bytes 0⟩,
+   ⟨nextBase, 8, 0, usizeBytes sentinel⟩,
+   ⟨previousBase, 8, 0, usizeBytes sentinel⟩,
+   ⟨headsBase, 8, bin, usizeBytes 0⟩,
+   ⟨secondBase, 4, bin / 32, u32Bytes (1 <<< (bin % 32))⟩,
+   ⟨firstBase, 8, 0, usizeBytes (1 <<< (bin / 32))⟩]
+
+def seedInitial (offsetsBase sizesBase isFreeBase prevFreeBase secondBase
+    firstBase headsBase nextBase previousBase poolBytes sentinel bin : Nat) :
+    Program :=
+  Program.writeElements (seedInitialWrites offsetsBase sizesBase isFreeBase
+    prevFreeBase secondBase firstBase headsBase nextBase previousBase poolBytes
+    sentinel bin)
+
+theorem seedInitial_wp {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase
+      nextBase previousBase poolBytes sentinel bin : Nat) (mem : Memory)
+    (hoffsets : ∀ i, i < 8 → mem.mapped (offsetsBase + i))
+    (hsizes : ∀ i, i < 8 → mem.mapped (sizesBase + i))
+    (hisFree : mem.mapped isFreeBase)
+    (hprevFree : mem.mapped prevFreeBase)
+    (hsecond : ∀ i, i < 4 →
+      mem.mapped (secondBase + (bin / 32) * 4 + i))
+    (hfirst : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheads : ∀ i, i < 8 → mem.mapped (headsBase + bin * 8 + i))
+    (hnext : ∀ i, i < 8 → mem.mapped (nextBase + i))
+    (hprevious : ∀ i, i < 8 → mem.mapped (previousBase + i)) :
+    ⊢@{IProp GF} Program.wp
+      (seedInitial offsetsBase sizesBase isFreeBase prevFreeBase secondBase
+        firstBase headsBase nextBase previousBase poolBytes sentinel bin) mem
+      (fun final => ∀ p, mem.mapped p → final.mapped p) := by
+  unfold seedInitial
+  apply Program.writeElements_wp
+  · intro write hwrite
+    simp only [seedInitialWrites, List.mem_cons, List.mem_singleton] at hwrite
+    rcases hwrite with hwrite | hwrite | hwrite | hwrite | hwrite | hwrite |
+      hwrite | hwrite | hwrite <;> subst write <;> simp
+  · intro write hwrite i hi
+    simp only [seedInitialWrites, List.mem_cons, List.mem_singleton] at hwrite
+    rcases hwrite with hwrite | hwrite | hwrite | hwrite | hwrite | hwrite |
+      hwrite | hwrite | hwrite <;> subst write
+    · simpa using hoffsets i hi
+    · simpa using hsizes i hi
+    · have : i = 0 := by omega
+      subst i
+      simpa using hisFree
+    · have : i = 0 := by omega
+      subst i
+      simpa using hprevFree
+    · simpa using hnext i hi
+    · simpa using hprevious i hi
+    · simpa using hheads i hi
+    · simpa using hsecond i hi
+    · simpa using hfirst i hi
+
+/-- Complete successful byte-level body of `tlsf_initialize`, after its CFG
+guards and size-class calculation have supplied `bin`. -/
+def initializeProgram (offsetsBase sizesBase isFreeBase prevFreeBase secondBase
+    firstBase headsBase nextBase previousBase physicalCount secondCount
+    headsCount poolBytes sentinel bin : Nat) : Program :=
+  (clearMetadata offsetsBase sizesBase isFreeBase prevFreeBase nextBase
+    previousBase secondBase firstBase headsBase physicalCount secondCount
+    headsCount sentinel).then
+  (seedInitial offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase
+    headsBase nextBase previousBase poolBytes sentinel bin)
+
+theorem initializeProgram_wp {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase
+      nextBase previousBase physicalCount secondCount headsCount poolBytes
+      sentinel bin : Nat) (mem : Memory)
+    (hphysical : 0 < physicalCount)
+    (hbin : bin < headsCount) (hfl : bin / 32 < secondCount)
+    (hoffsets : ∀ index, index < physicalCount → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizes : ∀ index, index < physicalCount → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hisFree : ∀ index, index < physicalCount →
+      mem.mapped (isFreeBase + index))
+    (hprevFree : ∀ index, index < physicalCount →
+      mem.mapped (prevFreeBase + index))
+    (hnext : ∀ index, index < physicalCount → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hprevious : ∀ index, index < physicalCount → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hsecond : ∀ index, index < secondCount → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirst : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheads : ∀ index, index < headsCount → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i)) :
+    ⊢@{IProp GF} Program.wp
+      (initializeProgram offsetsBase sizesBase isFreeBase prevFreeBase
+        secondBase firstBase headsBase nextBase previousBase physicalCount
+        secondCount headsCount poolBytes sentinel bin) mem
+      (fun final => ∀ p, mem.mapped p → final.mapped p) := by
+  unfold initializeProgram
+  apply Program.wp_then_preserves_mapped
+    (clearMetadata_wp offsetsBase sizesBase isFreeBase prevFreeBase nextBase
+      previousBase secondBase firstBase headsBase physicalCount secondCount
+      headsCount sentinel mem hoffsets hsizes hisFree hprevFree hnext hprevious
+      hsecond hfirst hheads)
+  intro middle hmiddle
+  apply Program.wp_mono
+    (seedInitial_wp offsetsBase sizesBase isFreeBase prevFreeBase secondBase
+      firstBase headsBase nextBase previousBase poolBytes sentinel bin middle
+      (fun i hi => by simpa using hmiddle _ (hoffsets 0 hphysical i hi))
+      (fun i hi => by simpa using hmiddle _ (hsizes 0 hphysical i hi))
+      (by simpa using hmiddle _ (hisFree 0 hphysical))
+      (by simpa using hmiddle _ (hprevFree 0 hphysical))
+      (fun i hi => hmiddle _ (hsecond (bin / 32) hfl i hi))
+      (fun i hi => hmiddle _ (hfirst i hi))
+      (fun i hi => hmiddle _ (hheads bin hbin i hi))
+      (fun i hi => by simpa using hmiddle _ (hnext 0 hphysical i hi))
+      (fun i hi => by simpa using hmiddle _ (hprevious 0 hphysical i hi)))
+  intro final hfinal p hp
+  exact hfinal p (hmiddle p hp)
+
 end InitializeProgram
 
 /-- Exact pure state transformer for `tlsf_initialize`. All fixed-capacity

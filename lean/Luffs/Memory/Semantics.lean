@@ -915,6 +915,48 @@ theorem Program.fillElements_wp {GF : BundledGFunctors}
   intro final hpreserves p hp
   exact hpreserves p (hinvariant p hp)
 
+/-- One scalar-array assignment in an ordered metadata transaction. Keeping
+the byte representation explicit makes the transaction usable for mixed Rust
+integer widths without adding a trusted native-value operation. -/
+structure ElementWrite where
+  base : Addr
+  width : Nat
+  index : Nat
+  bytes : List Byte
+
+def ElementWrite.program (write : ElementWrite) : Program :=
+  Program.writeElement write.base write.width write.index write.bytes
+
+/-- A finite sequence of heterogeneous native-element assignments, in source
+execution order. -/
+def Program.writeElements : List ElementWrite → Program
+  | [] => .done
+  | write :: rest => write.program.then (Program.writeElements rest)
+
+theorem Program.writeElements_wp {GF : BundledGFunctors}
+    (writes : List ElementWrite) (mem : Memory)
+    (hwidth : ∀ write, write ∈ writes → write.bytes.length = write.width)
+    (hmapped : ∀ write, write ∈ writes → ∀ i, i < write.width →
+      mem.mapped (write.base + write.index * write.width + i)) :
+    ⊢@{IProp GF} Program.wp (Program.writeElements writes) mem
+      (fun final => ∀ p, mem.mapped p → final.mapped p) := by
+  induction writes generalizing mem with
+  | nil => simpa [Program.writeElements] using
+      (Program.wp_done (GF := GF) mem
+        (fun final => ∀ p, mem.mapped p → final.mapped p) (by simp))
+  | cons write rest ih =>
+      simp only [Program.writeElements]
+      apply Program.wp_then_preserves_mapped
+        (Program.writeElement_wp_preserves_mapped write.base write.width
+          write.index write.bytes mem (hwidth write (by simp))
+          (hmapped write (by simp)))
+      intro middle hmiddle
+      apply ih middle
+      · intro tail htail
+        exact hwidth tail (by simp [htail])
+      · intro tail htail i hi
+        exact hmiddle _ (hmapped tail (by simp [htail]) i hi)
+
 /-- Stores emitted for ordinary indexed assignments. Unlike `writeBytes`, the
 offsets need not be contiguous; their list order is the source execution
 order. -/

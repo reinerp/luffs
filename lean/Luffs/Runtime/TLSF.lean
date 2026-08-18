@@ -20712,6 +20712,34 @@ theorem coalesceIfPossibleArraysOutcome_ne_failure_of_valid
     hmergedClass, hmetadata, hleftBin, hrightBin, hmergedBin, hleftFl, hrightFl,
     hmergedFl, hleftNext, hleftPrevious, hrightNext, hrightPrevious] using hout
 
+/-- On a represented valid allocator, successful `Option` semantics and the
+state-retaining operational semantics select the identical result. -/
+theorem coalesceIfPossibleArraysOutcome_success_of_valid_option
+    {pool : Luffs.Memory.Region} {blocks : List Block} {state : Bins.State}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {count left : Nat}
+    {result : CoalesceClassResult}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hphysical : RepresentsPhysicalArrays offsets sizes isFree prevFree count blocks)
+    (hsecond : RepresentsSecondBitmap second state)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hsuccess : coalesceIfPossibleArrays offsets sizes isFree prevFree second
+      first heads next previous count left = some result) :
+    coalesceIfPossibleArraysOutcome offsets sizes isFree prevFree second first
+      heads next previous count left = .success result := by
+  cases hout : coalesceIfPossibleArraysOutcome offsets sizes isFree prevFree
+      second first heads next previous count left with
+  | failure failed =>
+      exact (coalesceIfPossibleArraysOutcome_ne_failure_of_valid hvalid hpoolMax
+        hphysical hsecond hbins failed hout).elim
+  | success actual =>
+      have hoption := coalesceIfPossibleArraysOutcome_success_refines_option hout
+      rw [hsuccess] at hoption
+      cases Option.some.inj hoption
+      rfl
+
 /-- The full class transaction carries the already-proved physical refinement:
 bin unlink/relink operations cannot change the physical active prefix. -/
 theorem coalesceClassArrays_refines_physical_append
@@ -21532,6 +21560,109 @@ theorem deallocateUncoalescedArraysOutcome_success_refines_option
     ⟨marked.1, marked.2, inserted⟩
   refine ⟨result, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
   simp [deallocateUncoalescedArrays, hbounds, hmark, hclass, hinsert, result]
+
+/-- Whenever the transactional `Option` model succeeds, the state-retaining
+uncoalesced machine cannot take a failure edge. The successful component
+results discharge every hoisted source preflight. -/
+theorem deallocateUncoalescedArraysOutcome_ne_failure_of_option_success
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat}
+    {count block returnedOffset returnedBytes : Nat}
+    {result : DeallocateUncoalescedResult}
+    (hsuccess : deallocateUncoalescedArrays offsets sizes isFree prevFree second
+      first heads next previous count block returnedOffset returnedBytes =
+        some result) :
+    ∀ failed, deallocateUncoalescedArraysOutcome offsets sizes isFree prevFree
+      second first heads next previous count block returnedOffset returnedBytes ≠
+        .failure failed := by
+  unfold deallocateUncoalescedArrays at hsuccess
+  split at hsuccess <;> try contradiction
+  next hpre =>
+    cases hmark : markFreeArrays offsets sizes isFree prevFree block
+        returnedOffset returnedBytes with
+    | none => simp [hmark] at hsuccess
+    | some marked =>
+      cases marked with
+      | mk nextIsFree nextPrevFree =>
+        cases hclass : classifySizeBin returnedBytes with
+        | none => simp [hmark, hclass] at hsuccess
+        | some bin =>
+          cases hinsert : insertClassArrays second first heads next previous bin
+              returnedOffset with
+          | none => simp [hmark, hclass, hinsert] at hsuccess
+          | some inserted =>
+            have hmarkFacts := markFreeArrays_result hmark
+            have hinsertFacts := insertClassArrays_result hinsert
+            have hbad : ¬(count > offsets.length ∨ count > sizes.length ∨
+                count > isFree.length ∨ count > prevFree.length ∨
+                block ≥ count ∨ block ≥ offsets.length ∨ block ≥ sizes.length ∨
+                block ≥ isFree.length ∨ block ≥ prevFree.length ∨
+                isFree[block]? != some 0 ∨
+                offsets[block]? != some returnedOffset ∨
+                sizes[block]? != some returnedBytes) := by
+              simp only [not_or]
+              exact ⟨by omega, by omega, by omega, by omega, by omega,
+                by omega, by omega, by omega, by omega,
+                by simp [hmarkFacts.2.2.2.2.1],
+                by simp [hmarkFacts.2.2.2.2.2.1],
+                by simp [hmarkFacts.2.2.2.2.2.2.1]⟩
+            have hinsertionBad : ¬(bin ≥ heads.length ∨
+                bin / secondLevelCount ≥ second.length ∨
+                returnedOffset ≥ next.length ∨
+                returnedOffset ≥ previous.length) := by
+              simp only [not_or, secondLevelCount]
+              exact ⟨by omega, by omega, by omega, by omega⟩
+            have hcapacityBad : ¬(count > offsets.length ∨
+                count > sizes.length ∨ count > isFree.length ∨
+                count > prevFree.length ∨ block ≥ count ∨
+                block ≥ offsets.length ∨ block ≥ sizes.length ∨
+                block ≥ isFree.length ∨ block ≥ prevFree.length) := by
+              omega
+            intro failed hfailure
+            have hcommit := commitDeallocateUncoalescedOutcome_ne_failure
+              (input := deallocateInputState isFree prevFree second first heads
+                next previous) (failed := failed) (offsets := offsets)
+              (sizes := sizes) (isFree := isFree) (prevFree := prevFree)
+              (second := second) (first := first) (heads := heads) (next := next)
+              (previous := previous) (block := block)
+              (returnedOffset := returnedOffset) (returnedBytes := returnedBytes)
+              (bin := bin) (by rw [hmark]; simp) (by rw [hinsert]; simp)
+            apply hcommit
+            simpa [deallocateUncoalescedArraysOutcome, hbad, hcapacityBad, hclass,
+              hinsertionBad, hmarkFacts.2.2.2.2.1,
+              hmarkFacts.2.2.2.2.2.1, hmarkFacts.2.2.2.2.2.2.1] using hfailure
+
+/-- The successful state-retaining first stage is exactly the state encoded by
+the public transactional result. -/
+theorem deallocateUncoalescedArraysOutcome_success_of_option
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat}
+    {count block returnedOffset returnedBytes : Nat}
+    {result : DeallocateUncoalescedResult}
+    (hsuccess : deallocateUncoalescedArrays offsets sizes isFree prevFree second
+      first heads next previous count block returnedOffset returnedBytes =
+        some result) :
+    deallocateUncoalescedArraysOutcome offsets sizes isFree prevFree second first
+      heads next previous count block returnedOffset returnedBytes = .success
+        ⟨result.isFree, result.prevFree, result.insertion.second,
+          result.insertion.first, result.insertion.heads, result.insertion.next,
+          result.insertion.previous⟩ := by
+  cases hout : deallocateUncoalescedArraysOutcome offsets sizes isFree prevFree
+      second first heads next previous count block returnedOffset returnedBytes with
+  | failure failed =>
+      exact (deallocateUncoalescedArraysOutcome_ne_failure_of_option_success
+        hsuccess failed hout).elim
+  | success actual =>
+      obtain ⟨optionResult, hoption, hfree, hprev, hsecond, hfirst, hheads,
+          hnext, hprevious⟩ :=
+        deallocateUncoalescedArraysOutcome_success_refines_option hout
+      rw [hsuccess] at hoption
+      cases Option.some.inj hoption
+      cases actual
+      cases result
+      simp_all
 
 /-- Exact pure semantics of the public Luffs deallocator. -/
 def deallocateArrays (offsets sizes : List Nat)
@@ -22499,6 +22630,83 @@ theorem deallocateArrays_refines
       simpa [hnonzero, Nat.pred_eq_sub_one] using hleftAbstract
     exact ⟨abstractAfterLeft, hdeallocate, hleftPhysical, hleftBinsValid,
       hleftBins, hleftDisjoint, hleftSecond, hleftFirst⟩
+
+set_option maxHeartbeats 1000000 in
+/-- A successful public `Option` deallocation on a represented valid allocator
+is the identical successful state-retaining transition used by the operational
+Iris proof. -/
+theorem deallocateArraysOutcome_success_of_valid_option
+    {pool : Luffs.Memory.Region} {blocks : List Block}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count i : Nat} {selected : Block} {state : Bins.State}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {result : CoalesceClassResult}
+    (hget : blocks[i]? = some selected)
+    (hallocated : selected.free = false)
+    (hphysical : RepresentsPhysicalArrays offsets sizes isFree prevFree count blocks)
+    (hallocValid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hcountMax : count ≤ usizeMax)
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hfresh : ∀ query, selected.offset ∉
+      (state.chains query).map Block.offset)
+    (hsuccess : deallocateArrays offsets sizes isFree prevFree second first
+      heads next previous count i selected.offset selected.bytes = some result) :
+    deallocateArraysOutcome offsets sizes isFree prevFree second first heads next
+      previous count i selected.offset selected.bytes = .success result := by
+  obtain ⟨marked, afterRight, hmarked, hright, hlast⟩ :=
+    deallocateArrays_result hsuccess
+  have hmarkedOutcome :=
+    deallocateUncoalescedArraysOutcome_success_of_option hmarked
+  obtain ⟨cls, hclass, hmarkedPhysical, _, hmarkedBins, hmarkedDisjoint,
+      hmarkedSecond, hmarkedFirst⟩ :=
+    deallocateUncoalescedArrays_refines_represented hphysical hget hallocated
+      hallocValid.2.1 hsecond hfirst hbins hdisjoint hfresh hmarked
+  let markedAbstract : Alloc.State := {
+    physical := markFreeAt blocks i
+    bins := state.insert cls (Dealloc.freedBlock selected) }
+  have hmarkedAbstract : Dealloc.deallocateUncoalesced pool
+      { physical := blocks, bins := state } i (selected.region pool) =
+      some markedAbstract := by
+    simp [Dealloc.deallocateUncoalesced, deallocateAt, hget, hallocated, hclass,
+      markedAbstract]
+  have hmarkedValid : Alloc.Valid pool markedAbstract :=
+    Dealloc.deallocateUncoalesced_preserves_valid hallocValid hmarkedAbstract
+  have hrightOutcome :=
+    coalesceIfPossibleArraysOutcome_success_of_valid_option hmarkedValid hpoolMax
+      hmarkedPhysical hmarkedSecond hmarkedBins hright
+  obtain ⟨abstractAfterRight, hrightAbstract, hrightPhysical, _, hrightBins,
+      hrightDisjoint, hrightSecond, hrightFirst⟩ :=
+    coalesceIfPossibleArrays_refines_allocator hmarkedValid hpoolMax
+      hmarkedPhysical hcountMax hmarkedSecond hmarkedFirst hmarkedBins
+      hmarkedDisjoint hright
+  have hrightValid : Alloc.Valid pool abstractAfterRight :=
+    Dealloc.coalesceIfPossible_preserves_valid hmarkedValid hrightAbstract
+  rcases hlast with ⟨hzero, hresult⟩ | ⟨hnonzero, hleft⟩
+  · subst result
+    subst i
+    rw [deallocateArraysOutcome, hmarkedOutcome]
+    simp only
+    rw [hrightOutcome]
+    rfl
+  · have hrightCountMax : afterRight.count ≤ usizeMax := by
+      have hlength := Dealloc.coalesceIfPossible_physical_length_le hrightAbstract
+      have hmarkedLength := markFreeAt_length blocks i
+      dsimp only [markedAbstract] at hlength
+      calc
+        afterRight.count = abstractAfterRight.physical.length := hrightPhysical.1
+        _ ≤ (markFreeAt blocks i).length := hlength
+        _ = blocks.length := hmarkedLength
+        _ = count := hphysical.1.symm
+        _ ≤ usizeMax := hcountMax
+    have hleftOutcome :=
+      coalesceIfPossibleArraysOutcome_success_of_valid_option hrightValid
+        hpoolMax hrightPhysical hrightSecond hrightBins hleft
+    simp [deallocateArraysOutcome, hmarkedOutcome, hrightOutcome, hnonzero,
+      hleftOutcome]
 
 theorem allocatedBlock_offset_fresh
     {pool : Luffs.Memory.Region} {blocks : List Block} {state : Bins.State}
@@ -25930,6 +26138,107 @@ theorem deallocateArraysOutcome_successfulProgram_safe
       hsecondMapped hfirstMapped hheadsMapped hnextMapped hpreviousMapped
       hoffsets hsizes hfree hprev hcount hsecond hfirst hheads hnext hprevious
   exact ⟨program, Program.wp_adequacy hwp⟩
+
+/-- Public-facing deallocation adequacy. A successful Luffs `Option` result on
+a represented valid allocator selects the state-retaining source program, so
+the caller receives non-stuckness and the exact ten-field postcondition without
+having to mention `DeallocateOutcome`. -/
+theorem deallocateArrays_successfulProgram_safe
+    {GF : BundledGFunctors.{0, 0, 0}}
+    {pool : Luffs.Memory.Region} {blocks : List Block} {state : Bins.State}
+    {selected : Block}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat)
+    (count block : Nat)
+    (result : CoalesceClassResult) (mem : Memory)
+    (hget : blocks[block]? = some selected)
+    (hallocated : selected.free = false)
+    (hphysical : RepresentsPhysicalArrays offsets sizes isFree prevFree count blocks)
+    (hallocValid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hcountMax : count ≤ usizeMax)
+    (hsecondRep : RepresentsSecondBitmap second state)
+    (hfirstRep : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hfresh : ∀ query, selected.offset ∉
+      (state.chains query).map Block.offset)
+    (hsuccess : deallocateArrays offsets sizes isFree prevFree second first heads
+      next previous count block selected.offset selected.bytes = some result)
+    (layout : AllocateComposition.MetadataLayout offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets.length sizes.length isFree.length prevFree.length second.length
+      heads.length next.length previous.length)
+    (hoffsetsMapped : ∀ index, index < offsets.length → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizesMapped : ∀ index, index < sizes.length → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hfreeMapped : ∀ index, index < isFree.length →
+      mem.mapped (isFreeBase + index))
+    (hprevMapped : ∀ index, index < prevFree.length →
+      mem.mapped (prevFreeBase + index))
+    (hcountMapped : ∀ i, i < 8 → mem.mapped (countBase + i))
+    (hsecondMapped : ∀ index, index < second.length → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheadsMapped : ∀ index, index < heads.length → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < next.length → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previous.length → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree))
+    (hcount : mem.EncodesAt Luffs.Memory.Scalar.u64 countBase
+      (BitVec.ofNat 64 count))
+    (hsecondEncoded : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hfirstEncoded : mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase first)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous)) :
+    ∃ program,
+      Program.Safe program mem ∧
+      ∀ final, Program.Exec program mem final →
+        final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+            (InitializeProgram.encodeNats result.offsets) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+            (InitializeProgram.encodeNats result.sizes) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+            (AllocateProgram.encodeFlags result.isFree) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+            (AllocateProgram.encodeFlags result.prevFree) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u32 secondBase result.second ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 firstBase result.first ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+            (InitializeProgram.encodeNats result.heads) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+            (InitializeProgram.encodeNats result.next) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+            (InitializeProgram.encodeNats result.previous) ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 countBase
+            (BitVec.ofNat 64 result.count) := by
+  have houtcome := deallocateArraysOutcome_success_of_valid_option hget
+    hallocated hphysical hallocValid hpoolMax hcountMax hsecondRep hfirstRep
+    hbins hdisjoint hfresh hsuccess
+  exact deallocateArraysOutcome_successfulProgram_safe (GF := GF) offsetsBase
+    sizesBase isFreeBase prevFreeBase countBase secondBase firstBase headsBase
+    nextBase previousBase offsets sizes isFree prevFree second first heads next
+    previous count block selected.offset selected.bytes result mem houtcome layout
+    hoffsetsMapped hsizesMapped hfreeMapped hprevMapped hcountMapped
+    hsecondMapped hfirstMapped hheadsMapped hnextMapped hpreviousMapped hoffsets
+    hsizes hfree hprev hcount hsecondEncoded hfirstEncoded hheads hnext hprevious
 
 end DeallocateProgram
 

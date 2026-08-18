@@ -1308,7 +1308,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   explicit `Program.Safe` witness: the selected complete deallocation program
   has a terminating execution, and every possible execution ends with exactly
   those ten returned metadata encodings. This closes non-stuck adequacy for
-  successful public deallocation, while the unchecked semantic-layer item
+  successful public deallocation. The bridge is now bidirectional on represented
+  valid allocators: a successful public Luffs `Option` result reconstructs the
+  exact state-retaining uncoalesced state and both conditional-coalescing
+  outcomes. Consequently the public adequacy theorem consumes the ordinary
+  Luffs success equation directly; clients no longer need to assume a separate
+  `DeallocateOutcome` success. The unchecked semantic-layer item
   still records the missing general translation of arbitrary nested control
   flow.
   A framed Iris growth rule now also retains authoritative agreement for the

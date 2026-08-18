@@ -844,6 +844,15 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
 
 fn read_result_expr(expr: &str, array: &str) -> String {
     let trimmed = expr.trim();
+    let trimmed = trimmed
+        .rsplit_once(" by ")
+        .filter(|(_, proof)| {
+            !proof.is_empty()
+                && proof
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        })
+        .map_or(trimmed, |(expression, _)| expression.trim());
     if let Some((ty, bytes)) = trimmed.split_once("::from_le_bytes([")
         && let Some(bytes) = bytes.strip_suffix("])")
         && let Some(width) = scalar_width(ty)
@@ -1054,9 +1063,17 @@ fn parse_read_models(source: &str) -> Vec<ReadModel> {
         {
             model.guards.push(model_expr(condition, &model.array));
         } else if let Some((name, expression)) = usize_let(trimmed) {
-            model
-                .lets
-                .push((lean_ident(name), model_expr(expression, &model.array)));
+            if let Some(checked) = checked_arithmetic_expression(expression) {
+                let checked = model_expr(&checked, &model.array);
+                model
+                    .guards
+                    .push(format!("({checked}) > Luffs.Runtime.TLSF.usizeMax"));
+                model.lets.push((lean_ident(name), checked));
+            } else {
+                model
+                    .lets
+                    .push((lean_ident(name), model_expr(expression, &model.array)));
+            }
         } else if let Some(result) = trimmed
             .strip_prefix("Some(")
             .and_then(|rest| rest.strip_suffix(')'))
@@ -2931,8 +2948,8 @@ fn logical_lines(source: &str) -> Result<Vec<(usize, String)>, String> {
                     closed = true;
                     break;
                 }
-                declaration.push(' ');
-                declaration.push_str(body.trim_end_matches(';'));
+                declaration.push('\n');
+                declaration.push_str(body);
                 i += 1;
             }
             if !closed {
@@ -3268,8 +3285,14 @@ fn lean(module: &Module) -> String {
         }
         out.push_str(" : ");
         out.push_str(&proof.conclusion);
-        out.push_str(" := by ");
-        out.push_str(&proof.body);
+        out.push_str(" := by");
+        if proof.body.contains('\n') {
+            out.push_str("\n  ");
+            out.push_str(&proof.body.replace('\n', "\n  "));
+        } else {
+            out.push(' ');
+            out.push_str(&proof.body);
+        }
         out.push_str("\n\n");
     }
     for model in &module.scalar_models {
@@ -4296,12 +4319,10 @@ mod tests {
         let m = parse(include_str!("../stdlib/tlsf.luffs")).unwrap();
         validate(&m).unwrap();
         assert!(m.accesses.len() >= 16);
-        assert_eq!(
-            m.accesses.len(),
-            m.proofs
+        assert!(
+            m.accesses
                 .iter()
-                .filter(|p| p.name.starts_with("__auto_"))
-                .count()
+                .all(|access| m.proofs.iter().any(|proof| proof.name == access.proof))
         );
         assert!(m.rust.contains("get_unchecked_mut"));
         assert!(m.rust.contains("checked_mul"));
@@ -4869,12 +4890,10 @@ mod tests {
         let m = parse(include_str!("../stdlib/containers.luffs")).unwrap();
         validate(&m).unwrap();
         assert!(m.accesses.len() >= 10);
-        assert_eq!(
-            m.accesses.len(),
-            m.proofs
+        assert!(
+            m.accesses
                 .iter()
-                .filter(|p| p.name.starts_with("__auto_"))
-                .count()
+                .all(|access| m.proofs.iter().any(|proof| proof.name == access.proof))
         );
         assert!(m.rust.contains("get_unchecked_mut"));
         assert!(m.rust.contains("copy_from_slice"));
@@ -5279,6 +5298,29 @@ mod tests {
         ));
         assert!(!generated.contains("usizeMax - byte_end"));
         assert!(!generated.contains("if finish > storage.length"));
+    }
+
+    #[test]
+    fn checked_slice_arithmetic_becomes_failure_guards_and_expanded_results() {
+        let m = parse(
+            "// refines Luffs.Runtime.Containers.vecSliceBytes\nfn slice<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize, width: usize) -> Option<&'a [u8]> {\nif begin > end { return None; }\nif end > len { return None; }\nlet byte_begin: usize = begin.checked_mul(width)?;\nlet byte_end: usize = end.checked_mul(width)?;\nlet start: usize = offset.checked_add(byte_begin)?;\nlet finish: usize = offset.checked_add(byte_end)?;\nif finish > storage.len() { return None; }\nSome(storage[start..<finish])\n}",
+        )
+        .unwrap();
+        let generated = lean(&m);
+        for overflow in [
+            "if (begin * width) > Luffs.Runtime.TLSF.usizeMax then none",
+            "if (end_ * width) > Luffs.Runtime.TLSF.usizeMax then none",
+            "if (offset + (begin * width)) > Luffs.Runtime.TLSF.usizeMax then none",
+            "if (offset + (end_ * width)) > Luffs.Runtime.TLSF.usizeMax then none",
+        ] {
+            assert!(generated.contains(overflow), "missing guard: {overflow}");
+        }
+        assert!(generated.contains(
+            "some ((storage.drop (offset + (begin * width))).take ((offset + (end_ * width)) - (offset + (begin * width))))"
+        ));
+        for local in ["byte_begin", "byte_end", "start", "finish"] {
+            assert!(!generated.contains(&format!("if {local} >")));
+        }
     }
 
     #[test]

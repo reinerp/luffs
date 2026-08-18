@@ -608,6 +608,48 @@ fn vec_slice_mut_u8<'a>(storage: &'a mut [u8], len: usize, begin: usize, end: us
     Some(storage[begin..<end])
 }
 
+// Codec-generic encoded slice boundary. Callers pass the proved codec size;
+// the Lean bridge instantiates this one body for every supported scalar.
+// refines Luffs.Runtime.Containers.vecSliceBytes
+fn vec_slice_bytes<'a>(storage: &'a [u8], offset: usize, len: usize, begin: usize, end: usize, width: usize) -> Option<&'a [u8]> {
+    if begin > end { return None; }
+    if end > len { return None; }
+    let byte_begin: usize = begin.checked_mul(width)?;
+    let byte_end: usize = end.checked_mul(width)?;
+    let start: usize = offset.checked_add(byte_begin)?;
+    let finish: usize = offset.checked_add(byte_end)?;
+    if finish > storage.len() { return None; }
+    proof vec_slice_bytes_bounds: start <= finish && finish <= storage.len() by {
+        refine ⟨?_, by omega⟩
+        subst start
+        subst finish
+        subst byte_begin
+        subst byte_end
+        exact Nat.add_le_add_left (Nat.mul_le_mul_right width (show begin <= end_ from by omega)) offset
+    }
+    Some(storage[start..<finish] by vec_slice_bytes_bounds)
+}
+
+// refines Luffs.Runtime.Containers.vecSliceBytes
+fn vec_slice_mut_bytes<'a>(storage: &'a mut [u8], offset: usize, len: usize, begin: usize, end: usize, width: usize) -> Option<&'a mut [u8]> {
+    if begin > end { return None; }
+    if end > len { return None; }
+    let byte_begin: usize = begin.checked_mul(width)?;
+    let byte_end: usize = end.checked_mul(width)?;
+    let start: usize = offset.checked_add(byte_begin)?;
+    let finish: usize = offset.checked_add(byte_end)?;
+    if finish > storage.len() { return None; }
+    proof vec_slice_mut_bytes_bounds: start <= finish && finish <= storage.len() by {
+        refine ⟨?_, by omega⟩
+        subst start
+        subst finish
+        subst byte_begin
+        subst byte_end
+        exact Nat.add_le_add_left (Nat.mul_le_mul_right width (show begin <= end_ from by omega)) offset
+    }
+    Some(storage[start..<finish] by vec_slice_mut_bytes_bounds)
+}
+
 // A u16 vector is represented by its proved little-endian byte encoding.  The
 // returned borrow therefore remains a byte slice; no native-alignment or
 // representation assumption is hidden in this operation.

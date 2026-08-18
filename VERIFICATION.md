@@ -982,12 +982,19 @@ alias semantics. This removes the one-store restriction that blocked
   encoding of the selected logical elements. Its Iris theorem simultaneously
   splits exclusive ownership of exactly that byte region from the parent Vec,
   retaining the prefix and suffix needed for lifetime restoration. Concrete
-  shared and mutable `u16` Luffs functions refine this generic operation while
-  returning encoded byte views, avoiding an unsound native-slice cast: TLSF's
+  shared and mutable width-generic Luffs functions now refine this operation
+  while returning encoded byte views. Their Rust-like source uses
+  `checked_mul` and `checked_add`; the generated Lean model turns each failed
+  operation into the corresponding `usizeMax` failure branch and expands the
+  successful arithmetic through the returned range. One theorem identifies
+  that executable model with codec-generic slicing at `codec.size`, covering
+  every supported signed and unsigned scalar codec, and its Iris corollary
+  splits ownership of exactly the selected encoded bytes from the parent Vec.
+  These byte views deliberately avoid an unsound native-slice cast: TLSF's
   base alignment alone does not establish every scalar's Rust alignment or
-  native representation. Remaining scalar encoded-view monomorphizations and
-  any future separately proved native-layout view remain before the overall
-  Vec item is complete.
+  native representation. Any future native-layout view therefore still needs
+  its own alignment and representation proof before the overall Vec item is
+  complete.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.
   All four checked-in examples are currently accepted by Lean and compile to

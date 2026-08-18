@@ -1447,6 +1447,88 @@ def vecSlice {α : Type} (codec : Codec α) (storage : List Byte)
       if finish > storage.length then none
       else some ((storage.drop start).take (finish - start))
 
+/-- Source-facing form of encoded Vec slicing. The element width is explicit
+because Luffs erases the logical codec when compiling to Rust. -/
+def vecSliceBytes (storage : List Byte) (offset len begin end_ width : Nat) :
+    Option (List Byte) :=
+  if begin > end_ then none
+  else if end_ > len then none
+  else if begin * width > Luffs.Runtime.TLSF.usizeMax then none
+  else if end_ * width > Luffs.Runtime.TLSF.usizeMax then none
+  else
+    let byteBegin := begin * width
+    let byteEnd := end_ * width
+    if offset + byteBegin > Luffs.Runtime.TLSF.usizeMax then none
+    else if offset + byteEnd > Luffs.Runtime.TLSF.usizeMax then none
+    else
+      let start := offset + byteBegin
+      let finish := offset + byteEnd
+      if finish > storage.length then none
+      else some ((storage.drop start).take (finish - start))
+
+theorem vecSliceBytes_eq_generic {α : Type} (codec : Codec α)
+    (storage : List Byte) (offset len begin end_ : Nat) :
+    vecSliceBytes storage offset len begin end_ codec.size =
+      vecSlice codec storage offset len begin end_ := by
+  have hdiv : end_ ≤ Luffs.Runtime.TLSF.usizeMax / codec.size ↔
+      end_ * codec.size ≤ Luffs.Runtime.TLSF.usizeMax := by
+    exact Nat.le_div_iff_mul_le codec.size_pos
+  have hmono (h : begin ≤ end_) :
+      begin * codec.size ≤ end_ * codec.size :=
+    Nat.mul_le_mul_right codec.size h
+  simp only [vecSliceBytes, vecSlice]
+  split <;> rename_i hbegin
+  · simp [hbegin]
+  · have hbeginLe : begin ≤ end_ := Nat.le_of_not_gt hbegin
+    have hmulLe := hmono hbeginLe
+    split <;> rename_i hend
+    · simp [hend]
+    · split <;> rename_i hbeginMul
+      · have hendMul : end_ * codec.size > Luffs.Runtime.TLSF.usizeMax :=
+          Nat.lt_of_lt_of_le hbeginMul hmulLe
+        have hendDiv : end_ > Luffs.Runtime.TLSF.usizeMax / codec.size := by
+          exact Nat.lt_of_not_ge (fun hendLe =>
+            Nat.not_le_of_gt hendMul (hdiv.mp hendLe))
+        simp [hendDiv]
+      · split <;> rename_i hendMul
+        · have hendDiv : end_ > Luffs.Runtime.TLSF.usizeMax / codec.size := by
+            exact Nat.lt_of_not_ge (fun hendLe =>
+              Nat.not_le_of_gt hendMul (hdiv.mp hendLe))
+          simp [hendDiv]
+        · have hendDiv : ¬ end_ >
+              Luffs.Runtime.TLSF.usizeMax / codec.size := by
+            rw [Nat.not_lt, hdiv]
+            exact Nat.le_of_not_gt hendMul
+          simp only [hendDiv, ↓reduceIte]
+          split <;> rename_i hstart
+          · have hfinish : offset + end_ * codec.size >
+                Luffs.Runtime.TLSF.usizeMax :=
+              Nat.lt_of_lt_of_le hstart
+                (Nat.add_le_add_left hmulLe offset)
+            have hoffset : offset > Luffs.Runtime.TLSF.usizeMax -
+                end_ * codec.size := by omega
+            simp [hoffset]
+          · split <;> rename_i hfinish
+            · have hoffset : offset > Luffs.Runtime.TLSF.usizeMax -
+                  end_ * codec.size := by omega
+              simp [hoffset]
+            · have hoffset : ¬ offset > Luffs.Runtime.TLSF.usizeMax -
+                  end_ * codec.size := by omega
+              simp [hoffset]
+
+def vecSliceBytes_u8 := vecSliceBytes_eq_generic Scalar.u8
+def vecSliceBytes_u16 := vecSliceBytes_eq_generic Scalar.u16
+def vecSliceBytes_u32 := vecSliceBytes_eq_generic Scalar.u32
+def vecSliceBytes_u64 := vecSliceBytes_eq_generic Scalar.u64
+def vecSliceBytes_u128 := vecSliceBytes_eq_generic Scalar.u128
+def vecSliceBytes_i8 := vecSliceBytes_eq_generic Scalar.i8
+def vecSliceBytes_i16 := vecSliceBytes_eq_generic Scalar.i16
+def vecSliceBytes_i32 := vecSliceBytes_eq_generic Scalar.i32
+def vecSliceBytes_i64 := vecSliceBytes_eq_generic Scalar.i64
+def vecSliceBytes_i128 := vecSliceBytes_eq_generic Scalar.i128
+def vecSliceBytes_usize := vecSliceBytes_eq_generic Scalar.usize
+def vecSliceBytes_isize := vecSliceBytes_eq_generic Scalar.isize
+
 def vecSliceU16Bytes (storage : List Byte) (offset len begin end_ : Nat) :
     Option (List Byte) :=
   if begin > end_ then none
@@ -1560,6 +1642,31 @@ theorem vecSlice_owns {GF : Iris.BundledGFunctors}
   exact ⟨vecSlice_value hlen hstorage hsuccess,
     Luffs.Containers.Vec.mutSlice_split codec pool handle values hlen
       ⟨begin, end_⟩ hvalid hslice⟩
+
+/-- The single width-parameterized Luffs slice body inherits the generic Iris
+ownership theorem whenever its width argument is the proved codec size. -/
+theorem vecSliceBytes_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [Luffs.Memory.ByteContentsGS GF]
+    {α : Type} {codec : Codec α} {pool : Region} {storage slice : List Byte}
+    {handle : Luffs.Containers.Vec.Handle} {values : List α}
+    {begin end_ : Nat} {trailing : List Byte}
+    (hvalid : Luffs.Containers.Vec.Valid codec handle)
+    (hlen : values.length = handle.len)
+    (hstorage : storage.drop handle.block.offset =
+      Luffs.Containers.Vec.encodeValues codec values ++ trailing)
+    (hsuccess : vecSliceBytes storage handle.block.offset handle.len begin end_
+      codec.size = some slice) :
+    let selected : Luffs.Containers.Vec.SliceHandle := ⟨begin, end_⟩
+    slice = Luffs.Containers.Vec.encodeValues codec
+        (Luffs.Containers.Vec.sliceValues values selected) ∧
+      (Luffs.Containers.Vec.Owns (GF := GF) codec pool handle values ⊣⊢
+        Luffs.Containers.Vec.MutSliceOwns codec pool handle selected
+            (Luffs.Containers.Vec.sliceValues values selected) ∗
+          Luffs.Containers.Vec.MutSliceRest codec pool handle selected
+            (values.take begin) (values.drop end_)) := by
+  apply vecSlice_owns hvalid hlen hstorage
+  rw [← vecSliceBytes_eq_generic codec]
+  exact hsuccess
 
 theorem vecGet_result {α : Type} {codec : Codec α} {storage : List Byte}
     {offset len index : Nat} {value : α}

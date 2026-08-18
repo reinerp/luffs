@@ -3993,12 +3993,12 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
     }
     for model in &module.tlsf_allocate_physical_models {
         out.push_str(&format!(
-            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count block request : Nat) : Option Luffs.Runtime.TLSF.AllocatePhysicalResult :=\n  {} offsets sizes is_free prev_free count block request\n\n",
-            model.name, model.refines
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (count block request : Nat) : Option Luffs.Runtime.TLSF.AllocatePhysicalResult := do\n  if request % Luffs.Allocator.TLSF.alignment ≠ 0 ∨ count = 0 ∨\n      count > offsets.length ∨ count > sizes.length ∨\n      count > is_free.length ∨ count > prev_free.length ∨ block ≥ count then none\n  let selected_offset ← offsets[block]?\n  let selected_size ← sizes[block]?\n  if is_free[block]? = some 0 ∨ selected_size < request ∨ request = 0 then none\n  let remainder_size := selected_size - request\n  if remainder_size ≥ Luffs.Allocator.TLSF.minimumBlockBytes then\n    if count ≥ offsets.length ∨ count ≥ sizes.length ∨\n        count ≥ is_free.length ∨ count ≥ prev_free.length then none\n    let successor := block + 1\n    let remainder_offset := selected_offset + request\n    let offsets := Luffs.Runtime.TLSF.expandActive offsets count successor remainder_offset\n    let sizes := Luffs.Runtime.TLSF.expandActive (sizes.set block request) count successor remainder_size\n    let is_free := Luffs.Runtime.TLSF.expandActive (is_free.set block 0) count successor 1\n    let prev_free := Luffs.Runtime.TLSF.allocateSplitPrevFree prev_free count block\n    some ⟨offsets, sizes, is_free, prev_free, count + 1,\n      selected_offset, request, some remainder_offset, some remainder_size⟩\n  else\n    let is_free := is_free.set block 0\n    let prev_free := Luffs.Runtime.TLSF.allocateWholePrevFree prev_free count block\n    some ⟨offsets, sizes, is_free, prev_free, count,\n      selected_offset, selected_size, none, none⟩\n\n",
+            model.name
         ));
         out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
-            model.name, model.name, model.refines
+            "theorem {}_refines : {}_model = {} := by\n  unfold {}_model {}\n  rfl\n\n",
+            model.name, model.name, model.refines, model.name, model.refines
         ));
     }
     for model in &module.tlsf_allocate_models {
@@ -4600,6 +4600,15 @@ mod tests {
         ));
         assert!(generated.contains(
             "let physical ← tlsf_allocate_physical_model offsets sizes is_free prev_free count block request"
+        ));
+        assert!(generated.contains(
+            "let offsets := Luffs.Runtime.TLSF.expandActive offsets count successor remainder_offset"
+        ));
+        assert!(generated.contains(
+            "let prev_free := Luffs.Runtime.TLSF.allocateWholePrevFree prev_free count block"
+        ));
+        assert!(!generated.contains(
+            "Option Luffs.Runtime.TLSF.AllocatePhysicalResult :=\n  Luffs.Runtime.TLSF.allocatePhysicalArrays"
         ));
         assert!(!generated.contains(
             "Option Luffs.Runtime.TLSF.AllocateArraysResult :=\n  Luffs.Runtime.TLSF.allocateArrays"

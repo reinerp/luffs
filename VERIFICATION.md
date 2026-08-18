@@ -825,6 +825,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   Generated Box/Vec construction and growth consume this model, and dependency
   closure prevents their recognition if any required allocation stage is
   absent.
+  Physical allocation now emits its own aligned-request and selected-header
+  checks, whole-block flag transition, split decision, four fixed-capacity
+  header expansions, boundary-tag updates, and result construction. The shared
+  `expandActive`, `allocateSplitPrevFree`, and `allocateWholePrevFree` helpers
+  remain explicit semantic summaries of the corresponding source loops and
+  conditional tag writes.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

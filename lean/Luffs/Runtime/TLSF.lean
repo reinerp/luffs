@@ -7656,6 +7656,41 @@ theorem initializeProgram_wp {GF : BundledGFunctors}
   intro final hfinal p hp
   exact hfinal p (hmiddle p hp)
 
+/-- Source-level specialization for the fixed arrays in `tlsf_initialize`.
+The ordinary `?` classifier edge supplies both selected-array bounds; callers
+do not have to assert them independently. -/
+theorem tlsfInitializeProgram_wp {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase
+      nextBase previousBase poolBytes bin : Nat) (mem : Memory)
+    (hclass : classifySizeBin poolBytes = some bin)
+    (hoffsets : ∀ index, index < 4096 → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizes : ∀ index, index < 4096 → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hisFree : ∀ index, index < 4096 → mem.mapped (isFreeBase + index))
+    (hprevFree : ∀ index, index < 4096 →
+      mem.mapped (prevFreeBase + index))
+    (hnext : ∀ index, index < 4096 → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hprevious : ∀ index, index < 4096 → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hsecond : ∀ index, index < 64 → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirst : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheads : ∀ index, index < 2048 → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i)) :
+    ⊢@{IProp GF} Program.wp
+      (initializeProgram offsetsBase sizesBase isFreeBase prevFreeBase
+        secondBase firstBase headsBase nextBase previousBase 4096 64 2048
+        poolBytes 4096 bin) mem
+      (fun final => ∀ p, mem.mapped p → final.mapped p) := by
+  obtain ⟨_, _, _, hbin⟩ := classifySizeBin_result hclass
+  have hfl : bin / 32 < 64 := by omega
+  exact initializeProgram_wp offsetsBase sizesBase isFreeBase prevFreeBase
+    secondBase firstBase headsBase nextBase previousBase 4096 64 2048
+    poolBytes 4096 bin mem (by omega) hbin hfl hoffsets hsizes hisFree
+    hprevFree hnext hprevious hsecond hfirst hheads
+
 end InitializeProgram
 
 /-- Exact pure state transformer for `tlsf_initialize`. All fixed-capacity

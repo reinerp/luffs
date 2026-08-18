@@ -127,6 +127,9 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   The closed `initializeProgram_wp` composes this transaction with every
   clearing loop, using the classifier's head and bitmap bounds for the selected
   bin.
+  `tlsfInitializeProgram_wp` now discharges those bounds directly from the
+  successful ordinary `Option` result of `tlsf_classify_size`, matching the
+  source CFG rather than requiring proof-only guard arguments.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

@@ -5414,6 +5414,41 @@ theorem vecLenAfterPop_owns {GF : Iris.BundledGFunctors}
   exact Luffs.Containers.Vec.pop_owns codec initValues last contents hlen
     habstract
 
+/-- Source-facing generic pop with its exact operational read. The generated
+length transition is connected to the typed Vec operation, while the final
+element is read and decoded before its initialized ownership is removed. -/
+theorem vecLenAfterPop_owns_wp {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {α : Type} (codec : Codec α) {pool : Region}
+    {handle : Luffs.Containers.Vec.Handle} {nextLen : Nat}
+    (initValues : List α) (last : α) (contents : ContentsMap)
+    {mem : Memory} (hrep : ContentsRep contents mem)
+    (hlen : handle.len = initValues.length + 1)
+    (hpop : vecLenAfterPop handle.len = some nextLen) :
+    contentsInterp (G := G) contents ∗
+        Luffs.Containers.Vec.Owns codec pool handle (initValues ++ [last]) ==∗
+      (contentsInterp
+          (deleteBytes contents
+            ((handle.block.region pool).base +
+              (Luffs.Containers.Vec.encodeValues codec initValues).length)
+            (codec.encode last)) ∗
+        (⌜nextLen = initValues.length⌝ ∗
+          Luffs.Containers.Vec.Owns codec pool
+            { handle with len := nextLen } initValues)) ∗
+        ⌜ReadSteps
+            ((handle.block.region pool).base + initValues.length * codec.size)
+            (codec.encode last) mem ∧
+          codec.decode (codec.encode last) = some last ∧
+          (⊢@{IProp GF} Program.wp
+            (Program.readBytes
+              ((handle.block.region pool).base +
+                initValues.length * codec.size)
+              codec.size)
+            mem (fun final => final = mem))⌝ := by
+  have habstract := vecLenAfterPop_refines_handle (handle := handle) hpop
+  exact Luffs.Containers.Vec.pop_owns_wp codec initValues last contents hrep
+    hlen habstract
+
 theorem vecGetU8_result {storage : List Byte} {len index : Nat} {value : Byte}
     (hget : vecGetU8 storage len index = some value) :
     index < len ∧ len ≤ storage.length ∧ storage[index]? = some value := by

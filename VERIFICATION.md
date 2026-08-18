@@ -951,7 +951,11 @@ concurrency are later extensions and are not prerequisites for `Box` and
   calculation, decodes exactly one codec-sized storage range, and is linked to
   the Iris `read_element` trace and codec round trip. Generic pop now connects
   the source length transition to `Vec.pop_owns`, deleting exactly the last
-  encoding, and concrete TLSF-backed drop is generalized over every codec; the
+  encoding. Its source-facing Iris rule now also reads exactly that final
+  encoding before deletion, proves the codec-decoded return value, and closes
+  the generated `readBytes` weakest precondition while transferring the sole
+  Vec capability to the shortened handle. Concrete TLSF-backed drop is
+  generalized over every codec; the
   byte theorem delegates to that generic ownership result. The concrete
   `vec_push_u16` lowering now has its own Iris façade, and an end-to-end
   composition theorem chains `tlsf_vec_new_u16` directly into its first

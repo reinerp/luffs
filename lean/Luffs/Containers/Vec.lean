@@ -1357,4 +1357,46 @@ theorem pop_owns {GF : BundledGFunctors}
       · iassumption
       · iassumption
 
+/-- A generic Vec pop reads exactly the final initialized encoding before
+removing it from the logical contents map. The returned value is fixed by the
+codec round trip, the shortened Vec retains the sole allocation capability,
+and the exact generated read program has a closed no-stuck WP. -/
+theorem pop_owns_wp {GF : BundledGFunctors}
+    [ByteRegionGS GF] [G : ByteContentsGS GF] {α : Type}
+    (codec : Codec α) {pool : Region} {handle next : Handle}
+    (initValues : List α) (last : α) (contents : ContentsMap)
+    {mem : Memory} (hrep : ContentsRep contents mem)
+    (hlen : handle.len = initValues.length + 1)
+    (hsuccess : pop handle = some next) :
+    contentsInterp (G := G) contents ∗
+        Owns codec pool handle (initValues ++ [last]) ==∗
+      (contentsInterp (deleteBytes contents
+          ((handle.block.region pool).base +
+            (encodeValues codec initValues).length)
+          (codec.encode last)) ∗
+        (⌜next.len = initValues.length⌝ ∗ Owns codec pool next initValues)) ∗
+        ⌜ReadSteps
+            ((handle.block.region pool).base + initValues.length * codec.size)
+            (codec.encode last) mem ∧
+          codec.decode (codec.encode last) = some last ∧
+          (⊢@{IProp GF} Program.wp
+            (Program.readBytes
+              ((handle.block.region pool).base +
+                initValues.length * codec.size)
+              codec.size)
+            mem (fun final => final = mem))⌝ := by
+  have hvaluesLen : (initValues ++ [last]).length = handle.len := by
+    simp [hlen]
+  have hlast : initValues.length < handle.len := by omega
+  iintro H
+  ihave ⟨H, %hread⟩ := read_element codec hvaluesLen hrep hlast $$ H
+  imod pop_owns codec initValues last contents hlen hsuccess $$ H with H
+  isplitl [H]
+  · iassumption
+  · ipureintro
+    have hindex : (initValues ++ [last])[initValues.length] = last := by simp
+    rw [hindex] at hread
+    exact ⟨hread.1, hread.2, by
+      simpa [codec.encode_length] using hread.1.program_wp⟩
+
 end Luffs.Containers.Vec

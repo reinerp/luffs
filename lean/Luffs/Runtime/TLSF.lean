@@ -7896,6 +7896,366 @@ theorem clearPhysicalMemory_isFree_encodesArray
         ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u64
           Luffs.Memory.Scalar.u8 hrow hselected hprevious
 
+theorem clearPhysicalRowMemory_prevFree_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
+      count sentinel index : Nat) (mem : Memory) (hindex : index < count)
+    (hnext : (ArrayRegion Luffs.Memory.Scalar.u64 nextBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase count))
+    (hprevious : (ArrayRegion Luffs.Memory.Scalar.u64 previousBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase count)) :
+    (ElementWrite.applyAll
+      (clearPhysicalRowWrites offsetsBase sizesBase isFreeBase prevFreeBase
+        nextBase previousBase sentinel index) mem).EncodesAt
+      Luffs.Memory.Scalar.u8 (prevFreeBase + index) (0 : BitVec 8) := by
+  let before := ElementWrite.applyAll
+    [⟨offsetsBase, 8, index, usizeBytes 0⟩,
+      ⟨sizesBase, 8, index, usizeBytes 0⟩,
+      ⟨isFreeBase, 1, index, u8Bytes 0⟩] mem
+  have hflag :
+      ((⟨prevFreeBase, 1, index, u8Bytes 0⟩ : ElementWrite).apply before).EncodesAt
+        Luffs.Memory.Scalar.u8 (prevFreeBase + index) (0 : BitVec 8) := by
+    simpa [ElementWrite.apply, u8Bytes, Luffs.Memory.Scalar.u8] using
+      Memory.writeElement_encodesAt Luffs.Memory.Scalar.u8 before prevFreeBase
+        index (0 : BitVec 8)
+  unfold clearPhysicalRowWrites
+  change (ElementWrite.applyAll
+    [⟨nextBase, 8, index, usizeBytes sentinel⟩,
+      ⟨previousBase, 8, index, usizeBytes sentinel⟩]
+    ((⟨prevFreeBase, 1, index, u8Bytes 0⟩ : ElementWrite).apply
+      (ElementWrite.applyAll
+        [⟨offsetsBase, 8, index, usizeBytes 0⟩,
+          ⟨sizesBase, 8, index, usizeBytes 0⟩,
+          ⟨isFreeBase, 1, index, u8Bytes 0⟩] mem))).EncodesAt
+        Luffs.Memory.Scalar.u8 (prevFreeBase + index) (0 : BitVec 8)
+  apply hflag.applyAll_of_disjoint
+  intro write hwrite
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hwrite
+  rcases hwrite with hwrite | hwrite <;> subst write
+  · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+      Luffs.Memory.Scalar.u8, ValueRegion] using
+      ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u64
+        Luffs.Memory.Scalar.u8 hindex hindex hnext
+  · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+      Luffs.Memory.Scalar.u8, ValueRegion] using
+      ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u64
+        Luffs.Memory.Scalar.u8 hindex hindex hprevious
+
+theorem clearPhysicalMemory_prevFree_encodesArray
+    (offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
+      count sentinel : Nat) (mem : Memory)
+    (hoffsets : (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase count))
+    (hsizes : (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase count))
+    (hisFree : (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase count))
+    (hnext : (ArrayRegion Luffs.Memory.Scalar.u64 nextBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase count))
+    (hprevious : (ArrayRegion Luffs.Memory.Scalar.u64 previousBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase count)) :
+    (clearPhysicalMemory offsetsBase sizesBase isFreeBase prevFreeBase nextBase
+      previousBase sentinel 0 count mem).EncodesArray Luffs.Memory.Scalar.u8
+        prevFreeBase (List.replicate count (0 : BitVec 8)) := by
+  intro index hindex
+  have hindex' : index < count := by simpa using hindex
+  rw [List.getElem_replicate]
+  apply clearPhysicalMemory_encodesAt_of_row_facts
+    Luffs.Memory.Scalar.u8 prevFreeBase (0 : BitVec 8) offsetsBase sizesBase
+    isFreeBase prevFreeBase nextBase previousBase count sentinel 0 count index mem
+    (by omega) (by omega) (by omega)
+  · intro row rowMem hrow
+    simpa [Luffs.Memory.Scalar.u8] using
+      clearPhysicalRowMemory_prevFree_encodes offsetsBase sizesBase isFreeBase
+        prevFreeBase nextBase previousBase count sentinel row rowMem hrow
+        hnext hprevious
+  · intro row selected rowMem hrow hselected hne hencoded
+    apply hencoded.applyAll_of_disjoint
+    intro write hwrite
+    simp only [clearPhysicalRowWrites, List.mem_cons, List.not_mem_nil,
+      or_false] at hwrite
+    rcases hwrite with hwrite | hwrite | hwrite | hwrite | hwrite | hwrite <;>
+      subst write
+    · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+        Luffs.Memory.Scalar.u8, ValueRegion] using
+        ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u64
+          Luffs.Memory.Scalar.u8 hrow hselected hoffsets
+    · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+        Luffs.Memory.Scalar.u8, ValueRegion] using
+        ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u64
+          Luffs.Memory.Scalar.u8 hrow hselected hsizes
+    · simpa [ElementWrite.region, u8Bytes_length, Luffs.Memory.Scalar.u8,
+        ValueRegion] using ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u8
+          Luffs.Memory.Scalar.u8 hrow hselected hisFree
+    · simpa [ElementWrite.region, u8Bytes_length, Luffs.Memory.Scalar.u8,
+        ValueRegion] using ValueRegion.element_disjoint Luffs.Memory.Scalar.u8
+          prevFreeBase row selected hne
+    · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+        Luffs.Memory.Scalar.u8, ValueRegion] using
+        ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u64
+          Luffs.Memory.Scalar.u8 hrow hselected hnext
+    · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+        Luffs.Memory.Scalar.u8, ValueRegion] using
+        ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u64
+          Luffs.Memory.Scalar.u8 hrow hselected hprevious
+
+theorem clearPhysicalRowMemory_next_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
+      count sentinel index : Nat) (mem : Memory) (hindex : index < count)
+    (hprevious : (ArrayRegion Luffs.Memory.Scalar.u64 previousBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 nextBase count)) :
+    (ElementWrite.applyAll
+      (clearPhysicalRowWrites offsetsBase sizesBase isFreeBase prevFreeBase
+        nextBase previousBase sentinel index) mem).EncodesAt
+      Luffs.Memory.Scalar.u64 (nextBase + index * 8)
+        (BitVec.ofNat 64 sentinel) := by
+  let before := ElementWrite.applyAll
+    [⟨offsetsBase, 8, index, usizeBytes 0⟩,
+      ⟨sizesBase, 8, index, usizeBytes 0⟩,
+      ⟨isFreeBase, 1, index, u8Bytes 0⟩,
+      ⟨prevFreeBase, 1, index, u8Bytes 0⟩] mem
+  have hnext :
+      ((⟨nextBase, 8, index, usizeBytes sentinel⟩ : ElementWrite).apply before).EncodesAt
+        Luffs.Memory.Scalar.u64 (nextBase + index * 8)
+          (BitVec.ofNat 64 sentinel) := by
+    simpa [ElementWrite.apply, usizeBytes, Luffs.Memory.Scalar.u64] using
+      Memory.writeElement_encodesAt Luffs.Memory.Scalar.u64 before nextBase
+        index (BitVec.ofNat 64 sentinel)
+  unfold clearPhysicalRowWrites
+  change ((⟨previousBase, 8, index, usizeBytes sentinel⟩ : ElementWrite).apply
+    ((⟨nextBase, 8, index, usizeBytes sentinel⟩ : ElementWrite).apply
+      (ElementWrite.applyAll
+        [⟨offsetsBase, 8, index, usizeBytes 0⟩,
+          ⟨sizesBase, 8, index, usizeBytes 0⟩,
+          ⟨isFreeBase, 1, index, u8Bytes 0⟩,
+          ⟨prevFreeBase, 1, index, u8Bytes 0⟩] mem))).EncodesAt
+        Luffs.Memory.Scalar.u64 (nextBase + index * 8)
+          (BitVec.ofNat 64 sentinel)
+  apply hnext.elementWrite_of_disjoint
+  simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+    ValueRegion] using ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u64
+      Luffs.Memory.Scalar.u64 hindex hindex hprevious
+
+theorem clearPhysicalMemory_next_encodesArray
+    (offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
+      count sentinel : Nat) (mem : Memory)
+    (hoffsets : (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 nextBase count))
+    (hsizes : (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 nextBase count))
+    (hisFree : (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 nextBase count))
+    (hprevFree : (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 nextBase count))
+    (hprevious : (ArrayRegion Luffs.Memory.Scalar.u64 previousBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 nextBase count)) :
+    (clearPhysicalMemory offsetsBase sizesBase isFreeBase prevFreeBase nextBase
+      previousBase sentinel 0 count mem).EncodesArray Luffs.Memory.Scalar.u64
+        nextBase (List.replicate count (BitVec.ofNat 64 sentinel)) := by
+  intro index hindex
+  have hindex' : index < count := by simpa using hindex
+  rw [List.getElem_replicate]
+  apply clearPhysicalMemory_encodesAt_of_row_facts
+    Luffs.Memory.Scalar.u64 nextBase (BitVec.ofNat 64 sentinel) offsetsBase
+    sizesBase isFreeBase prevFreeBase nextBase previousBase count sentinel 0
+    count index mem (by omega) (by omega) (by omega)
+  · intro row rowMem hrow
+    simpa [Luffs.Memory.Scalar.u64] using
+      clearPhysicalRowMemory_next_encodes offsetsBase sizesBase isFreeBase
+        prevFreeBase nextBase previousBase count sentinel row rowMem hrow hprevious
+  · intro row selected rowMem hrow hselected hne hencoded
+    apply hencoded.applyAll_of_disjoint
+    intro write hwrite
+    simp only [clearPhysicalRowWrites, List.mem_cons, List.not_mem_nil,
+      or_false] at hwrite
+    rcases hwrite with hwrite | hwrite | hwrite | hwrite | hwrite | hwrite <;>
+      subst write
+    · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+        ValueRegion] using ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u64
+          Luffs.Memory.Scalar.u64 hrow hselected hoffsets
+    · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+        ValueRegion] using ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u64
+          Luffs.Memory.Scalar.u64 hrow hselected hsizes
+    · simpa [ElementWrite.region, u8Bytes_length, Luffs.Memory.Scalar.u8,
+        Luffs.Memory.Scalar.u64, ValueRegion] using
+        ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u8
+          Luffs.Memory.Scalar.u64 hrow hselected hisFree
+    · simpa [ElementWrite.region, u8Bytes_length, Luffs.Memory.Scalar.u8,
+        Luffs.Memory.Scalar.u64, ValueRegion] using
+        ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u8
+          Luffs.Memory.Scalar.u64 hrow hselected hprevFree
+    · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+        ValueRegion] using ValueRegion.element_disjoint Luffs.Memory.Scalar.u64
+          nextBase row selected hne
+    · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+        ValueRegion] using ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u64
+          Luffs.Memory.Scalar.u64 hrow hselected hprevious
+
+theorem clearPhysicalRowMemory_previous_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
+      sentinel index : Nat) (mem : Memory) :
+    (ElementWrite.applyAll
+      (clearPhysicalRowWrites offsetsBase sizesBase isFreeBase prevFreeBase
+        nextBase previousBase sentinel index) mem).EncodesAt
+      Luffs.Memory.Scalar.u64 (previousBase + index * 8)
+        (BitVec.ofNat 64 sentinel) := by
+  let before := ElementWrite.applyAll
+    [⟨offsetsBase, 8, index, usizeBytes 0⟩,
+      ⟨sizesBase, 8, index, usizeBytes 0⟩,
+      ⟨isFreeBase, 1, index, u8Bytes 0⟩,
+      ⟨prevFreeBase, 1, index, u8Bytes 0⟩,
+      ⟨nextBase, 8, index, usizeBytes sentinel⟩] mem
+  unfold clearPhysicalRowWrites
+  change ((⟨previousBase, 8, index, usizeBytes sentinel⟩ : ElementWrite).apply
+    before).EncodesAt Luffs.Memory.Scalar.u64 (previousBase + index * 8)
+      (BitVec.ofNat 64 sentinel)
+  simpa [ElementWrite.apply, usizeBytes, Luffs.Memory.Scalar.u64] using
+    Memory.writeElement_encodesAt Luffs.Memory.Scalar.u64 before previousBase
+      index (BitVec.ofNat 64 sentinel)
+
+theorem clearPhysicalMemory_previous_encodesArray
+    (offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
+      count sentinel : Nat) (mem : Memory)
+    (hoffsets : (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 previousBase count))
+    (hsizes : (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 previousBase count))
+    (hisFree : (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 previousBase count))
+    (hprevFree : (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 previousBase count))
+    (hnext : (ArrayRegion Luffs.Memory.Scalar.u64 nextBase count).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 previousBase count)) :
+    (clearPhysicalMemory offsetsBase sizesBase isFreeBase prevFreeBase nextBase
+      previousBase sentinel 0 count mem).EncodesArray Luffs.Memory.Scalar.u64
+        previousBase (List.replicate count (BitVec.ofNat 64 sentinel)) := by
+  intro index hindex
+  have hindex' : index < count := by simpa using hindex
+  rw [List.getElem_replicate]
+  apply clearPhysicalMemory_encodesAt_of_row_facts
+    Luffs.Memory.Scalar.u64 previousBase (BitVec.ofNat 64 sentinel) offsetsBase
+    sizesBase isFreeBase prevFreeBase nextBase previousBase count sentinel 0
+    count index mem (by omega) (by omega) (by omega)
+  · intro row rowMem _
+    simpa [Luffs.Memory.Scalar.u64] using
+      clearPhysicalRowMemory_previous_encodes offsetsBase sizesBase isFreeBase
+        prevFreeBase nextBase previousBase sentinel row rowMem
+  · intro row selected rowMem hrow hselected hne hencoded
+    apply hencoded.applyAll_of_disjoint
+    intro write hwrite
+    simp only [clearPhysicalRowWrites, List.mem_cons, List.not_mem_nil,
+      or_false] at hwrite
+    rcases hwrite with hwrite | hwrite | hwrite | hwrite | hwrite | hwrite <;>
+      subst write
+    · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+        ValueRegion] using ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u64
+          Luffs.Memory.Scalar.u64 hrow hselected hoffsets
+    · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+        ValueRegion] using ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u64
+          Luffs.Memory.Scalar.u64 hrow hselected hsizes
+    · simpa [ElementWrite.region, u8Bytes_length, Luffs.Memory.Scalar.u8,
+        Luffs.Memory.Scalar.u64, ValueRegion] using
+        ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u8
+          Luffs.Memory.Scalar.u64 hrow hselected hisFree
+    · simpa [ElementWrite.region, u8Bytes_length, Luffs.Memory.Scalar.u8,
+        Luffs.Memory.Scalar.u64, ValueRegion] using
+        ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u8
+          Luffs.Memory.Scalar.u64 hrow hselected hprevFree
+    · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+        ValueRegion] using ArrayRegion.elements_disjoint Luffs.Memory.Scalar.u64
+          Luffs.Memory.Scalar.u64 hrow hselected hnext
+    · simpa [ElementWrite.region, usizeBytes_length, Luffs.Memory.Scalar.u64,
+        ValueRegion] using ValueRegion.element_disjoint Luffs.Memory.Scalar.u64
+          previousBase row selected hne
+
+structure PhysicalMetadataDisjoint
+    (offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
+      count : Nat) : Prop where
+  offsets_sizes : (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase count).disjoint
+    (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase count)
+  offsets_isFree : (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase count).disjoint
+    (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase count)
+  offsets_prevFree : (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase count).disjoint
+    (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase count)
+  offsets_next : (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase count).disjoint
+    (ArrayRegion Luffs.Memory.Scalar.u64 nextBase count)
+  offsets_previous : (ArrayRegion Luffs.Memory.Scalar.u64 offsetsBase count).disjoint
+    (ArrayRegion Luffs.Memory.Scalar.u64 previousBase count)
+  sizes_isFree : (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase count).disjoint
+    (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase count)
+  sizes_prevFree : (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase count).disjoint
+    (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase count)
+  sizes_next : (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase count).disjoint
+    (ArrayRegion Luffs.Memory.Scalar.u64 nextBase count)
+  sizes_previous : (ArrayRegion Luffs.Memory.Scalar.u64 sizesBase count).disjoint
+    (ArrayRegion Luffs.Memory.Scalar.u64 previousBase count)
+  isFree_prevFree : (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase count).disjoint
+    (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase count)
+  isFree_next : (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase count).disjoint
+    (ArrayRegion Luffs.Memory.Scalar.u64 nextBase count)
+  isFree_previous : (ArrayRegion Luffs.Memory.Scalar.u8 isFreeBase count).disjoint
+    (ArrayRegion Luffs.Memory.Scalar.u64 previousBase count)
+  prevFree_next : (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase count).disjoint
+    (ArrayRegion Luffs.Memory.Scalar.u64 nextBase count)
+  prevFree_previous : (ArrayRegion Luffs.Memory.Scalar.u8 prevFreeBase count).disjoint
+    (ArrayRegion Luffs.Memory.Scalar.u64 previousBase count)
+  next_previous : (ArrayRegion Luffs.Memory.Scalar.u64 nextBase count).disjoint
+    (ArrayRegion Luffs.Memory.Scalar.u64 previousBase count)
+
+theorem clearPhysicalMemory_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase nextBase previousBase
+      count sentinel : Nat) (mem : Memory)
+    (hdisjoint : PhysicalMetadataDisjoint offsetsBase sizesBase isFreeBase
+      prevFreeBase nextBase previousBase count) :
+    let final := clearPhysicalMemory offsetsBase sizesBase isFreeBase prevFreeBase
+      nextBase previousBase sentinel 0 count mem
+    final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+        (List.replicate count (0 : BitVec 64)) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+        (List.replicate count (0 : BitVec 64)) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+        (List.replicate count (0 : BitVec 8)) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+        (List.replicate count (0 : BitVec 8)) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+        (List.replicate count (BitVec.ofNat 64 sentinel)) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+        (List.replicate count (BitVec.ofNat 64 sentinel)) := by
+  dsimp only
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+  · exact clearPhysicalMemory_offsets_encodesArray offsetsBase sizesBase
+      isFreeBase prevFreeBase nextBase previousBase count sentinel mem
+      (disjoint_symmetric.mp hdisjoint.offsets_sizes)
+      (disjoint_symmetric.mp hdisjoint.offsets_isFree)
+      (disjoint_symmetric.mp hdisjoint.offsets_prevFree)
+      (disjoint_symmetric.mp hdisjoint.offsets_next)
+      (disjoint_symmetric.mp hdisjoint.offsets_previous)
+  · exact clearPhysicalMemory_sizes_encodesArray offsetsBase sizesBase
+      isFreeBase prevFreeBase nextBase previousBase count sentinel mem
+      hdisjoint.offsets_sizes (disjoint_symmetric.mp hdisjoint.sizes_isFree)
+      (disjoint_symmetric.mp hdisjoint.sizes_prevFree)
+      (disjoint_symmetric.mp hdisjoint.sizes_next)
+      (disjoint_symmetric.mp hdisjoint.sizes_previous)
+  · exact clearPhysicalMemory_isFree_encodesArray offsetsBase sizesBase
+      isFreeBase prevFreeBase nextBase previousBase count sentinel mem
+      hdisjoint.offsets_isFree hdisjoint.sizes_isFree
+      (disjoint_symmetric.mp hdisjoint.isFree_prevFree)
+      (disjoint_symmetric.mp hdisjoint.isFree_next)
+      (disjoint_symmetric.mp hdisjoint.isFree_previous)
+  · exact clearPhysicalMemory_prevFree_encodesArray offsetsBase sizesBase
+      isFreeBase prevFreeBase nextBase previousBase count sentinel mem
+      hdisjoint.offsets_prevFree hdisjoint.sizes_prevFree
+      hdisjoint.isFree_prevFree (disjoint_symmetric.mp hdisjoint.prevFree_next)
+      (disjoint_symmetric.mp hdisjoint.prevFree_previous)
+  · exact clearPhysicalMemory_next_encodesArray offsetsBase sizesBase
+      isFreeBase prevFreeBase nextBase previousBase count sentinel mem
+      hdisjoint.offsets_next hdisjoint.sizes_next hdisjoint.isFree_next
+      hdisjoint.prevFree_next (disjoint_symmetric.mp hdisjoint.next_previous)
+  · exact clearPhysicalMemory_previous_encodesArray offsetsBase sizesBase
+      isFreeBase prevFreeBase nextBase previousBase count sentinel mem
+      hdisjoint.offsets_previous hdisjoint.sizes_previous
+      hdisjoint.isFree_previous hdisjoint.prevFree_previous
+      hdisjoint.next_previous
+
 theorem clearPhysicalMemory_mapped (offsetsBase sizesBase isFreeBase prevFreeBase
     nextBase previousBase sentinel start count : Nat) (mem : Memory)
     {p : Nat} (hmapped : mem.mapped p) :

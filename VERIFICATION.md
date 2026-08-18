@@ -160,14 +160,17 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   first-level bitmap scalar, and head array decode to their cleared values
   after their interleaved stores. Cross-array preservation is justified by
   whole-array region disjointness and element-subregion lemmas.
-  The same decoding bridge now covers the physical loop's offsets, sizes, and
-  free-flag fields. A row establishes each field at its native width while
+  The same decoding bridge now covers all six physical-loop arrays: offsets,
+  sizes, both one-byte flags, and both sentinel-valued intrusive links. A row
+  establishes each field at its native width while
   preserving it across the other heterogeneous metadata writes; induction
   over the remaining rows proves every element of each complete array decodes
   to zero. The shared induction theorem separates per-row establishment from
   preservation by distinct rows, using only pairwise array-region disjointness
   plus same-array distinct-index disjointness. It is the reusable pattern for
-  the remaining physical metadata arrays.
+  all physical metadata arrays. `clearPhysicalMemory_encodes` packages the six
+  decoded arrays behind one explicit pairwise-disjoint metadata-layout
+  predicate, ready for the final seeding transaction.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

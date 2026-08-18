@@ -103,6 +103,13 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   and restores a valid allocator state. Thus allocator operations cannot write
   client-owned live allocations: those bytes occur only in the framed client
   resources, never in the allocator's `OwnsFree` invariant.
+  The concrete fixed-array `allocateArrays` entry point now has the same
+  theorem, not merely a standalone ownership corollary: every successful
+  generated-layout execution witnesses the abstract TLSF transition, returns
+  a live block disjoint from every previously live block, preserves an
+  arbitrary client frame, and transfers the sole `OwnsBytes` capability for
+  the returned region. This connects the user-facing array implementation to
+  the API theorem that prevents allocator writes into live client storage.
 - [x] Define the first pure block layout predicates and prove that splitting
   and coalescing preserve byte counts.
 - [x] Implement size-class mapping and prove every `(fl, sl)` index in range.

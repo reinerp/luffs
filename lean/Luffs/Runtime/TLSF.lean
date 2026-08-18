@@ -1,7 +1,7 @@
 import Luffs.Allocator.TLSF.FreeList
 import Luffs.Allocator.TLSF.Bitmap
 import Luffs.Allocator.TLSF.Bins
-import Luffs.Allocator.TLSF.Dealloc
+import Luffs.Allocator.TLSF.API
 
 set_option autoImplicit false
 
@@ -6667,6 +6667,63 @@ theorem allocateArrays_ownsFree
   · simpa [abstractResult] using hresultOffset
   · simpa [abstractResult] using hresultBytes
   · exact Luffs.Allocator.TLSF.Ownership.allocate_ownsFree pool hvalid habstract
+
+/-- The complete allocator API theorem for the concrete fixed-array TLSF
+entry point. In addition to refining the abstract allocator, a successful call
+returns a live region disjoint from every allocation that was already live and
+transfers its sole exclusive byte capability, while an arbitrary client frame
+is preserved. Thus the concrete allocator retains authority only over free
+regions; it cannot write a caller's live allocation. -/
+theorem allocateArrays_api
+    {PROP : Type} [Iris.BI PROP] [Luffs.Memory.ByteRegionLogic PROP]
+    {pool : Luffs.Memory.Region} {blocks : List Block} {state : Bins.State}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {request : Nat}
+    {result : AllocateArraysResult}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hsecond : RepresentsSecondBitmap second state)
+    (hfirst : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hphysical : RepresentsPhysicalArrays offsets sizes isFree prevFree
+      count blocks)
+    (hsuccess : allocateArrays offsets sizes isFree prevFree count second first
+      heads next previous request = some result)
+    (frame : PROP) :
+    ∃ (hrequest : 0 < request)
+        (hkeyMax : requestKey request < 2 ^ firstLevelCount)
+        (abstractResult : Alloc.Result),
+      Alloc.allocate { physical := blocks, bins := state } request hrequest
+          hkeyMax = some abstractResult ∧
+      result.allocatedOffset = abstractResult.allocated.offset ∧
+      result.allocatedBytes = abstractResult.allocated.bytes ∧
+      Alloc.Valid pool abstractResult.state ∧
+      Luffs.Allocator.TLSF.API.Live abstractResult.state
+        abstractResult.allocated ∧
+      (∀ old, Luffs.Allocator.TLSF.API.Live
+          { physical := blocks, bins := state } old →
+        ∃ updated, Luffs.Allocator.TLSF.API.Live abstractResult.state updated ∧
+          Bins.SamePhysical updated old ∧
+          updated ≠ abstractResult.allocated ∧
+          (abstractResult.allocated.region pool).disjoint
+            (updated.region pool)) ∧
+      (frame ∗ Luffs.Allocator.TLSF.Ownership.OwnsFree
+          (PROP := PROP) pool blocks ⊣⊢
+        Luffs.Memory.OwnsBytes (abstractResult.allocated.region pool) ∗
+          (frame ∗ Luffs.Allocator.TLSF.Ownership.OwnsFree pool
+            abstractResult.state.physical)) := by
+  obtain ⟨hrequest, hkeyMax, abstractResult, habstract, hoffset, hbytes,
+      _, _, _, _, _, _, _⟩ := allocateArrays_ownsFree hvalid hsecond hfirst
+    hbins hdisjoint hphysical hsuccess
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, hphysicalStep, _⟩ :=
+    allocateArrays_result hsuccess
+  have haligned : alignment ∣ request :=
+    (allocatePhysicalArrays_result hphysicalStep).1
+  obtain ⟨hnext, hlive, hpreserved, hownership⟩ :=
+    Luffs.Allocator.TLSF.API.allocate hvalid haligned habstract frame
+  exact ⟨hrequest, hkeyMax, abstractResult, habstract, hoffset, hbytes,
+    hnext, hlive, hpreserved, hownership⟩
 
 /-- Exact fixed-array effect of `tlsf_coalesce_physical`. The active right
 header is deleted by left-compacting the suffix; the final array slot is spare

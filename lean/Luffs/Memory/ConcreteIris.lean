@@ -129,6 +129,19 @@ theorem ghostOwnsBytes_overlap_exclusive {GF : BundledGFunctors} [G : ByteRegion
   ihave %hne := ghost_map_elem_ne G.name p p (.own 1) () () $$ Ha Hb
   exact (hne rfl).elim
 
+/-- Owning two nonempty mutable regions simultaneously exposes the pure Rust
+aliasing fact needed by clients: their address ranges are disjoint. -/
+theorem ghostOwnsBytes_disjoint {GF : BundledGFunctors} [G : ByteRegionGS GF]
+    {a b : Region} (ha : 0 < a.bytes) (hb : 0 < b.bytes) :
+    ghostOwnsBytes (G := G) a ∗ ghostOwnsBytes b ⊢ ⌜a.disjoint b⌝ := by
+  iintro H
+  by_cases hdisjoint : a.disjoint b
+  · ipureintro
+    exact hdisjoint
+  · obtain ⟨p, hap, hbp⟩ := common_address_of_not_disjoint ha hb hdisjoint
+    iexfalso
+    iapply ghostOwnsBytes_overlap_exclusive hap hbp $$ H
+
 /-- A live mutable borrow cannot overlap any shared borrow. This is the Iris
 form of Rust's "there exists no other live reference" rule for `&mut`. -/
 theorem mutable_shared_overlap_exclusive {GF : BundledGFunctors} [G : ByteRegionGS GF]

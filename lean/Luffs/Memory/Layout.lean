@@ -54,4 +54,19 @@ theorem not_contains_of_disjoint {a b : Region} (h : a.disjoint b)
   · exact (Nat.not_lt_of_ge (Nat.le_trans h hbp.1)) hp.2
   · exact (Nat.not_lt_of_ge (Nat.le_trans h hp.1)) hbp.2
 
+theorem common_address_of_not_disjoint {a b : Region}
+    (ha : 0 < a.bytes) (hb : 0 < b.bytes) (h : ¬a.disjoint b) :
+    ∃ p, a.contains p ∧ b.contains p := by
+  simp only [Region.disjoint, Region.endAddr, not_or] at h
+  have hrightA : b.base < a.base + a.bytes := Nat.lt_of_not_ge h.1
+  have hrightB : a.base < b.base + b.bytes := Nat.lt_of_not_ge h.2
+  by_cases hab : a.base ≤ b.base
+  · refine ⟨b.base, ?_, ?_⟩
+    · exact ⟨hab, hrightA⟩
+    · exact ⟨Nat.le_refl _, Nat.lt_add_of_pos_right hb⟩
+  · have hba : b.base < a.base := Nat.lt_of_not_ge hab
+    refine ⟨a.base, ?_, ?_⟩
+    · exact ⟨Nat.le_refl _, Nat.lt_add_of_pos_right ha⟩
+    · exact ⟨Nat.le_of_lt hba, hrightB⟩
+
 end Luffs.Memory

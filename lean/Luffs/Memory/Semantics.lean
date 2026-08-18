@@ -39,6 +39,48 @@ theorem Memory.mapped_writeBytes {mem : Memory} {base : Addr}
   | cons value rest ih =>
       exact ih (Memory.mapped_write hmapped)
 
+theorem Memory.writeBytes_eq_of_outside {mem : Memory} {base q : Addr}
+    {values : List Byte}
+    (houtside : q < base ∨ base + values.length ≤ q) :
+    mem.writeBytes base values q = mem q := by
+  induction values generalizing mem base q with
+  | nil => rfl
+  | cons value rest ih =>
+      simp only [Memory.writeBytes]
+      rw [ih]
+      · have hne : q ≠ base := by
+          rcases houtside with hbefore | hafter
+          · exact Nat.ne_of_lt hbefore
+          · simp only [List.length_cons] at hafter
+            have hpositive : 0 < rest.length + 1 := Nat.zero_lt_succ _
+            have hlt : base < q :=
+              Nat.lt_of_lt_of_le (Nat.lt_add_of_pos_right hpositive) hafter
+            exact Ne.symm (Nat.ne_of_lt hlt)
+        simp [Memory.write, hne]
+      · rcases houtside with hbefore | hafter
+        · exact Or.inl (Nat.lt_trans hbefore (Nat.lt_succ_self base))
+        · simp only [List.length_cons] at hafter
+          exact Or.inr (by
+            simpa [Nat.add_assoc, Nat.add_comm 1 rest.length] using hafter)
+
+theorem Memory.writeBytes_get {mem : Memory} {base : Addr}
+    {values : List Byte} {i : Nat} (hi : i < values.length) :
+    mem.writeBytes base values (base + i) = some values[i] := by
+  induction values generalizing mem base i with
+  | nil => simp at hi
+  | cons value rest ih =>
+      cases i with
+      | zero =>
+          simp only [Memory.writeBytes, Nat.add_zero, List.getElem_cons_zero]
+          rw [Memory.writeBytes_eq_of_outside (values := rest) (q := base)
+            (Or.inl (by simp))]
+          simp [Memory.write]
+      | succ i =>
+          have hitail : i < rest.length := by simpa using hi
+          simp only [Memory.writeBytes, List.getElem_cons_succ]
+          simpa [Nat.add_assoc, Nat.add_comm 1 i] using
+            (ih (mem := mem.write base value) (base := base + 1) hitail)
+
 def Memory.mapZeroed (mem : Memory) (r : Region) : Memory :=
   fun p => if r.contains p then some 0 else mem p
 

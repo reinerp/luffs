@@ -21,6 +21,62 @@ structure Codec (α : Type) where
 def ValueRegion {α : Type} (codec : Codec α) (base : Addr) : Region :=
   { base, bytes := codec.size }
 
+/-- Extensional connection between concrete machine memory and one encoded
+value. This is the pure representation predicate used to connect operational
+WPs to functional array models. -/
+def Memory.EncodesAt {α : Type} (codec : Codec α) (mem : Memory)
+    (base : Addr) (value : α) : Prop :=
+  ∀ i, (hi : i < codec.size) →
+    mem (base + i) = some ((codec.encode value).get
+      ⟨i, by simpa [codec.encode_length] using hi⟩)
+
+def Memory.EncodesArray {α : Type} (codec : Codec α) (mem : Memory)
+    (base : Addr) (values : List α) : Prop :=
+  ∀ index, (hindex : index < values.length) →
+    mem.EncodesAt codec (base + index * codec.size) values[index]
+
+theorem Memory.writeBytes_encodesAt {α : Type} (codec : Codec α)
+    (mem : Memory) (base : Addr) (value : α) :
+    (mem.writeBytes base (codec.encode value)).EncodesAt codec base value := by
+  intro i hi
+  have hi' : i < (codec.encode value).length := by
+    simpa [codec.encode_length] using hi
+  simpa using writeBytes_get (mem := mem) (base := base) hi'
+
+/-- A store outside an encoded value's region preserves its representation.
+The pointwise premise is the arithmetic form generated from pairwise-disjoint
+Rust mutable-slice regions. -/
+theorem Memory.EncodesAt.writeBytes_of_outside {α : Type}
+    {codec : Codec α} {mem : Memory} {valueBase writeBase : Addr}
+    {value : α} {bytes : List Byte}
+    (hencoded : mem.EncodesAt codec valueBase value)
+    (houtside : ∀ i, i < codec.size →
+      valueBase + i < writeBase ∨ writeBase + bytes.length ≤ valueBase + i) :
+    (mem.writeBytes writeBase bytes).EncodesAt codec valueBase value := by
+  intro i hi
+  rw [writeBytes_eq_of_outside (houtside i hi)]
+  exact hencoded i hi
+
+theorem Memory.EncodesAt.writeBytes_of_disjoint {α : Type}
+    {codec : Codec α} {mem : Memory} {valueBase writeBase : Addr}
+    {value : α} {bytes : List Byte}
+    (hencoded : mem.EncodesAt codec valueBase value)
+    (hdisjoint : (Region.mk writeBase bytes.length).disjoint
+      (ValueRegion codec valueBase)) :
+    (mem.writeBytes writeBase bytes).EncodesAt codec valueBase value := by
+  apply hencoded.writeBytes_of_outside
+  intro i hi
+  unfold Region.disjoint Region.endAddr ValueRegion at hdisjoint
+  rcases hdisjoint with hbefore | hafter
+  · exact Or.inr (Nat.le_trans hbefore (Nat.le_add_right valueBase i))
+  · exact Or.inl (Nat.lt_of_lt_of_le (Nat.add_lt_add_left hi valueBase) hafter)
+
+theorem Memory.writeElement_encodesAt {α : Type} (codec : Codec α)
+    (mem : Memory) (base index : Nat) (value : α) :
+    (mem.writeBytes (base + index * codec.size) (codec.encode value)).EncodesAt
+      codec (base + index * codec.size) value :=
+  Memory.writeBytes_encodesAt codec mem _ value
+
 /-- Exclusive allocated storage together with authoritative knowledge of its
 initialized byte contents. -/
 def OwnsValue {GF : BundledGFunctors} [ByteRegionGS GF] [ByteContentsGS GF]

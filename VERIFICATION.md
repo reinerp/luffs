@@ -143,6 +143,14 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   identifies the unique final extensional memory for every store in the
   successful fixed-array initializer, with all dynamic indices justified by
   its successful classifier edge.
+  The operational-to-functional decoding layer now defines `Memory.EncodesAt`
+  and `Memory.EncodesArray`, proves exact stores establish an encoded value,
+  and proves disjoint stores preserve existing encodings. At the aliasing
+  boundary, `ghostOwnsBytes_disjoint` derives a pure region-disjointness fact
+  from two simultaneous nonempty Iris mutable-region capabilities; it is not
+  assumed as an unrelated arithmetic axiom. These lemmas supply the bridge
+  from Rust `&mut` non-aliasing to preservation of the other eight metadata
+  arrays during each initializer store.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

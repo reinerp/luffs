@@ -171,6 +171,11 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   all physical metadata arrays. `clearPhysicalMemory_encodes` packages the six
   decoded arrays behind one explicit pairwise-disjoint metadata-layout
   predicate, ready for the final seeding transaction.
+  Typed seed updates now have a representation rule matching Rust assignment:
+  a native encoded store at `array[index]` transforms an encoded list into
+  `values.set index value`, while a distinct-index proof preserves every other
+  element. A generic pairwise-region lemma also extracts the disjointness of
+  named metadata regions from a pairwise layout hypothesis.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

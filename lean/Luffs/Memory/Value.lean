@@ -185,6 +185,23 @@ theorem ArrayRegion.elements_disjoint {α β : Type}
   have hleftRegion := ArrayRegion.element_disjoint leftCodec hleft hdisjoint
   exact ArrayRegion.disjoint_element rightCodec hright hleftRegion
 
+theorem pairwiseDisjoint_of_mem {regions : List Region} {left right : Region}
+    (hpairwise : regions.Pairwise Region.disjoint)
+    (hleft : left ∈ regions) (hright : right ∈ regions) (hne : left ≠ right) :
+    left.disjoint right := by
+  induction regions generalizing left right with
+  | nil => simp at hleft
+  | cons head tail ih =>
+      simp only [List.pairwise_cons] at hpairwise
+      simp only [List.mem_cons] at hleft hright
+      rcases hleft with rfl | hleft
+      · rcases hright with hright | hright
+        · exact False.elim (hne hright.symm)
+        · exact hpairwise.1 _ hright
+      · rcases hright with rfl | hright
+        · exact disjoint_symmetric.mp (hpairwise.1 _ hleft)
+        · exact ih hpairwise.2 hleft hright hne
+
 def ElementWrite.region (write : ElementWrite) : Region :=
   { base := write.base + write.index * write.width,
     bytes := write.bytes.length }
@@ -237,6 +254,26 @@ theorem Memory.EncodesArray.fillElements_of_disjoint {α β : Type}
   intro writeIndex hlo hhi
   simpa [ValueRegion, writeCodec.encode_length] using
     ArrayRegion.disjoint_element codec hindex (hdisjoint writeIndex hlo hhi)
+
+/-- A native element assignment updates exactly the corresponding entry of a
+typed encoded array. This is the representation rule for Rust `array[i] = v`.
+-/
+theorem Memory.EncodesArray.writeElement {α : Type} {codec : Codec α}
+    {mem : Memory} {base : Nat} {values : List α} {index : Nat} {value : α}
+    (hencoded : mem.EncodesArray codec base values) (hindex : index < values.length) :
+    (mem.writeBytes (base + index * codec.size) (codec.encode value)).EncodesArray
+      codec base (values.set index value) := by
+  intro other hother
+  have hother' : other < values.length := by
+    simpa [List.length_set] using hother
+  by_cases heq : index = other
+  · subst other
+    rw [List.getElem_set_self]
+    exact Memory.writeElement_encodesAt codec mem base index value
+  · rw [List.getElem_set_ne heq]
+    apply (hencoded other hother').writeBytes_of_disjoint
+    simpa [ValueRegion, codec.encode_length] using
+      ValueRegion.element_disjoint codec base index other heq
 
 theorem Memory.fillElements_encodesArray {α : Type} (codec : Codec α)
     (mem : Memory) (base count : Nat) (value : α) :

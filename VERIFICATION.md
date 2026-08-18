@@ -1208,6 +1208,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   and proves that its closed WP encodes the complete returned machine state.
   No proof-only bin argument appears at this public boundary. The two
   conditional coalescing calls remain the next operational deallocation work.
+  Physical coalescing now has its first operational layer. A deterministic
+  write trace stores the merged size and performs the Luffs source loop's
+  four-field left compaction in order. Native-width and mappedness theorems
+  derive a closed exact WP from the successful physical preflight bounds. The
+  next step is decoding this trace to `coalescePhysicalArrays`, then composing
+  it between the two class removals and the merged-class insertion.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

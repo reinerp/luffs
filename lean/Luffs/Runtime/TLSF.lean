@@ -22909,6 +22909,183 @@ theorem deallocateUncoalescedArraysOutcome_successfulInterleavedProgram_wp
   exact ⟨hsecondFinal, hfirstFinal, hheadsFinal, hnextFinal, hpreviousFinal,
     hoffsetsFinal, hsizesFinal, hfreeFinal, hprevFinal, hcountFinal⟩
 
+/-- Source-ordered stores of the left-compacting physical-header loop.  The
+source values are the preflight snapshot; copying toward lower indices means a
+source slot is never overwritten before it is read. -/
+def compactPhysicalWrites (offsetsBase sizesBase isFreeBase prevFreeBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (cursor remaining : Nat) : List ElementWrite :=
+  match remaining with
+  | 0 => []
+  | remaining + 1 =>
+      [⟨offsetsBase, 8, cursor,
+          InitializeProgram.usizeBytes (offsets[cursor + 1]?.getD 0)⟩,
+       ⟨sizesBase, 8, cursor,
+          InitializeProgram.usizeBytes (sizes[cursor + 1]?.getD 0)⟩,
+       ⟨isFreeBase, 1, cursor,
+          InitializeProgram.u8Bytes (isFree[cursor + 1]?.getD 0)⟩,
+       ⟨prevFreeBase, 1, cursor,
+          InitializeProgram.u8Bytes (prevFree[cursor + 1]?.getD 0)⟩] ++
+      compactPhysicalWrites offsetsBase sizesBase isFreeBase prevFreeBase
+        offsets sizes isFree prevFree (cursor + 1) remaining
+
+/-- Mutation phase of `tlsf_coalesce_physical`: store the merged size, then
+compact every later active header one slot to the left. -/
+def coalescePhysicalWrites (offsetsBase sizesBase isFreeBase prevFreeBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (count left mergedSize : Nat) : List ElementWrite :=
+  [⟨sizesBase, 8, left, InitializeProgram.usizeBytes mergedSize⟩] ++
+  compactPhysicalWrites offsetsBase sizesBase isFreeBase prevFreeBase offsets
+    sizes isFree prevFree (left + 1) (count - (left + 1) - 1)
+
+def coalescePhysicalProgram
+    (offsetsBase sizesBase isFreeBase prevFreeBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (count left mergedSize : Nat) : Program :=
+  Program.writeElements
+    (coalescePhysicalWrites offsetsBase sizesBase isFreeBase prevFreeBase
+      offsets sizes isFree prevFree count left mergedSize)
+
+theorem compactPhysicalWrites_width
+    (offsetsBase sizesBase isFreeBase prevFreeBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (cursor remaining : Nat) :
+    ∀ write, write ∈ compactPhysicalWrites offsetsBase sizesBase isFreeBase
+      prevFreeBase offsets sizes isFree prevFree cursor remaining →
+      write.bytes.length = write.width := by
+  induction remaining generalizing cursor with
+  | zero => simp [compactPhysicalWrites]
+  | succ remaining ih =>
+      intro write hwrite
+      simp only [compactPhysicalWrites, List.mem_append, List.mem_cons,
+        List.not_mem_nil, _root_.or_false] at hwrite
+      rcases hwrite with (rfl | rfl | rfl | rfl) | hwrite
+      · exact InitializeProgram.usizeBytes_length _
+      · exact InitializeProgram.usizeBytes_length _
+      · exact InitializeProgram.u8Bytes_length _
+      · exact InitializeProgram.u8Bytes_length _
+      · exact ih (cursor + 1) write hwrite
+
+theorem coalescePhysicalWrites_width
+    (offsetsBase sizesBase isFreeBase prevFreeBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (count left mergedSize : Nat) :
+    ∀ write, write ∈ coalescePhysicalWrites offsetsBase sizesBase isFreeBase
+      prevFreeBase offsets sizes isFree prevFree count left mergedSize →
+      write.bytes.length = write.width := by
+  intro write hwrite
+  simp only [coalescePhysicalWrites, List.mem_append, List.mem_cons,
+    List.not_mem_nil, _root_.or_false] at hwrite
+  rcases hwrite with rfl | hwrite
+  · exact InitializeProgram.usizeBytes_length _
+  · exact compactPhysicalWrites_width _ _ _ _ _ _ _ _ _ _ write hwrite
+
+/-- Exact deterministic WP for the coalescing compaction transaction.  A
+subsequent theorem discharges `hmapped` from the successful pure result and the
+fixed-array metadata layout. -/
+theorem coalescePhysicalProgram_wp_exact {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (count left mergedSize : Nat) (mem : Memory)
+    (hmapped : ∀ write, write ∈
+      coalescePhysicalWrites offsetsBase sizesBase isFreeBase prevFreeBase
+        offsets sizes isFree prevFree count left mergedSize →
+      ∀ i, i < write.width →
+        mem.mapped (write.base + write.index * write.width + i)) :
+    ⊢@{IProp GF} Program.wp
+      (coalescePhysicalProgram offsetsBase sizesBase isFreeBase prevFreeBase
+        offsets sizes isFree prevFree count left mergedSize) mem
+      (fun final => final = ElementWrite.applyAll
+        (coalescePhysicalWrites offsetsBase sizesBase isFreeBase prevFreeBase
+          offsets sizes isFree prevFree count left mergedSize) mem) := by
+  unfold coalescePhysicalProgram
+  apply Program.writeElements_wp_exact
+  · exact coalescePhysicalWrites_width _ _ _ _ _ _ _ _ _ _ _
+  · exact hmapped
+
+theorem compactPhysicalWrites_mapped
+    (offsetsBase sizesBase isFreeBase prevFreeBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (cursor remaining : Nat) (mem : Memory)
+    (hoffsetsBound : cursor + remaining < offsets.length)
+    (hsizesBound : cursor + remaining < sizes.length)
+    (hfreeBound : cursor + remaining < isFree.length)
+    (hprevBound : cursor + remaining < prevFree.length)
+    (hoffsetsMapped : ∀ index, index < offsets.length → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizesMapped : ∀ index, index < sizes.length → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hfreeMapped : ∀ index, index < isFree.length →
+      mem.mapped (isFreeBase + index))
+    (hprevMapped : ∀ index, index < prevFree.length →
+      mem.mapped (prevFreeBase + index)) :
+    ∀ write, write ∈ compactPhysicalWrites offsetsBase sizesBase isFreeBase
+      prevFreeBase offsets sizes isFree prevFree cursor remaining →
+      ∀ i, i < write.width →
+        mem.mapped (write.base + write.index * write.width + i) := by
+  induction remaining generalizing cursor with
+  | zero => simp [compactPhysicalWrites]
+  | succ remaining ih =>
+      intro write hwrite i hi
+      simp only [compactPhysicalWrites, List.mem_append, List.mem_cons,
+        List.not_mem_nil, _root_.or_false] at hwrite
+      rcases hwrite with (rfl | rfl | rfl | rfl) | hwrite
+      · simpa using hoffsetsMapped cursor (by omega) i hi
+      · simpa using hsizesMapped cursor (by omega) i hi
+      · simp at hi
+        subst i
+        simpa using hfreeMapped cursor (by omega)
+      · simp at hi
+        subst i
+        simpa using hprevMapped cursor (by omega)
+      · apply ih (cursor + 1) (by omega) (by omega) (by omega) (by omega)
+          write hwrite i hi
+
+/-- Successful physical preflight bounds discharge mappedness for every store
+in the complete left-compaction transaction. -/
+theorem coalescePhysicalProgram_wp_exact_mapped {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (count left mergedSize : Nat) (mem : Memory)
+    (hcountOffsets : count ≤ offsets.length)
+    (hcountSizes : count ≤ sizes.length)
+    (hcountFree : count ≤ isFree.length)
+    (hcountPrev : count ≤ prevFree.length)
+    (hright : left + 1 < count)
+    (hoffsetsMapped : ∀ index, index < offsets.length → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizesMapped : ∀ index, index < sizes.length → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hfreeMapped : ∀ index, index < isFree.length →
+      mem.mapped (isFreeBase + index))
+    (hprevMapped : ∀ index, index < prevFree.length →
+      mem.mapped (prevFreeBase + index)) :
+    ⊢@{IProp GF} Program.wp
+      (coalescePhysicalProgram offsetsBase sizesBase isFreeBase prevFreeBase
+        offsets sizes isFree prevFree count left mergedSize) mem
+      (fun final => final = ElementWrite.applyAll
+        (coalescePhysicalWrites offsetsBase sizesBase isFreeBase prevFreeBase
+          offsets sizes isFree prevFree count left mergedSize) mem) := by
+  apply coalescePhysicalProgram_wp_exact
+  intro write hwrite i hi
+  simp only [coalescePhysicalWrites, List.mem_append, List.mem_cons,
+    List.not_mem_nil, _root_.or_false] at hwrite
+  rcases hwrite with rfl | hwrite
+  · exact hsizesMapped left (by omega) i hi
+  · apply compactPhysicalWrites_mapped offsetsBase sizesBase isFreeBase
+      prevFreeBase offsets sizes isFree prevFree (left + 1)
+      (count - (left + 1) - 1) mem
+    · omega
+    · omega
+    · omega
+    · omega
+    · exact hoffsetsMapped
+    · exact hsizesMapped
+    · exact hfreeMapped
+    · exact hprevMapped
+    · exact hwrite
+    · exact hi
+
 end DeallocateProgram
 
 end Luffs.Runtime.TLSF

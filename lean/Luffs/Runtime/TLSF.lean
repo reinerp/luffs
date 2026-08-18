@@ -14983,6 +14983,123 @@ theorem allocatePhysicalWholeProgram_wp_refines_frames_class
         heads.length next.length previous.length block count layout (by omega)
         (by omega) .previous write hwrite
 
+/-- Whole-block physical allocation also frames the three physical fields it
+does not write.  Together with the class-frame theorem this gives the complete
+ten-field postcondition required by public allocation. -/
+theorem allocatePhysicalWholeProgram_wp_refines_frames_all
+    {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (block count request : Nat)
+    (result : AllocatePhysicalResult) (mem : Memory)
+    (hsuccess : allocatePhysicalArrays offsets sizes isFree prevFree count block
+      request = some result)
+    (hwhole : result.remainderOffset = none)
+    (layout : MetadataLayout offsetsBase sizesBase isFreeBase prevFreeBase
+      countBase secondBase firstBase headsBase nextBase previousBase offsets.length
+      sizes.length isFree.length prevFree.length second.length heads.length
+      next.length previous.length)
+    (hfreeMapped : mem.mapped (isFreeBase + block))
+    (hprevMapped : block + 1 < count →
+      mem.mapped (prevFreeBase + (block + 1)))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree))
+    (hsecond : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hfirst : mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase first)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous))
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hcount : mem.EncodesAt Luffs.Memory.Scalar.u64 countBase
+      (BitVec.ofNat 64 count)) :
+    ⊢@{IProp GF} Program.wp
+      (AllocateProgram.allocateWholeProgram isFreeBase prevFreeBase block count)
+      mem (fun final =>
+        ((final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+            (AllocateProgram.encodeFlags result.isFree) ∧
+          final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+            (AllocateProgram.encodeFlags result.prevFree)) ∧
+         final.EncodesArray Luffs.Memory.Scalar.u32 secondBase second ∧
+         final.EncodesAt Luffs.Memory.Scalar.u64 firstBase first ∧
+         final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+           (InitializeProgram.encodeNats heads) ∧
+         final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+           (InitializeProgram.encodeNats next) ∧
+         final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+           (InitializeProgram.encodeNats previous)) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+          (InitializeProgram.encodeNats offsets) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+          (InitializeProgram.encodeNats sizes) ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 countBase
+          (BitVec.ofNat 64 count)) := by
+  obtain ⟨_, _, _, hfreeLength, hprevLength, hblock, _, _, _, _, _, _, _, _, _⟩ :=
+    allocatePhysicalArrays_result hsuccess
+  apply wp_and
+    (allocatePhysicalWholeProgram_wp_refines_frames_class offsetsBase sizesBase
+      isFreeBase prevFreeBase countBase secondBase firstBase headsBase nextBase
+      previousBase offsets.length sizes.length offsets sizes isFree prevFree
+      second first heads next previous block count request result mem hsuccess
+      hwhole layout hfreeMapped hprevMapped hfree hprev hsecond hfirst hheads
+      hnext hprevious)
+  apply Program.wp_mono
+    (AllocateProgram.allocateWholeProgram_wp_exact isFreeBase prevFreeBase block
+      count mem hfreeMapped hprevMapped)
+  intro final hfinal
+  subst final
+  have hblockFree : block < isFree.length :=
+    Nat.lt_of_lt_of_le hblock hfreeLength
+  refine ⟨?_, ?_, ?_⟩
+  · apply hoffsets.applyAll_of_disjoint
+    intro write hwrite
+    simp [AllocateProgram.allocateWholeWrites] at hwrite
+    rcases hwrite with rfl | ⟨hsuccessor, rfl⟩
+    · simpa [ElementWrite.region, InitializeProgram.u8Bytes_length,
+        InitializeProgram.encodeNats, ValueRegion, Luffs.Memory.Scalar.u8] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8
+          hblockFree (disjoint_symmetric.mp layout.physical.offsets_isFree)
+    · simpa [ElementWrite.region, InitializeProgram.u8Bytes_length,
+        InitializeProgram.encodeNats, ValueRegion, Luffs.Memory.Scalar.u8] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8
+          (Nat.lt_of_lt_of_le hsuccessor hprevLength)
+          (disjoint_symmetric.mp layout.physical.offsets_prevFree)
+  · apply hsizes.applyAll_of_disjoint
+    intro write hwrite
+    simp [AllocateProgram.allocateWholeWrites] at hwrite
+    rcases hwrite with rfl | ⟨hsuccessor, rfl⟩
+    · simpa [ElementWrite.region, InitializeProgram.u8Bytes_length,
+        InitializeProgram.encodeNats, ValueRegion, Luffs.Memory.Scalar.u8] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8
+          hblockFree (disjoint_symmetric.mp layout.physical.sizes_isFree)
+    · simpa [ElementWrite.region, InitializeProgram.u8Bytes_length,
+        InitializeProgram.encodeNats, ValueRegion, Luffs.Memory.Scalar.u8] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8
+          (Nat.lt_of_lt_of_le hsuccessor hprevLength)
+          (disjoint_symmetric.mp layout.physical.sizes_prevFree)
+  · apply hcount.applyAll_of_disjoint
+    intro write hwrite
+    simp [AllocateProgram.allocateWholeWrites] at hwrite
+    rcases hwrite with rfl | ⟨hsuccessor, rfl⟩
+    · simpa [ElementWrite.region, InitializeProgram.u8Bytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u8] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8
+          hblockFree layout.physical.isFree_count
+    · simpa [ElementWrite.region, InitializeProgram.u8Bytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u8] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8
+          (Nat.lt_of_lt_of_le hsuccessor hprevLength)
+          layout.physical.prevFree_count
+
 theorem allocatePhysicalSplitProgram_wp_refines_frames_class
     {GF : BundledGFunctors}
     (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
@@ -15634,6 +15751,110 @@ theorem allocateWholeFromClassProgram_wp_refines {GF : BundledGFunctors}
     hfreeMiddle hprevMiddle hclass.1 hclass.2.1 hclass.2.2.1
     hclass.2.2.2.1 hclass.2.2.2.2
 
+/-- Complete no-split transaction postcondition, including the three physical
+fields unchanged by whole allocation. -/
+theorem allocateWholeFromClassProgram_wp_refines_all {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (bin classBlock physicalBlock count request : Nat)
+    (removed : RemoveClassResult) (allocated : AllocatePhysicalResult)
+    (mem : Memory)
+    (hremove : removeClassArrays second first heads next previous bin classBlock =
+      some removed)
+    (hallocate : allocatePhysicalArrays offsets sizes isFree prevFree count
+      physicalBlock request = some allocated)
+    (hwhole : allocated.remainderOffset = none)
+    (layout : MetadataLayout offsetsBase sizesBase isFreeBase prevFreeBase
+      countBase secondBase firstBase headsBase nextBase previousBase offsets.length
+      sizes.length isFree.length prevFree.length second.length heads.length
+      next.length previous.length)
+    (hsecondMapped : ∀ index, index < second.length → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheadsMapped : ∀ index, index < heads.length → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < next.length → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previous.length → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hfreeMapped : mem.mapped (isFreeBase + physicalBlock))
+    (hprevMapped : physicalBlock + 1 < count →
+      mem.mapped (prevFreeBase + (physicalBlock + 1)))
+    (hsecond : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hfirst : mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase first)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree))
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hcount : mem.EncodesAt Luffs.Memory.Scalar.u64 countBase
+      (BitVec.ofNat 64 count)) :
+    ⊢@{IProp GF} Program.wp
+      (allocateWholeFromClassProgram secondBase firstBase headsBase nextBase
+        previousBase isFreeBase prevFreeBase heads.length next.length
+        previous.length bin classBlock physicalBlock
+        (next[classBlock]?.getD next.length)
+        (previous[classBlock]?.getD next.length) (bin / 32) (bin % 32) count
+        (second[bin / 32]?.getD 0) first) mem
+      (fun final =>
+        ((final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+            (AllocateProgram.encodeFlags allocated.isFree) ∧
+          final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+            (AllocateProgram.encodeFlags allocated.prevFree)) ∧
+         final.EncodesArray Luffs.Memory.Scalar.u32 secondBase removed.second ∧
+         final.EncodesAt Luffs.Memory.Scalar.u64 firstBase removed.first ∧
+         final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+           (InitializeProgram.encodeNats removed.heads) ∧
+         final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+           (InitializeProgram.encodeNats removed.next) ∧
+         final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+           (InitializeProgram.encodeNats removed.previous)) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+          (InitializeProgram.encodeNats offsets) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+          (InitializeProgram.encodeNats sizes) ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 countBase
+          (BitVec.ofNat 64 count)) := by
+  have hlens := removeClassArrays_preserves_lengths hremove
+  have layoutAfter : MetadataLayout offsetsBase sizesBase isFreeBase prevFreeBase
+      countBase secondBase firstBase headsBase nextBase previousBase offsets.length
+      sizes.length isFree.length prevFree.length removed.second.length
+      removed.heads.length removed.next.length removed.previous.length := by
+    simpa [hlens.1, hlens.2.1, hlens.2.2.1, hlens.2.2.2] using layout
+  apply Program.wp_then
+    (removeClassProgram_wp_refines_frames_physical offsetsBase sizesBase
+      isFreeBase prevFreeBase countBase secondBase firstBase headsBase nextBase
+      previousBase offsets sizes count second first heads next previous isFree
+      prevFree bin classBlock removed mem hremove layout hsecondMapped
+      hfirstMapped hheadsMapped hnextMapped hpreviousMapped hsecond hfirst hheads
+      hnext hprevious hfree hprev hoffsets hsizes hcount)
+  intro middle hmiddle
+  rcases hmiddle with
+    ⟨⟨hclass, hmiddleEq, hfreeMiddle, hprevMiddle⟩,
+      hoffsetsMiddle, hsizesMiddle, hcountMiddle⟩
+  subst middle
+  exact allocatePhysicalWholeProgram_wp_refines_frames_all offsetsBase sizesBase
+    isFreeBase prevFreeBase countBase secondBase firstBase headsBase nextBase
+    previousBase offsets sizes isFree prevFree removed.second removed.first
+    removed.heads removed.next removed.previous physicalBlock count request
+    allocated _ hallocate hwhole layoutAfter
+    (ElementWrite.applyAll_mapped _ _ hfreeMapped)
+    (fun hsuccessor => ElementWrite.applyAll_mapped _ _
+      (hprevMapped hsuccessor)) hfreeMiddle hprevMiddle hclass.1
+    hclass.2.1 hclass.2.2.1 hclass.2.2.2.1 hclass.2.2.2.2
+    hoffsetsMiddle hsizesMiddle hcountMiddle
+
 theorem allocateWholeFromCandidateProgram_wp_refines {GF : BundledGFunctors}
     (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
       headsBase nextBase previousBase offsetsLength sizesLength : Nat)
@@ -15710,6 +15931,96 @@ theorem allocateWholeFromCandidateProgram_wp_refines {GF : BundledGFunctors}
       (classCandidateRemoveResult candidate) allocated mem hremove hallocate hwhole
       layout hsecondMapped hfirstMapped hheadsMapped hnextMapped hpreviousMapped
       hfreeMapped hprevMapped hsecond hfirst hheads hnext hprevious hfree hprev
+
+theorem allocateWholeFromCandidateProgram_wp_refines_all
+    {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64) (state : Bins.State)
+    (heads next previous : List Nat)
+    (startFl startSl physicalBlock count request : Nat)
+    (candidate : ClassCandidateResult) (allocated : AllocatePhysicalResult)
+    (mem : Memory)
+    (htake : takeCandidateClassArrays second first heads next previous startFl
+      startSl = some candidate)
+    (hbitmapRep : RepresentsSecondBitmap second state)
+    (hbinsValid : Bins.Valid state)
+    (hbinsRep : RepresentsBins { heads, next, previous } state)
+    (hallocate : allocatePhysicalArrays offsets sizes isFree prevFree count
+      physicalBlock request = some allocated)
+    (hwhole : allocated.remainderOffset = none)
+    (layout : MetadataLayout offsetsBase sizesBase isFreeBase prevFreeBase
+      countBase secondBase firstBase headsBase nextBase previousBase offsets.length
+      sizes.length isFree.length prevFree.length second.length heads.length
+      next.length previous.length)
+    (hsecondMapped : ∀ index, index < second.length → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheadsMapped : ∀ index, index < heads.length → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < next.length → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previous.length → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hfreeMapped : mem.mapped (isFreeBase + physicalBlock))
+    (hprevMapped : physicalBlock + 1 < count →
+      mem.mapped (prevFreeBase + (physicalBlock + 1)))
+    (hsecond : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hfirst : mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase first)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree))
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hcount : mem.EncodesAt Luffs.Memory.Scalar.u64 countBase
+      (BitVec.ofNat 64 count)) :
+    ⊢@{IProp GF} Program.wp
+      (allocateWholeFromClassProgram secondBase firstBase headsBase nextBase
+        previousBase isFreeBase prevFreeBase heads.length next.length
+        previous.length candidate.bin candidate.block physicalBlock
+        (next[candidate.block]?.getD next.length)
+        (previous[candidate.block]?.getD next.length) (candidate.bin / 32)
+        (candidate.bin % 32) count (second[candidate.bin / 32]?.getD 0) first) mem
+      (fun final =>
+        ((final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+            (AllocateProgram.encodeFlags allocated.isFree) ∧
+          final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+            (AllocateProgram.encodeFlags allocated.prevFree)) ∧
+         final.EncodesArray Luffs.Memory.Scalar.u32 secondBase candidate.second ∧
+         final.EncodesAt Luffs.Memory.Scalar.u64 firstBase candidate.first ∧
+         final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+           (InitializeProgram.encodeNats candidate.heads) ∧
+         final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+           (InitializeProgram.encodeNats candidate.next) ∧
+         final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+           (InitializeProgram.encodeNats candidate.previous)) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+          (InitializeProgram.encodeNats offsets) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+          (InitializeProgram.encodeNats sizes) ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 countBase
+          (BitVec.ofNat 64 count)) := by
+  have hpredecessor := takeCandidateClassArrays_head_predecessor hbitmapRep
+    hbinsValid hbinsRep htake
+  have hremove := takeCandidateClassArrays_eq_removeClassArrays htake hpredecessor
+  simpa [classCandidateRemoveResult] using
+    allocateWholeFromClassProgram_wp_refines_all offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets sizes isFree prevFree second first heads next previous candidate.bin
+      candidate.block physicalBlock count request (classCandidateRemoveResult candidate)
+      allocated mem hremove hallocate hwhole layout hsecondMapped hfirstMapped
+      hheadsMapped hnextMapped hpreviousMapped hfreeMapped hprevMapped hsecond
+      hfirst hheads hnext hprevious hfree hprev hoffsets hsizes hcount
 
 theorem allocateSplitFromCandidateProgram_wp_refines {GF : BundledGFunctors}
     (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase

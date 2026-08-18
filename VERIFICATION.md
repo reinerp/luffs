@@ -1092,6 +1092,11 @@ concurrency are later extensions and are not prerequisites for `Box` and
   exact inserted-remainder result record or the exact whole-block result
   record. The public operational WP can therefore choose its verified branch
   without any unproved record reconstruction or hidden existential equality.
+  Whole-block allocation now has the same complete ten-field operational
+  postcondition as split allocation. Its two flag writes are proved to frame
+  the offset array, size array, and active-count cell from the typed metadata
+  layout, in addition to all five class fields. This complete postcondition is
+  composed through candidate removal and exposed by the candidate-level WP.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

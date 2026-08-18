@@ -7595,6 +7595,50 @@ theorem seedInitial_wp {GF : BundledGFunctors}
     · simpa using hsecond i hi
     · simpa using hfirst i hi
 
+theorem seedInitial_wp_exact {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase
+      nextBase previousBase poolBytes sentinel bin : Nat) (mem : Memory)
+    (hoffsets : ∀ i, i < 8 → mem.mapped (offsetsBase + i))
+    (hsizes : ∀ i, i < 8 → mem.mapped (sizesBase + i))
+    (hisFree : mem.mapped isFreeBase)
+    (hprevFree : mem.mapped prevFreeBase)
+    (hsecond : ∀ i, i < 4 →
+      mem.mapped (secondBase + (bin / 32) * 4 + i))
+    (hfirst : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheads : ∀ i, i < 8 → mem.mapped (headsBase + bin * 8 + i))
+    (hnext : ∀ i, i < 8 → mem.mapped (nextBase + i))
+    (hprevious : ∀ i, i < 8 → mem.mapped (previousBase + i)) :
+    ⊢@{IProp GF} Program.wp
+      (seedInitial offsetsBase sizesBase isFreeBase prevFreeBase secondBase
+        firstBase headsBase nextBase previousBase poolBytes sentinel bin) mem
+      (fun final => final = ElementWrite.applyAll
+        (seedInitialWrites offsetsBase sizesBase isFreeBase prevFreeBase
+          secondBase firstBase headsBase nextBase previousBase poolBytes
+          sentinel bin) mem) := by
+  unfold seedInitial
+  apply Program.writeElements_wp_exact
+  · intro write hwrite
+    simp only [seedInitialWrites, List.mem_cons, List.mem_singleton] at hwrite
+    rcases hwrite with hwrite | hwrite | hwrite | hwrite | hwrite | hwrite |
+      hwrite | hwrite | hwrite <;> subst write <;> simp
+  · intro write hwrite i hi
+    simp only [seedInitialWrites, List.mem_cons, List.mem_singleton] at hwrite
+    rcases hwrite with hwrite | hwrite | hwrite | hwrite | hwrite | hwrite |
+      hwrite | hwrite | hwrite <;> subst write
+    · simpa using hoffsets i hi
+    · simpa using hsizes i hi
+    · have : i = 0 := by omega
+      subst i
+      simpa using hisFree
+    · have : i = 0 := by omega
+      subst i
+      simpa using hprevFree
+    · simpa using hnext i hi
+    · simpa using hprevious i hi
+    · simpa using hheads i hi
+    · simpa using hsecond i hi
+    · simpa using hfirst i hi
+
 /-- Complete successful byte-level body of `tlsf_initialize`, after its CFG
 guards and size-class calculation have supplied `bin`. -/
 def initializeProgram (offsetsBase sizesBase isFreeBase prevFreeBase secondBase

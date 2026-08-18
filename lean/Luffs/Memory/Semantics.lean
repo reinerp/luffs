@@ -20,11 +20,24 @@ def Memory.regionUnmapped (mem : Memory) (r : Region) : Prop :=
 def Memory.write (mem : Memory) (p : Addr) (v : Byte) : Memory :=
   fun q => if q = p then some v else mem q
 
+/-- Deterministic result of the byte stores emitted for one encoded scalar. -/
+def Memory.writeBytes (mem : Memory) (base : Addr) : List Byte → Memory
+  | [] => mem
+  | value :: rest => (mem.write base value).writeBytes (base + 1) rest
+
 theorem Memory.mapped_write {mem : Memory} {written p : Addr} {value : Byte}
     (hmapped : mem.mapped p) :
     (mem.write written value).mapped p := by
   simp only [Memory.mapped, Memory.write]
   split <;> simp_all [Memory.mapped]
+
+theorem Memory.mapped_writeBytes {mem : Memory} {base : Addr}
+    {values : List Byte} {p : Addr} (hmapped : mem.mapped p) :
+    (mem.writeBytes base values).mapped p := by
+  induction values generalizing mem base with
+  | nil => exact hmapped
+  | cons value rest ih =>
+      exact ih (Memory.mapped_write hmapped)
 
 def Memory.mapZeroed (mem : Memory) (r : Region) : Memory :=
   fun p => if r.contains p then some 0 else mem p
@@ -845,6 +858,13 @@ theorem WriteSteps.mapped_preserved {base : Addr} {values : List Byte}
   | nil => exact hmapped
   | cons hstore hold htail ih => exact ih (Memory.mapped_write hmapped)
 
+theorem WriteSteps.final_eq_writeBytes {base : Addr} {values : List Byte}
+    {before after : Memory} (hsteps : WriteSteps base values before after) :
+    after = before.writeBytes base values := by
+  induction hsteps with
+  | nil => rfl
+  | cons hstore hold htail ih => simpa [Memory.writeBytes] using ih
+
 /-- The byte-level effect of assigning one element of a native scalar array.
 The scalar codec supplies `bytes`; this layer is deliberately agnostic about
 the value representation and records only its proved width and address. -/
@@ -887,6 +907,25 @@ theorem Program.writeElement_wp_preserves_mapped {GF : BundledGFunctors}
   subst final
   exact fun _ hp => hsteps.mapped_preserved hp
 
+theorem Program.writeElement_wp_exact {GF : BundledGFunctors}
+    (base width index : Nat) (bytes : List Byte) (before : Memory)
+    (hwidth : bytes.length = width)
+    (hmapped : ∀ i, i < width →
+      before.mapped (base + index * width + i)) :
+    ⊢@{IProp GF} Program.wp
+      (Program.writeElement base width index bytes) before
+      (fun final => final =
+        before.writeBytes (base + index * width) bytes) := by
+  have hmapped' : ∀ i, i < bytes.length →
+      before.mapped (base + index * width + i) := by
+    simpa [hwidth] using hmapped
+  obtain ⟨after, hsteps⟩ := writeSteps_exists
+    (base + index * width) bytes before hmapped'
+  apply Program.wp_mono hsteps.program_wp
+  intro final hfinal
+  subst final
+  exact hsteps.final_eq_writeBytes
+
 /-- A source loop assigning the same native scalar value to a consecutive
 range of array elements. -/
 def Program.fillElements (base width start count : Nat)
@@ -927,6 +966,13 @@ structure ElementWrite where
 def ElementWrite.program (write : ElementWrite) : Program :=
   Program.writeElement write.base write.width write.index write.bytes
 
+def ElementWrite.apply (write : ElementWrite) (mem : Memory) : Memory :=
+  mem.writeBytes (write.base + write.index * write.width) write.bytes
+
+def ElementWrite.applyAll : List ElementWrite → Memory → Memory
+  | [], mem => mem
+  | write :: rest, mem => ElementWrite.applyAll rest (write.apply mem)
+
 /-- A finite sequence of heterogeneous native-element assignments, in source
 execution order. -/
 def Program.writeElements : List ElementWrite → Program
@@ -956,6 +1002,30 @@ theorem Program.writeElements_wp {GF : BundledGFunctors}
         exact hwidth tail (by simp [htail])
       · intro tail htail i hi
         exact hmiddle _ (hmapped tail (by simp [htail]) i hi)
+
+theorem Program.writeElements_wp_exact {GF : BundledGFunctors}
+    (writes : List ElementWrite) (mem : Memory)
+    (hwidth : ∀ write, write ∈ writes → write.bytes.length = write.width)
+    (hmapped : ∀ write, write ∈ writes → ∀ i, i < write.width →
+      mem.mapped (write.base + write.index * write.width + i)) :
+    ⊢@{IProp GF} Program.wp (Program.writeElements writes) mem
+      (fun final => final = ElementWrite.applyAll writes mem) := by
+  induction writes generalizing mem with
+  | nil => simpa [Program.writeElements, ElementWrite.applyAll] using
+      (Program.wp_done (GF := GF) mem (fun final => final = mem) rfl)
+  | cons write rest ih =>
+      simp only [Program.writeElements, ElementWrite.applyAll]
+      apply Program.wp_then
+        (Program.writeElement_wp_exact write.base write.width write.index
+          write.bytes mem (hwidth write (by simp)) (hmapped write (by simp)))
+      intro middle hmiddle
+      subst middle
+      apply ih
+      · intro tail htail
+        exact hwidth tail (by simp [htail])
+      · intro tail htail i hi
+        exact Memory.mapped_writeBytes
+          (hmapped tail (by simp [htail]) i hi)
 
 /-- Stores emitted for ordinary indexed assignments. Unlike `writeBytes`, the
 offsets need not be contiguous; their list order is the source execution

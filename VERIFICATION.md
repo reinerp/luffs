@@ -130,6 +130,13 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   `tlsfInitializeProgram_wp` now discharges those bounds directly from the
   successful ordinary `Option` result of `tlsf_classify_size`, matching the
   source CFG rather than requiring proof-only guard arguments.
+  Store WPs now also have deterministic postconditions: `Memory.writeBytes`
+  defines the exact extensional memory after an encoded scalar assignment,
+  `writeElement_wp_exact` proves one such result, and
+  `writeElements_wp_exact` composes heterogeneous transactions. The initial
+  block/bin seeding transaction has this exact WP, preparing the refinement
+  link from operational bytes to `initializeArrays` rather than stopping at
+  no-stuck safety.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

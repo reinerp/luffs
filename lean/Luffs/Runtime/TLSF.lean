@@ -17437,6 +17437,178 @@ theorem allocateSplitFromCandidateInterleavedProgram_wp_refines
     hoffsetsMiddle hsizesMiddle hfreeMiddle hprevMiddle hclass.1 hclass.2.1
     hclass.2.2.1 hclass.2.2.2.1 hclass.2.2.2.2
 
+def allocateSplitAndInsertFromCandidateInterleavedProgram
+    (secondBase firstBase headsBase nextBase previousBase offsetsBase sizesBase
+      isFreeBase prevFreeBase countBase headsLength nextLength previousLength
+      startFl startSl bin classBlock physicalBlock successor predecessor fl sl
+      count request remainderBin remainderOffset remainderSize : Nat)
+    (second : List (BitVec 32)) (oldSecond : BitVec 32)
+    (oldFirst : BitVec 64) (offsets sizes : List Nat)
+    (isFree prevFree : List (Fin 256)) (candidateSecond : List (BitVec 32))
+    (candidateFirst : BitVec 64) (candidateHeads : List Nat) : Program :=
+  (allocateSplitFromCandidateInterleavedProgram secondBase firstBase headsBase
+    nextBase previousBase offsetsBase sizesBase isFreeBase prevFreeBase countBase
+    headsLength nextLength previousLength startFl startSl bin classBlock
+    physicalBlock successor predecessor fl sl count request remainderOffset
+    remainderSize second oldSecond oldFirst offsets sizes isFree prevFree).then
+  (InsertProgram.insertClassProgram secondBase firstBase headsBase nextBase
+    previousBase nextLength previousLength remainderBin remainderOffset
+    (remainderBin / 32) (remainderBin % 32)
+    (candidateHeads[remainderBin]?.getD 0)
+    (candidateSecond[remainderBin / 32]?.getD 0) candidateFirst)
+
+/-- The complete split mutation uses the source-ordered candidate helper trace,
+then the already verified physical split and remainder insertion stages. -/
+theorem allocateSplitAndInsertFromCandidateInterleavedProgram_wp_refines
+    {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64) (state : Bins.State)
+    (heads next previous : List Nat)
+    (startFl startSl physicalBlock count request remainderBin remainderOffset
+      remainderSize : Nat)
+    (candidate : ClassCandidateResult) (allocated : AllocatePhysicalResult)
+    (inserted : InsertClassResult) (mem : Memory)
+    (htake : takeCandidateClassArrays second first heads next previous startFl
+      startSl = some candidate)
+    (hbitmapRep : RepresentsSecondBitmap second state)
+    (hbinsValid : Bins.Valid state)
+    (hbinsRep : RepresentsBins { heads, next, previous } state)
+    (hallocate : allocatePhysicalArrays offsets sizes isFree prevFree count
+      physicalBlock request = some allocated)
+    (hremainderOffset : allocated.remainderOffset = some remainderOffset)
+    (hremainderSize : allocated.remainderBytes = some remainderSize)
+    (hinsert : insertClassArrays candidate.second candidate.first candidate.heads
+      candidate.next candidate.previous remainderBin remainderOffset = some inserted)
+    (layout : MetadataLayout offsetsBase sizesBase isFreeBase prevFreeBase
+      countBase secondBase firstBase headsBase nextBase previousBase offsets.length
+      sizes.length isFree.length prevFree.length second.length heads.length
+      next.length previous.length)
+    (hsecondMapped : ∀ index, index < second.length → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheadsMapped : ∀ index, index < heads.length → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < next.length → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previous.length → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hoffsetsMapped : ∀ index, index < offsets.length → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizesMapped : ∀ index, index < sizes.length → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hfreeMapped : ∀ index, index < isFree.length →
+      mem.mapped (isFreeBase + index))
+    (hprevMapped : ∀ index, index < prevFree.length →
+      mem.mapped (prevFreeBase + index))
+    (hcountMapped : ∀ i, i < 8 → mem.mapped (countBase + i))
+    (hsecond : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hfirst : mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase first)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous))
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree))
+    (hcount : mem.EncodesAt Luffs.Memory.Scalar.u64 countBase
+      (BitVec.ofNat 64 count)) :
+    ⊢@{IProp GF} Program.wp
+      (allocateSplitAndInsertFromCandidateInterleavedProgram secondBase firstBase
+        headsBase nextBase previousBase offsetsBase sizesBase isFreeBase
+        prevFreeBase countBase heads.length next.length previous.length startFl
+        startSl candidate.bin candidate.block physicalBlock
+        (next[candidate.block]?.getD next.length)
+        (previous[candidate.block]?.getD next.length) (candidate.bin / 32)
+        (candidate.bin % 32) count request remainderBin remainderOffset
+        remainderSize second (second[candidate.bin / 32]?.getD 0) first offsets
+        sizes isFree prevFree candidate.second candidate.first candidate.heads)
+      mem (fun final =>
+        (final.EncodesArray Luffs.Memory.Scalar.u32 secondBase inserted.second ∧
+         final.EncodesAt Luffs.Memory.Scalar.u64 firstBase inserted.first ∧
+         final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+           (InitializeProgram.encodeNats inserted.heads) ∧
+         final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+           (InitializeProgram.encodeNats inserted.next) ∧
+         final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+           (InitializeProgram.encodeNats inserted.previous)) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+          (InitializeProgram.encodeNats allocated.offsets) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+          (InitializeProgram.encodeNats allocated.sizes) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+          (AllocateProgram.encodeFlags allocated.isFree) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+          (AllocateProgram.encodeFlags allocated.prevFree) ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 countBase
+          (BitVec.ofNat 64 allocated.count)) := by
+  have hclassLengths := takeCandidateClassArrays_preserves_metadata_lengths htake
+  have hsecondLength := takeCandidateClassArrays_preserves_second_length htake
+  have hphysicalLengths :=
+    allocatePhysicalArrays_split_preserves_lengths hallocate hremainderOffset
+  have layoutAfter : MetadataLayout offsetsBase sizesBase isFreeBase prevFreeBase
+      countBase secondBase firstBase headsBase nextBase previousBase
+      allocated.offsets.length allocated.sizes.length allocated.isFree.length
+      allocated.prevFree.length candidate.second.length candidate.heads.length
+      candidate.next.length candidate.previous.length := by
+    simpa [hphysicalLengths.1, hphysicalLengths.2.1,
+      hphysicalLengths.2.2.1, hphysicalLengths.2.2.2, hsecondLength,
+      hclassLengths.1, hclassLengths.2.1, hclassLengths.2.2] using layout
+  unfold allocateSplitAndInsertFromCandidateInterleavedProgram
+  apply Program.wp_then
+    (allocateSplitFromCandidateInterleavedProgram_wp_refines (GF := GF)
+      offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase offsets sizes isFree prevFree second first
+      state heads next previous startFl startSl physicalBlock count request
+      remainderOffset remainderSize candidate allocated mem htake hbitmapRep
+      hbinsValid hbinsRep hallocate hremainderOffset hremainderSize layout
+      hsecondMapped hfirstMapped hheadsMapped hnextMapped hpreviousMapped
+      hoffsetsMapped hsizesMapped hfreeMapped hprevMapped hcountMapped hsecond
+      hfirst hheads hnext hprevious hoffsets hsizes hfree hprev hcount)
+  intro middle hmiddle
+  rcases hmiddle with ⟨hphysical, hmiddleEq, hclass⟩
+  subst middle
+  have mappedAfter {p : Addr} (hp : mem.mapped p) :
+      (ElementWrite.applyAll
+        (AllocateProgram.allocateSplitWrites offsetsBase sizesBase isFreeBase
+          prevFreeBase countBase physicalBlock count request remainderOffset
+          remainderSize offsets sizes isFree prevFree)
+        (ElementWrite.applyAll
+          (RemoveProgram.removeClassWrites secondBase firstBase headsBase nextBase
+            previousBase heads.length next.length previous.length candidate.bin
+            candidate.block (next[candidate.block]?.getD next.length)
+            (previous[candidate.block]?.getD next.length) (candidate.bin / 32)
+            (candidate.bin % 32) (second[candidate.bin / 32]?.getD 0) first)
+          mem)).mapped p :=
+    ElementWrite.applyAll_mapped _ _ (ElementWrite.applyAll_mapped _ _ hp)
+  simpa [hclassLengths.2.1, hclassLengths.2.2] using
+    insertClassProgram_wp_refines_frames_physical offsetsBase sizesBase
+      isFreeBase prevFreeBase countBase secondBase firstBase headsBase nextBase
+      previousBase allocated.offsets allocated.sizes allocated.isFree
+      allocated.prevFree allocated.count candidate.second candidate.first
+      candidate.heads candidate.next candidate.previous remainderBin
+      remainderOffset inserted _ hinsert layoutAfter
+      (fun index hindex i hi => mappedAfter
+        (hsecondMapped index (by omega) i hi))
+      (fun i hi => mappedAfter (hfirstMapped i hi))
+      (fun index hindex i hi => mappedAfter
+        (hheadsMapped index (by omega) i hi))
+      (fun index hindex i hi => mappedAfter
+        (hnextMapped index (by omega) i hi))
+      (fun index hindex i hi => mappedAfter
+        (hpreviousMapped index (by omega) i hi))
+      hclass.1 hclass.2.2.1 hclass.2.2.2.1 hclass.2.2.2.2
+      hphysical.1 hphysical.2.1 hphysical.2.2.1 hphysical.2.2.2.1
+      hphysical.2.2.2.2
+
 end AllocateComposition
 
 /-- Exact pure state transformer for `tlsf_initialize`. All fixed-capacity

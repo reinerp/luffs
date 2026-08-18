@@ -1166,6 +1166,13 @@ concurrency are later extensions and are not prerequisites for `Box` and
   program whose final Iris postcondition decodes all ten allocator metadata
   fields. Selecting this witness from the public `allocateArrays` branch
   theorem remains next.
+  The whole-block branch now has the symmetric operational composition as
+  well. A deterministic-WP transfer lemma permits any postcondition proved for
+  an older program to move to a new program when both are proved to reach the
+  same exact memory. Using it, the physical header-read/whole-store trace gets
+  the complete ten-field contract and composes after exact candidate removal.
+  Thus both successful allocation branches now have source-ordered witnesses;
+  only public branch selection remains in this allocation slice.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

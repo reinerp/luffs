@@ -100,6 +100,14 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   unchanged-memory WP. This supplies the compositional base case for the public
   representation-independent Vec pop-length transition and other pure CFG
   fragments.
+  Native metadata-array stores now have a reusable operational foundation.
+  `Program.writeElement` lowers one width-checked scalar element to contiguous
+  byte stores at `base + index * width`; its WPs prove exact completion and
+  preservation of every previously mapped address. `Program.fillElements`
+  lifts this through the bounded-loop rule, proving non-stuck execution of a
+  consecutive metadata initialization loop from mapped element ranges. These
+  representation-parametric rules are the building blocks for composing the
+  three clearing loops in the concrete TLSF initializer.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

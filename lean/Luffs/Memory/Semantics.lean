@@ -368,6 +368,17 @@ theorem Program.wp_done {GF : BundledGFunctors} (mem : Memory)
   ipureintro
   exact ⟨⟨mem, .done⟩, fun final hexec => by cases hexec; exact hpost⟩
 
+theorem Program.wp_mono {GF : BundledGFunctors} {program : Program}
+    {mem : Memory} {post stronger : Memory → Prop}
+    (hwp : ⊢@{IProp GF} Program.wp program mem post)
+    (hmono : ∀ final, post final → stronger final) :
+    ⊢@{IProp GF} Program.wp program mem stronger := by
+  have hspec : Program.Spec program mem post :=
+    pure_soundness (PROP := IProp GF) hwp
+  unfold Program.wp
+  ipureintro
+  exact ⟨hspec.1, fun final hexec => hmono final (hspec.2 final hexec)⟩
+
 theorem Program.wp_call {GF : BundledGFunctors} {op : Prim}
     {next : Result → Program} {mem : Memory} {post : Memory → Prop}
     (hsafe : Prim.safe op mem)
@@ -809,6 +820,83 @@ theorem WriteSteps.program_wp {GF : BundledGFunctors} {base : Addr}
   ipureintro
   exact ⟨⟨after, hsteps.program_exec⟩,
     fun final hexec => hsteps.program_exec_unique hexec⟩
+
+theorem WriteSteps.mapped_preserved {base : Addr} {values : List Byte}
+    {before after : Memory} (hsteps : WriteSteps base values before after)
+    {p : Addr} (hmapped : before.mapped p) : after.mapped p := by
+  induction hsteps with
+  | nil => exact hmapped
+  | cons hstore hold htail ih => exact ih (Memory.mapped_write hmapped)
+
+/-- The byte-level effect of assigning one element of a native scalar array.
+The scalar codec supplies `bytes`; this layer is deliberately agnostic about
+the value representation and records only its proved width and address. -/
+def Program.writeElement (base width index : Nat) (bytes : List Byte) : Program :=
+  Program.writeBytes (base + index * width) bytes
+
+/-- A mapped native element range is sufficient for a closed store program.
+The exact final memory is existential because later source statements compose
+through it with `Program.wp_then`. -/
+theorem Program.writeElement_wp_of_mapped {GF : BundledGFunctors}
+    (base width index : Nat) (bytes : List Byte) (before : Memory)
+    (hwidth : bytes.length = width)
+    (hmapped : ∀ i, i < width →
+      before.mapped (base + index * width + i)) :
+    ∃ after, ⊢@{IProp GF} Program.wp
+      (Program.writeElement base width index bytes) before
+      (fun final => final = after) := by
+  have hmapped' : ∀ i, i < bytes.length →
+      before.mapped (base + index * width + i) := by
+    simpa [hwidth] using hmapped
+  obtain ⟨after, hsteps⟩ := writeSteps_exists
+    (base + index * width) bytes before hmapped'
+  exact ⟨after, hsteps.program_wp⟩
+
+theorem Program.writeElement_wp_preserves_mapped {GF : BundledGFunctors}
+    (base width index : Nat) (bytes : List Byte) (before : Memory)
+    (hwidth : bytes.length = width)
+    (hmapped : ∀ i, i < width →
+      before.mapped (base + index * width + i)) :
+    ⊢@{IProp GF} Program.wp
+      (Program.writeElement base width index bytes) before
+      (fun final => ∀ p, before.mapped p → final.mapped p) := by
+  have hmapped' : ∀ i, i < bytes.length →
+      before.mapped (base + index * width + i) := by
+    simpa [hwidth] using hmapped
+  obtain ⟨after, hsteps⟩ := writeSteps_exists
+    (base + index * width) bytes before hmapped'
+  apply Program.wp_mono hsteps.program_wp
+  intro final hfinal
+  subst final
+  exact fun _ hp => hsteps.mapped_preserved hp
+
+/-- A source loop assigning the same native scalar value to a consecutive
+range of array elements. -/
+def Program.fillElements (base width start count : Nat)
+    (bytes : List Byte) : Program :=
+  Program.forRange start count (fun index =>
+    Program.writeElement base width index bytes)
+
+theorem Program.fillElements_wp {GF : BundledGFunctors}
+    (base width start count : Nat) (bytes : List Byte) (mem : Memory)
+    (hwidth : bytes.length = width)
+    (hmapped : ∀ index, start ≤ index → index < start + count →
+      ∀ i, i < width → mem.mapped (base + index * width + i)) :
+    ⊢@{IProp GF} Program.wp
+      (Program.fillElements base width start count bytes) mem
+      (fun final => ∀ p, mem.mapped p → final.mapped p) := by
+  unfold Program.fillElements
+  apply Program.wp_forRange_bounded _
+    (fun _ current => ∀ p, mem.mapped p → current.mapped p)
+    start count mem (by simp)
+  intro index current hstart hend hinvariant
+  apply Program.wp_mono
+    (Program.writeElement_wp_preserves_mapped base width index bytes current
+      hwidth (by
+        intro i hi
+        exact hinvariant _ (hmapped index hstart hend i hi)))
+  intro final hpreserves p hp
+  exact hpreserves p (hinvariant p hp)
 
 /-- Stores emitted for ordinary indexed assignments. Unlike `writeBytes`, the
 offsets need not be contiguous; their list order is the source execution

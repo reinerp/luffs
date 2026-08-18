@@ -10047,6 +10047,43 @@ namespace AllocateProgram
 
 open Luffs.Memory
 
+/-- Pure array effect of the split branch's descending copy loop. The slot at
+`inserted` is deliberately left unchanged; the finishing transaction replaces
+it with the new remainder header. -/
+def shiftActive {α : Type} [Inhabited α] (values : List α)
+    (count inserted : Nat) : List α :=
+  values.take inserted ++ (values[inserted]?.getD default) ::
+    (values.drop inserted).take (count - inserted) ++
+      values.drop (count + 1)
+
+theorem shiftActive_length {α : Type} [Inhabited α]
+    (values : List α) (count inserted : Nat)
+    (hinserted : inserted ≤ count) (hcapacity : count < values.length) :
+    (shiftActive values count inserted).length = values.length := by
+  simp only [shiftActive, List.length_append, List.length_cons,
+    List.length_take, List.length_drop]
+  omega
+
+/-- Replacing the insertion slot after the descending copy loop is exactly the
+fixed-capacity insertion used by the pure allocator model. -/
+theorem shiftActive_set_inserted {α : Type} [Inhabited α]
+    (values : List α) (count inserted : Nat) (value : α)
+    (hinserted : inserted ≤ count) (hcapacity : count < values.length) :
+    (shiftActive values count inserted).set inserted value =
+      expandActive values count inserted value := by
+  have hinbounds : inserted < values.length := by omega
+  have htakeLength : (values.take inserted).length = inserted := by
+    rw [List.length_take, Nat.min_eq_left (Nat.le_of_lt hinbounds)]
+  simp [shiftActive, expandActive, List.set_append, htakeLength]
+
+theorem shiftActive_set_inserted_length {α : Type} [Inhabited α]
+    (values : List α) (count inserted : Nat) (value : α)
+    (hinserted : inserted ≤ count) (hcapacity : count < values.length) :
+    ((shiftActive values count inserted).set inserted value).length =
+      values.length := by
+  rw [shiftActive_set_inserted values count inserted value hinserted hcapacity,
+    expandActive_length values count inserted value hinserted hcapacity]
+
 /-- Exact source-ordered writes in the no-split branch of
 `tlsf_allocate_physical`. -/
 def allocateWholeWrites (isFreeBase prevFreeBase block count : Nat) :

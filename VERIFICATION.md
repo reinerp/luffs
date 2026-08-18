@@ -238,9 +238,12 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   following boundary tag when present, and increments the count.
   `allocateSplitProgram_wp_exact_mapped` proves the exact WP from normal
   fixed-array mappedness assumptions; heterogeneous write widths and all loop
-  indices are discharged internally. Decoding this exact trace to
-  `expandActive`, then composing the surrounding bin removal and remainder
-  insertion, remains the next operational step.
+  indices are discharged internally. The decoder now factors the loop through
+  typed `shiftActive`: its length preservation and the theorem that replacing
+  the insertion slot is exactly `expandActive` are proved for arbitrary element
+  types. Connecting each interleaved byte-write projection to `shiftActive`,
+  then composing the surrounding bin removal and remainder insertion, remains
+  the next operational step.
 - [x] Define the first pure block layout predicates and prove that splitting
   and coalescing preserve byte counts.
 - [x] Implement size-class mapping and prove every `(fl, sl)` index in range.

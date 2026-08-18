@@ -191,6 +191,15 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   proofs use the generic before/update/after transaction rule rather than
   reasoning from an assumed final memory; the final first-level bitmap store
   establishes its encoding directly and needs no assumed prior contents.
+  Clearing and seeding are now composed in `initializeMemory_encodes`, and
+  `initializeProgram_wp_encodes` strengthens the executable initializer's WP
+  to return that decoded postcondition. For the fixed TLSF capacities,
+  `initializeArrays_seeded_result` proves the pure array model evaluates to
+  exactly those same seeded arrays (including native-width bitmap shifts),
+  while `tlsfInitializeProgram_wp_valid` pairs the operational byte encoding
+  with `SeededAllocatorValid`: physical representation, bin/list
+  representation, bitmap representation, offset disjointness, and the full
+  abstract allocator validity invariant for the single mmap-backed free block.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

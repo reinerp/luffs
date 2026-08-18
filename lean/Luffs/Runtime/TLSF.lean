@@ -9556,6 +9556,71 @@ theorem seedInitialMemory_encodes
       secondCount headsCount poolBytes sentinel bin mem hphysical hbin hsecond
       hlayout hencoded.2.2.2.2.2.2.2.2⟩
 
+def SeededMetadataEncodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase
+      nextBase previousBase physicalCount secondCount headsCount poolBytes
+      sentinel bin : Nat) (mem : Memory) : Prop :=
+  mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+        ((List.replicate physicalCount (0 : BitVec 64)).set 0 0) ∧
+    mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+        ((List.replicate physicalCount (0 : BitVec 64)).set 0
+          (BitVec.ofNat 64 poolBytes)) ∧
+    mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+        ((List.replicate physicalCount (0 : BitVec 8)).set 0 1) ∧
+    mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+        ((List.replicate physicalCount (0 : BitVec 8)).set 0 0) ∧
+    mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+        ((List.replicate physicalCount (BitVec.ofNat 64 sentinel)).set 0
+          (BitVec.ofNat 64 sentinel)) ∧
+    mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+        ((List.replicate physicalCount (BitVec.ofNat 64 sentinel)).set 0
+          (BitVec.ofNat 64 sentinel)) ∧
+    mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase
+        ((List.replicate secondCount (0 : BitVec 32)).set (bin / 32)
+          (BitVec.ofNat 32 (1 <<< (bin % 32)))) ∧
+    mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase
+        (BitVec.ofNat 64 (1 <<< (bin / 32))) ∧
+    mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+        ((List.replicate headsCount (BitVec.ofNat 64 sentinel)).set bin 0)
+
+theorem seedInitialMemory_seededMetadataEncodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase
+      nextBase previousBase physicalCount secondCount headsCount poolBytes
+      sentinel bin : Nat) (mem : Memory)
+    (hphysical : 0 < physicalCount) (hbin : bin < headsCount)
+    (hsecond : bin / 32 < secondCount)
+    (hlayout : InitializerMetadataDisjoint offsetsBase sizesBase isFreeBase
+      prevFreeBase nextBase previousBase headsBase secondBase firstBase
+      physicalCount headsCount secondCount)
+    (hencoded :
+      mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+          (List.replicate physicalCount (0 : BitVec 64)) ∧
+      mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+          (List.replicate physicalCount (0 : BitVec 64)) ∧
+      mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+          (List.replicate physicalCount (0 : BitVec 8)) ∧
+      mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+          (List.replicate physicalCount (0 : BitVec 8)) ∧
+      mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+          (List.replicate physicalCount (BitVec.ofNat 64 sentinel)) ∧
+      mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+          (List.replicate physicalCount (BitVec.ofNat 64 sentinel)) ∧
+      mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase
+          (List.replicate secondCount (0 : BitVec 32)) ∧
+      mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase (0 : BitVec 64) ∧
+      mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+          (List.replicate headsCount (BitVec.ofNat 64 sentinel))) :
+    SeededMetadataEncodes offsetsBase sizesBase isFreeBase prevFreeBase
+      secondBase firstBase headsBase nextBase previousBase physicalCount
+      secondCount headsCount poolBytes sentinel bin
+      (ElementWrite.applyAll
+        (seedInitialWrites offsetsBase sizesBase isFreeBase prevFreeBase
+          secondBase firstBase headsBase nextBase previousBase poolBytes sentinel
+          bin) mem) := by
+  exact seedInitialMemory_encodes offsetsBase sizesBase isFreeBase prevFreeBase
+    secondBase firstBase headsBase nextBase previousBase physicalCount secondCount
+    headsCount poolBytes sentinel bin mem hphysical hbin hsecond hlayout hencoded
+
 def seedInitial (offsetsBase sizesBase isFreeBase prevFreeBase secondBase
     firstBase headsBase nextBase previousBase poolBytes sentinel bin : Nat) :
     Program :=
@@ -9672,6 +9737,30 @@ def initializeMemory (offsetsBase sizesBase isFreeBase prevFreeBase secondBase
   ElementWrite.applyAll
     (seedInitialWrites offsetsBase sizesBase isFreeBase prevFreeBase secondBase
       firstBase headsBase nextBase previousBase poolBytes sentinel bin) cleared
+
+theorem initializeMemory_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase
+      nextBase previousBase physicalCount secondCount headsCount poolBytes
+      sentinel bin : Nat) (mem : Memory)
+    (hphysical : 0 < physicalCount) (hbin : bin < headsCount)
+    (hsecond : bin / 32 < secondCount)
+    (hlayout : InitializerMetadataDisjoint offsetsBase sizesBase isFreeBase
+      prevFreeBase nextBase previousBase headsBase secondBase firstBase
+      physicalCount headsCount secondCount) :
+    SeededMetadataEncodes offsetsBase sizesBase isFreeBase prevFreeBase
+      secondBase firstBase headsBase nextBase previousBase physicalCount
+      secondCount headsCount poolBytes sentinel bin
+      (initializeMemory offsetsBase sizesBase isFreeBase prevFreeBase secondBase
+        firstBase headsBase nextBase previousBase physicalCount secondCount
+        headsCount poolBytes sentinel bin mem) := by
+  unfold initializeMemory
+  apply seedInitialMemory_seededMetadataEncodes offsetsBase sizesBase isFreeBase
+    prevFreeBase secondBase firstBase headsBase nextBase previousBase
+    physicalCount secondCount headsCount poolBytes sentinel bin _ hphysical hbin
+    hsecond hlayout
+  exact clearMetadataMemory_encodes offsetsBase sizesBase isFreeBase prevFreeBase
+    nextBase previousBase secondBase firstBase headsBase physicalCount secondCount
+    headsCount sentinel mem hlayout
 
 theorem initializeMemory_mapped (offsetsBase sizesBase isFreeBase prevFreeBase
     secondBase firstBase headsBase nextBase previousBase physicalCount secondCount
@@ -9800,6 +9889,52 @@ theorem initializeProgram_wp_exact {GF : BundledGFunctors}
     apply clearMetadataMemory_mapped
     simpa using hprevious 0 hphysical i hi
 
+/-- The complete operational initializer establishes the decoded one-block
+metadata representation, not merely an exact but uninterpreted final memory. -/
+theorem initializeProgram_wp_encodes {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase
+      nextBase previousBase physicalCount secondCount headsCount poolBytes
+      sentinel bin : Nat) (mem : Memory)
+    (hphysical : 0 < physicalCount)
+    (hbin : bin < headsCount) (hfl : bin / 32 < secondCount)
+    (hlayout : InitializerMetadataDisjoint offsetsBase sizesBase isFreeBase
+      prevFreeBase nextBase previousBase headsBase secondBase firstBase
+      physicalCount headsCount secondCount)
+    (hoffsets : ∀ index, index < physicalCount → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizes : ∀ index, index < physicalCount → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hisFree : ∀ index, index < physicalCount →
+      mem.mapped (isFreeBase + index))
+    (hprevFree : ∀ index, index < physicalCount →
+      mem.mapped (prevFreeBase + index))
+    (hnext : ∀ index, index < physicalCount → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hprevious : ∀ index, index < physicalCount → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hsecond : ∀ index, index < secondCount → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirst : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheads : ∀ index, index < headsCount → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i)) :
+    ⊢@{IProp GF} Program.wp
+      (initializeProgram offsetsBase sizesBase isFreeBase prevFreeBase
+        secondBase firstBase headsBase nextBase previousBase physicalCount
+        secondCount headsCount poolBytes sentinel bin) mem
+      (SeededMetadataEncodes offsetsBase sizesBase isFreeBase prevFreeBase
+        secondBase firstBase headsBase nextBase previousBase physicalCount
+        secondCount headsCount poolBytes sentinel bin) := by
+  apply Program.wp_mono
+    (initializeProgram_wp_exact offsetsBase sizesBase isFreeBase prevFreeBase
+      secondBase firstBase headsBase nextBase previousBase physicalCount
+      secondCount headsCount poolBytes sentinel bin mem hphysical hbin hfl
+      hoffsets hsizes hisFree hprevFree hnext hprevious hsecond hfirst hheads)
+  intro final hfinal
+  subst final
+  exact initializeMemory_encodes offsetsBase sizesBase isFreeBase prevFreeBase
+    secondBase firstBase headsBase nextBase previousBase physicalCount
+    secondCount headsCount poolBytes sentinel bin mem hphysical hbin hfl hlayout
+
 /-- Source-level specialization for the fixed arrays in `tlsf_initialize`.
 The ordinary `?` classifier edge supplies both selected-array bounds; callers
 do not have to assert them independently. -/
@@ -9869,6 +10004,43 @@ theorem tlsfInitializeProgram_wp_exact {GF : BundledGFunctors}
     poolBytes 4096 bin mem (by omega) hbin hfl hoffsets hsizes hisFree
     hprevFree hnext hprevious hsecond hfirst hheads
 
+theorem tlsfInitializeProgram_wp_encodes {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase
+      nextBase previousBase poolBytes bin : Nat) (mem : Memory)
+    (hclass : classifySizeBin poolBytes = some bin)
+    (hlayout : InitializerMetadataDisjoint offsetsBase sizesBase isFreeBase
+      prevFreeBase nextBase previousBase headsBase secondBase firstBase
+      4096 2048 64)
+    (hoffsets : ∀ index, index < 4096 → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizes : ∀ index, index < 4096 → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hisFree : ∀ index, index < 4096 → mem.mapped (isFreeBase + index))
+    (hprevFree : ∀ index, index < 4096 →
+      mem.mapped (prevFreeBase + index))
+    (hnext : ∀ index, index < 4096 → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hprevious : ∀ index, index < 4096 → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hsecond : ∀ index, index < 64 → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirst : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheads : ∀ index, index < 2048 → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i)) :
+    ⊢@{IProp GF} Program.wp
+      (initializeProgram offsetsBase sizesBase isFreeBase prevFreeBase
+        secondBase firstBase headsBase nextBase previousBase 4096 64 2048
+        poolBytes 4096 bin) mem
+      (SeededMetadataEncodes offsetsBase sizesBase isFreeBase prevFreeBase
+        secondBase firstBase headsBase nextBase previousBase 4096 64 2048
+        poolBytes 4096 bin) := by
+  obtain ⟨_, _, _, hbin⟩ := classifySizeBin_result hclass
+  have hfl : bin / 32 < 64 := by omega
+  exact initializeProgram_wp_encodes offsetsBase sizesBase isFreeBase
+    prevFreeBase secondBase firstBase headsBase nextBase previousBase 4096 64
+    2048 poolBytes 4096 bin mem (by omega) hbin hfl hlayout hoffsets hsizes
+    hisFree hprevFree hnext hprevious hsecond hfirst hheads
+
 end InitializeProgram
 
 /-- Exact pure state transformer for `tlsf_initialize`. All fixed-capacity
@@ -9905,6 +10077,44 @@ def initializeArrays (offsets sizes : List Nat)
       heads := inserted.heads
       next := inserted.next
       previous := inserted.previous }
+
+def seededInitializeArraysResult (poolBytes bin : Nat) : InitializeArraysResult := {
+  offsets := (List.replicate 4096 0).set 0 0
+  sizes := (List.replicate 4096 0).set 0 poolBytes
+  isFree := (List.replicate 4096 (0 : Fin 256)).set 0 1
+  prevFree := (List.replicate 4096 (0 : Fin 256)).set 0 0
+  count := 1
+  second := (List.replicate 64 (0 : BitVec 32)).set (bin / 32)
+    (BitVec.ofNat 32 (1 <<< (bin % 32)))
+  first := BitVec.ofNat 64 (1 <<< (bin / 32))
+  heads := (List.replicate 2048 4096).set bin 0
+  next := (List.replicate 4096 4096).set 0 4096
+  previous := (List.replicate 4096 4096).set 0 4096 }
+
+theorem initializeArrays_seeded_result (poolBytes bin : Nat)
+    (hpool : poolBytes ≤ 4096)
+    (hclass : classifySizeBin poolBytes = some bin)
+    (hbin : bin < 2048) (hsecond : bin / 32 < 64) :
+    initializeArrays (List.replicate 4096 0) (List.replicate 4096 0)
+      (List.replicate 4096 (0 : Fin 256))
+      (List.replicate 4096 (0 : Fin 256))
+      (List.replicate 64 (0 : BitVec 32)) 0
+      (List.replicate 2048 4096) (List.replicate 4096 4096)
+      (List.replicate 4096 4096) poolBytes =
+        some (seededInitializeArraysResult poolBytes bin) := by
+  have hbin' : ¬2048 ≤ bin := by omega
+  have hsecond' : ¬64 ≤ bin / 32 := by omega
+  have hshift32 : (BitVec.ofNat 32 1 <<< (bin % 32)) =
+      BitVec.ofNat 32 (1 <<< (bin % 32)) := by
+    apply BitVec.eq_of_toNat_eq
+    simp [Nat.shiftLeft_eq]
+  have hshift64 : (BitVec.ofNat 64 1 <<< (bin / 32)) =
+      BitVec.ofNat 64 (1 <<< (bin / 32)) := by
+    apply BitVec.eq_of_toNat_eq
+    simp [Nat.shiftLeft_eq, hsecond]
+  simp [-List.reduceReplicate, initializeArrays, hpool, hclass, insertClassArrays, insert,
+    seededInitializeArraysResult, hbin, hsecond, hbin', hsecond', setSecondBit,
+    setWordBit, hshift32, hshift64]
 
 def emptyBins : Bins.State :=
   Bins.State.fromChains fun _ => []
@@ -10183,6 +10393,132 @@ theorem initializeArrays_constructs_valid_pool
       hheads hnext hprevious hpositive hmax hsuccess
   exact ⟨cls, hphysical, initialAllocator_valid pool hpositive haligned hclass,
     hbins, hdisjoint, hsecond, hfirst⟩
+
+theorem seededInitializeArrays_constructs_valid_pool
+    (pool : Luffs.Memory.Region) (bin : Nat)
+    (hpool : pool.bytes ≤ 4096)
+    (hclass : classifySizeBin pool.bytes = some bin)
+    (hpositive : 0 < pool.bytes) (haligned : alignment ∣ pool.bytes)
+    (hmax : pool.bytes < 2 ^ firstLevelCount) :
+    ∃ cls,
+      RepresentsPhysicalArrays
+          (seededInitializeArraysResult pool.bytes bin).offsets
+          (seededInitializeArraysResult pool.bytes bin).sizes
+          (seededInitializeArraysResult pool.bytes bin).isFree
+          (seededInitializeArraysResult pool.bytes bin).prevFree
+          (seededInitializeArraysResult pool.bytes bin).count
+          [initialBlock pool.bytes] ∧
+      Alloc.Valid pool {
+        physical := [initialBlock pool.bytes]
+        bins := emptyBins.insert cls (initialBlock pool.bytes) } ∧
+      RepresentsBins
+          (Metadata.mk (seededInitializeArraysResult pool.bytes bin).heads
+            (seededInitializeArraysResult pool.bytes bin).next
+            (seededInitializeArraysResult pool.bytes bin).previous)
+          (emptyBins.insert cls (initialBlock pool.bytes)) ∧
+      BinsOffsetsDisjoint (emptyBins.insert cls (initialBlock pool.bytes)) ∧
+      RepresentsSecondBitmap (seededInitializeArraysResult pool.bytes bin).second
+          (emptyBins.insert cls (initialBlock pool.bytes)) ∧
+      FirstBitmapRep (seededInitializeArraysResult pool.bytes bin).first
+          (seededInitializeArraysResult pool.bytes bin).second := by
+  obtain ⟨_, _, _, hbin⟩ := classifySizeBin_result hclass
+  have hsecond : bin / 32 < 64 := by omega
+  apply initializeArrays_constructs_valid_pool
+    (offsets := List.replicate 4096 0) (sizes := List.replicate 4096 0)
+    (isFree := List.replicate 4096 (0 : Fin 256))
+    (prevFree := List.replicate 4096 (0 : Fin 256))
+    (second := List.replicate 64 (0 : BitVec 32)) (first := 0)
+    (heads := List.replicate 2048 4096) (next := List.replicate 4096 4096)
+    (previous := List.replicate 4096 4096) (result := seededInitializeArraysResult
+      pool.bytes bin) (pool := pool) (by simp only [List.length_replicate])
+      (by simp only [List.length_replicate])
+      (by simp only [List.length_replicate])
+      (by simp only [List.length_replicate])
+      (by simp only [List.length_replicate, firstLevelCount])
+      (by simp only [List.length_replicate])
+      (by simp only [List.length_replicate])
+      (by simp only [List.length_replicate]) hpositive
+      haligned hmax
+  exact initializeArrays_seeded_result pool.bytes bin hpool hclass hbin hsecond
+
+def SeededAllocatorValid (pool : Luffs.Memory.Region) (bin : Nat) : Prop :=
+  ∃ cls,
+    RepresentsPhysicalArrays
+        (seededInitializeArraysResult pool.bytes bin).offsets
+        (seededInitializeArraysResult pool.bytes bin).sizes
+        (seededInitializeArraysResult pool.bytes bin).isFree
+        (seededInitializeArraysResult pool.bytes bin).prevFree
+        (seededInitializeArraysResult pool.bytes bin).count
+        [initialBlock pool.bytes] ∧
+    Alloc.Valid pool {
+      physical := [initialBlock pool.bytes]
+      bins := emptyBins.insert cls (initialBlock pool.bytes) } ∧
+    RepresentsBins
+        (Metadata.mk (seededInitializeArraysResult pool.bytes bin).heads
+          (seededInitializeArraysResult pool.bytes bin).next
+          (seededInitializeArraysResult pool.bytes bin).previous)
+        (emptyBins.insert cls (initialBlock pool.bytes)) ∧
+    BinsOffsetsDisjoint (emptyBins.insert cls (initialBlock pool.bytes)) ∧
+    RepresentsSecondBitmap (seededInitializeArraysResult pool.bytes bin).second
+        (emptyBins.insert cls (initialBlock pool.bytes)) ∧
+    FirstBitmapRep (seededInitializeArraysResult pool.bytes bin).first
+        (seededInitializeArraysResult pool.bytes bin).second
+
+theorem seededAllocator_valid (pool : Luffs.Memory.Region) (bin : Nat)
+    (hpool : pool.bytes ≤ 4096)
+    (hclass : classifySizeBin pool.bytes = some bin)
+    (hpositive : 0 < pool.bytes) (haligned : alignment ∣ pool.bytes)
+    (hmax : pool.bytes < 2 ^ firstLevelCount) :
+    SeededAllocatorValid pool bin := by
+  exact seededInitializeArrays_constructs_valid_pool pool bin hpool hclass
+    hpositive haligned hmax
+
+/-- End-to-end connection from the executed fixed-capacity initializer to the
+abstract valid TLSF state represented by those exact decoded metadata bytes. -/
+theorem tlsfInitializeProgram_wp_valid {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase
+      nextBase previousBase bin : Nat) (pool : Luffs.Memory.Region)
+    (mem : Luffs.Memory.Memory)
+    (hpool : pool.bytes ≤ 4096)
+    (hclass : classifySizeBin pool.bytes = some bin)
+    (hpositive : 0 < pool.bytes) (haligned : alignment ∣ pool.bytes)
+    (hmax : pool.bytes < 2 ^ firstLevelCount)
+    (hlayout : InitializeProgram.InitializerMetadataDisjoint offsetsBase
+      sizesBase isFreeBase prevFreeBase nextBase previousBase headsBase
+      secondBase firstBase 4096 2048 64)
+    (hoffsets : ∀ index, index < 4096 → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizes : ∀ index, index < 4096 → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hisFree : ∀ index, index < 4096 → mem.mapped (isFreeBase + index))
+    (hprevFree : ∀ index, index < 4096 →
+      mem.mapped (prevFreeBase + index))
+    (hnext : ∀ index, index < 4096 → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hprevious : ∀ index, index < 4096 → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hsecond : ∀ index, index < 64 → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirst : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheads : ∀ index, index < 2048 → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i)) :
+    ⊢@{IProp GF} Luffs.Memory.Program.wp
+      (InitializeProgram.initializeProgram offsetsBase sizesBase isFreeBase
+        prevFreeBase secondBase firstBase headsBase nextBase previousBase 4096 64
+        2048 pool.bytes 4096 bin) mem
+      (fun final =>
+        InitializeProgram.SeededMetadataEncodes offsetsBase sizesBase isFreeBase
+          prevFreeBase secondBase firstBase headsBase nextBase previousBase 4096
+          64 2048 pool.bytes 4096 bin final ∧
+        SeededAllocatorValid pool bin) := by
+  have hvalid := seededAllocator_valid pool bin hpool hclass hpositive haligned hmax
+  apply Luffs.Memory.Program.wp_mono
+    (InitializeProgram.tlsfInitializeProgram_wp_encodes offsetsBase sizesBase
+      isFreeBase prevFreeBase secondBase firstBase headsBase nextBase previousBase
+      pool.bytes bin mem hclass hlayout hoffsets hsizes hisFree hprevFree hnext
+      hprevious hsecond hfirst hheads)
+  intro final hencoded
+  exact ⟨hencoded, hvalid⟩
 
 theorem initialAllocator_ownsMappedPool
     {PROP : Type} [Iris.BI PROP] [Luffs.Memory.ByteRegionLogic PROP]

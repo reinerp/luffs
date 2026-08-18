@@ -1117,6 +1117,14 @@ concurrency are later extensions and are not prerequisites for `Box` and
   mutation witness, yielding a closed top-level successful allocation WP with
   the canonical ten-field result encoding. Reads performed inside the called
   mutating helpers remain the next operational splice point.
+  Candidate removal now has that internal source trace. It repeats the
+  two-level lookup and selected-head load as the Luffs helper does, loads the
+  successor before calling intrusive removal, repeats the successor load and
+  loads the predecessor inside that call, then interleaves link stores with
+  the conditional second- and first-level bitmap loads/stores. Its exact WP
+  proves the final memory equals the established `removeClassWrites`
+  transformer, including both bitmap branches; it is ready to replace the
+  write-only candidate stage in the public composition.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

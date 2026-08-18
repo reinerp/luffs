@@ -16615,6 +16615,255 @@ theorem allocateArrays_successfulTopLevelProgram_wp {GF : BundledGFunctors}
   subst middle
   exact hwrites
 
+/-- Source-interleaved bitmap tail of `tlsf_take_candidate_class`: each cached
+word is loaded immediately before the assignment that uses it. -/
+def removeClassBitmapInterleavedProgram
+    (secondBase firstBase nextLength predecessor successor fl sl : Nat)
+    (oldSecond : BitVec 32) (oldFirst : BitVec 64) : Program :=
+  if predecessor ≥ nextLength ∧ successor ≥ nextLength then
+    let newSecond := clearSecondBit oldSecond sl
+    (Program.readBytes (secondBase + fl * 4) 4).then
+    ((Program.writeElements
+      [⟨secondBase, 4, fl, InitializeProgram.u32Bytes newSecond.toNat⟩]).then
+      (if newSecond = 0 then
+        (Program.readBytes firstBase 8).then
+          (Program.writeElements
+            [⟨firstBase, 8, 0,
+              InitializeProgram.usizeBytes
+                (clearWordBit oldFirst fl).toNat⟩])
+       else .done))
+  else .done
+
+theorem removeClassBitmapInterleavedProgram_wp_exact
+    {GF : BundledGFunctors}
+    (secondBase firstBase nextLength predecessor successor fl sl : Nat)
+    (oldSecond : BitVec 32) (oldFirst : BitVec 64) (mem : Memory)
+    (hsecondMapped : ∀ i, i < 4 → mem.mapped (secondBase + fl * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i)) :
+    ⊢@{IProp GF} Program.wp
+      (removeClassBitmapInterleavedProgram secondBase firstBase nextLength
+        predecessor successor fl sl oldSecond oldFirst) mem
+      (fun final => final = ElementWrite.applyAll
+        (RemoveProgram.removeClassBitmapWrites secondBase firstBase nextLength
+          predecessor successor fl sl oldSecond oldFirst) mem) := by
+  unfold removeClassBitmapInterleavedProgram
+  by_cases hexhausted : predecessor ≥ nextLength ∧ successor ≥ nextLength
+  · rw [if_pos hexhausted]
+    let newSecond := clearSecondBit oldSecond sl
+    let secondWrite : ElementWrite :=
+      ⟨secondBase, 4, fl, InitializeProgram.u32Bytes newSecond.toNat⟩
+    apply Program.wp_then
+      (Program.readBytes_wp (secondBase + fl * 4) 4 mem hsecondMapped)
+    intro middle hmiddle
+    subst middle
+    apply Program.wp_then
+      (Program.writeElements_wp_exact (GF := GF) [secondWrite] mem (by
+        intro write hwrite
+        simp only [List.mem_singleton] at hwrite
+        subst write
+        simp [secondWrite]) (by
+        intro write hwrite i hi
+        simp only [List.mem_singleton] at hwrite
+        subst write
+        simpa [secondWrite] using hsecondMapped i hi))
+    intro middle hmiddle
+    subst middle
+    by_cases hzero : newSecond = 0
+    · rw [if_pos hzero]
+      apply Program.wp_then
+        (Program.readBytes_wp firstBase 8
+          (ElementWrite.applyAll [secondWrite] mem) (by
+            intro i hi
+            exact ElementWrite.applyAll_mapped _ _ (hfirstMapped i hi)))
+      intro middle hmiddle
+      subst middle
+      let firstWrite : ElementWrite :=
+        ⟨firstBase, 8, 0, InitializeProgram.usizeBytes
+          (clearWordBit oldFirst fl).toNat⟩
+      apply Program.wp_mono
+        (Program.writeElements_wp_exact (GF := GF) [firstWrite]
+          (ElementWrite.applyAll [secondWrite] mem) (by
+            intro write hwrite
+            simp only [List.mem_singleton] at hwrite
+            subst write
+            simp [firstWrite]) (by
+            intro write hwrite i hi
+            simp only [List.mem_singleton] at hwrite
+            subst write
+            simpa [firstWrite] using ElementWrite.applyAll_mapped
+              [secondWrite] mem (hfirstMapped i hi)))
+      intro final hfinal
+      rw [hfinal]
+      have hzero' : clearSecondBit oldSecond sl = 0 := hzero
+      simp [RemoveProgram.removeClassBitmapWrites, hexhausted, hzero',
+        secondWrite, firstWrite, newSecond, ElementWrite.applyAll]
+    · rw [if_neg hzero]
+      apply Program.wp_mono
+        (Program.wp_done (GF := GF) (ElementWrite.applyAll [secondWrite] mem)
+          (fun final => final = ElementWrite.applyAll [secondWrite] mem) rfl)
+      intro final hfinal
+      rw [hfinal]
+      have hzero' : ¬clearSecondBit oldSecond sl = 0 := hzero
+      simp only [RemoveProgram.removeClassBitmapWrites, hexhausted, if_pos]
+      rw [if_neg hzero']
+      simp [newSecond, secondWrite, ElementWrite.applyAll]
+  · rw [if_neg hexhausted]
+    apply Program.wp_mono
+      (Program.wp_done (GF := GF) mem (fun final => final = mem) rfl)
+    intro final hfinal
+    rw [hfinal]
+    simp [RemoveProgram.removeClassBitmapWrites, hexhausted,
+      ElementWrite.applyAll]
+
+def removeClassCoreInterleavedProgram
+    (secondBase firstBase headsBase nextBase previousBase headsLength nextLength
+      previousLength bin block successor predecessor fl sl : Nat)
+    (oldSecond : BitVec 32) (oldFirst : BitVec 64) : Program :=
+  (RemoveProgram.removeProgram headsBase nextBase previousBase headsLength
+    nextLength previousLength bin block successor predecessor).then
+  (removeClassBitmapInterleavedProgram secondBase firstBase nextLength
+    predecessor successor fl sl oldSecond oldFirst)
+
+theorem removeClassCoreInterleavedProgram_wp_exact
+    {GF : BundledGFunctors}
+    (secondBase firstBase headsBase nextBase previousBase headsLength nextLength
+      previousLength bin block successor predecessor fl sl : Nat)
+    (oldSecond : BitVec 32) (oldFirst : BitVec 64) (mem : Memory)
+    (hbin : bin < headsLength) (hblockNext : block < nextLength)
+    (hblockPrevious : block < previousLength)
+    (hheadsMapped : ∀ index, index < headsLength → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < nextLength → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previousLength → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hsecondMapped : ∀ i, i < 4 → mem.mapped (secondBase + fl * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i)) :
+    ⊢@{IProp GF} Program.wp
+      (removeClassCoreInterleavedProgram secondBase firstBase headsBase nextBase
+        previousBase headsLength nextLength previousLength bin block successor
+        predecessor fl sl oldSecond oldFirst) mem
+      (fun final => final = ElementWrite.applyAll
+        (RemoveProgram.removeClassWrites secondBase firstBase headsBase nextBase
+          previousBase headsLength nextLength previousLength bin block successor
+          predecessor fl sl oldSecond oldFirst) mem) := by
+  unfold removeClassCoreInterleavedProgram
+  apply Program.wp_then
+    (RemoveProgram.removeProgram_wp_exact (GF := GF) headsBase nextBase
+      previousBase headsLength nextLength previousLength bin block successor
+      predecessor mem hbin hblockNext hblockPrevious hheadsMapped hnextMapped
+      hpreviousMapped)
+  intro middle hmiddle
+  subst middle
+  apply Program.wp_mono
+    (removeClassBitmapInterleavedProgram_wp_exact (GF := GF) secondBase
+      firstBase nextLength predecessor successor fl sl oldSecond oldFirst
+      (ElementWrite.applyAll
+        (RemoveProgram.removeWrites headsBase nextBase previousBase headsLength
+          nextLength previousLength bin block successor predecessor) mem)
+      (fun i hi => ElementWrite.applyAll_mapped _ _ (hsecondMapped i hi))
+      (fun i hi => ElementWrite.applyAll_mapped _ _ (hfirstMapped i hi)))
+  intro final hfinal
+  rw [hfinal, RemoveProgram.removeClassWrites,
+    ElementWrite.applyAll_append]
+
+def takeCandidateClassReadPrefixProgram
+    (secondBase firstBase headsBase nextBase previousBase startFl startSl bin
+      block : Nat) (second : List (BitVec 32)) : Program :=
+  (findNonemptyClassReadProgram secondBase firstBase startFl startSl bin
+    second).then
+  ((Program.readBytes (headsBase + bin * 8) 8).then
+  ((Program.readBytes (nextBase + block * 8) 8).then
+  ((Program.readBytes (nextBase + block * 8) 8).then
+    (Program.readBytes (previousBase + block * 8) 8))))
+
+def takeCandidateClassInterleavedProgram
+    (secondBase firstBase headsBase nextBase previousBase headsLength nextLength
+      previousLength startFl startSl bin block successor predecessor fl sl : Nat)
+    (second : List (BitVec 32)) (oldSecond : BitVec 32)
+    (oldFirst : BitVec 64) : Program :=
+  (findNonemptyClassReadProgram secondBase firstBase startFl startSl bin
+    second).then
+  ((Program.readBytes (headsBase + bin * 8) 8).then
+  ((Program.readBytes (nextBase + block * 8) 8).then
+  ((Program.readBytes (nextBase + block * 8) 8).then
+  ((Program.readBytes (previousBase + block * 8) 8).then
+    (removeClassCoreInterleavedProgram secondBase firstBase headsBase nextBase
+      previousBase headsLength nextLength previousLength bin block successor
+      predecessor fl sl oldSecond oldFirst)))))
+
+theorem takeCandidateClassInterleavedProgram_wp_exact
+    {GF : BundledGFunctors}
+    (secondBase firstBase headsBase nextBase previousBase : Nat)
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (startFl startSl : Nat)
+    (candidate : ClassCandidateResult) (mem : Memory)
+    (htake : takeCandidateClassArrays second first heads next previous startFl
+      startSl = some candidate)
+    (hsecondMapped : ∀ index, index < second.length → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheadsMapped : ∀ index, index < heads.length → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < next.length → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previous.length → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i)) :
+    ⊢@{IProp GF} Program.wp
+      (takeCandidateClassInterleavedProgram secondBase firstBase headsBase
+        nextBase previousBase heads.length next.length previous.length startFl
+        startSl candidate.bin candidate.block
+        (next[candidate.block]?.getD next.length)
+        (previous[candidate.block]?.getD next.length) (candidate.bin / 32)
+        (candidate.bin % 32) second (second[candidate.bin / 32]?.getD 0) first)
+      mem (fun final => final = ElementWrite.applyAll
+        (RemoveProgram.removeClassWrites secondBase firstBase headsBase nextBase
+          previousBase heads.length next.length previous.length candidate.bin
+          candidate.block (next[candidate.block]?.getD next.length)
+          (previous[candidate.block]?.getD next.length) (candidate.bin / 32)
+          (candidate.bin % 32) (second[candidate.bin / 32]?.getD 0) first) mem) := by
+  have hresult := takeCandidateClassArrays_result htake
+  obtain ⟨hfind, hbin, hfl, _, hblockNext, hblockPrevious, _, _⟩ := hresult
+  unfold takeCandidateClassInterleavedProgram
+  apply Program.wp_then
+    (findNonemptyClassReadProgram_wp (GF := GF) secondBase firstBase startFl
+      startSl candidate.bin second first mem hfind hsecondMapped hfirstMapped)
+  intro middle hmiddle
+  subst middle
+  apply Program.wp_then
+    (Program.readBytes_wp (headsBase + candidate.bin * 8) 8 mem (by
+      intro i hi
+      simpa [Nat.add_assoc] using hheadsMapped candidate.bin hbin i hi))
+  intro middle hmiddle
+  subst middle
+  apply Program.wp_then
+    (Program.readBytes_wp (nextBase + candidate.block * 8) 8 mem (by
+      intro i hi
+      simpa [Nat.add_assoc] using hnextMapped candidate.block hblockNext i hi))
+  intro middle hmiddle
+  subst middle
+  apply Program.wp_then
+    (Program.readBytes_wp (nextBase + candidate.block * 8) 8 mem (by
+      intro i hi
+      simpa [Nat.add_assoc] using hnextMapped candidate.block hblockNext i hi))
+  intro middle hmiddle
+  subst middle
+  apply Program.wp_then
+    (Program.readBytes_wp (previousBase + candidate.block * 8) 8 mem (by
+      intro i hi
+      simpa [Nat.add_assoc] using hpreviousMapped candidate.block
+        hblockPrevious i hi))
+  intro middle hmiddle
+  subst middle
+  exact removeClassCoreInterleavedProgram_wp_exact (GF := GF) secondBase
+    firstBase headsBase nextBase previousBase heads.length next.length
+    previous.length candidate.bin candidate.block
+    (next[candidate.block]?.getD next.length)
+    (previous[candidate.block]?.getD next.length) (candidate.bin / 32)
+    (candidate.bin % 32) (second[candidate.bin / 32]?.getD 0) first mem hbin
+    hblockNext hblockPrevious hheadsMapped hnextMapped hpreviousMapped
+    (hsecondMapped (candidate.bin / 32) hfl) hfirstMapped
+
 end AllocateComposition
 
 /-- Exact pure state transformer for `tlsf_initialize`. All fixed-capacity

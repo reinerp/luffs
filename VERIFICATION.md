@@ -1085,6 +1085,13 @@ concurrency are later extensions and are not prerequisites for `Box` and
   allocator's bitmap, bin-validity, and bin-representation invariants; callers
   no longer supply a raw predecessor inequality or separately restate the
   candidate as an arbitrary class removal.
+  The successful `allocateArrays` result is also decomposed at constructor
+  granularity. The theorem identifies the searched bin and selected offset
+  with the removed candidate, aligns the physical allocator's remainder
+  offset and size with the public preflight arithmetic, and returns either the
+  exact inserted-remainder result record or the exact whole-block result
+  record. The public operational WP can therefore choose its verified branch
+  without any unproved record reconstruction or hidden existential equality.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

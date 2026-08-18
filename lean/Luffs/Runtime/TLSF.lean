@@ -5997,6 +5997,40 @@ theorem finishAllocateArrays_result
     subst result
     exact Or.inr ⟨hsplit, rfl, rfl, rfl, rfl, rfl⟩
 
+/-- Constructor-level form of `finishAllocateArrays_result`.  This avoids
+making later operational composition proofs rebuild a record equality from
+eleven independent projection equalities. -/
+theorem finishAllocateArrays_eq
+    {removed : ClassCandidateResult} {physical : AllocatePhysicalResult}
+    {split : Prop} [Decidable split] {remainderBin remainderOffset : Nat}
+    {result : AllocateArraysResult}
+    (hfinish : finishAllocateArrays removed physical split remainderBin
+      remainderOffset = some result) :
+    (split ∧ ∃ inserted,
+      insertClassArrays removed.second removed.first removed.heads removed.next
+        removed.previous remainderBin remainderOffset = some inserted ∧
+      result = ⟨physical.offsets, physical.sizes, physical.isFree,
+        physical.prevFree, physical.count, inserted.second, inserted.first,
+        inserted.heads, inserted.next, inserted.previous,
+        physical.allocatedOffset, physical.allocatedBytes⟩) ∨
+    (¬split ∧ result =
+      ⟨physical.offsets, physical.sizes, physical.isFree,
+        physical.prevFree, physical.count, removed.second, removed.first,
+        removed.heads, removed.next, removed.previous,
+        physical.allocatedOffset, physical.allocatedBytes⟩) := by
+  unfold finishAllocateArrays at hfinish
+  by_cases hsplit : split
+  · simp only [hsplit, if_true] at hfinish
+    cases hinsert : insertClassArrays removed.second removed.first removed.heads
+        removed.next removed.previous remainderBin remainderOffset with
+    | none => simp [hinsert] at hfinish
+    | some inserted =>
+        simp [hinsert] at hfinish
+        subst result
+        exact Or.inl ⟨hsplit, inserted, rfl, rfl⟩
+  · simp only [hsplit, if_false, Option.some.injEq] at hfinish
+    exact Or.inr ⟨hsplit, hfinish.symm⟩
+
 /-- Exact pure state transformer for the public `tlsf_allocate` lowering.
 Every check before `removeClassArrays` is a preflight check, so `none` leaves
 all caller-owned arrays unchanged. -/
@@ -6418,6 +6452,83 @@ theorem allocateArrays_result
                     hfind, hhead, hblock, hsize, by simp [hsplit, remainderBin],
                     htake, hphysical, ?_⟩
                   simpa [remainderBin, hsplit] using hsuccess
+
+/-- A successful public allocation exposes exactly one of the two mutation
+programs.  Besides the pure call witnesses, this packages the identities that
+connect class search to candidate removal and the exact split/whole result
+constructor consumed by the byte-level Iris proofs. -/
+theorem allocateArrays_success_branches
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {count : Nat} {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {request : Nat}
+    {result : AllocateArraysResult}
+    (hsuccess : allocateArrays offsets sizes isFree prevFree count second first
+      heads next previous request = some result) :
+    ∃ startBin foundBin selectedOffset block selectedSize remainderBin
+        removed physical,
+      takeCandidateClassArrays second first heads next previous
+          (startBin / secondLevelCount) (startBin % secondLevelCount) =
+        some removed ∧
+      allocatePhysicalArrays offsets sizes isFree prevFree count block request =
+        some physical ∧
+      removed.bin = foundBin ∧ removed.block = selectedOffset ∧
+      ((minimumBlockBytes ≤ selectedSize - request ∧
+          physical.remainderOffset = some (selectedOffset + request) ∧
+          physical.remainderBytes = some (selectedSize - request) ∧
+          ∃ inserted,
+            insertClassArrays removed.second removed.first removed.heads
+              removed.next removed.previous remainderBin
+                (selectedOffset + request) = some inserted ∧
+            result = ⟨physical.offsets, physical.sizes, physical.isFree,
+              physical.prevFree, physical.count, inserted.second,
+              inserted.first, inserted.heads, inserted.next, inserted.previous,
+              physical.allocatedOffset, physical.allocatedBytes⟩) ∨
+        (selectedSize - request < minimumBlockBytes ∧
+          physical.remainderOffset = none ∧
+          physical.remainderBytes = none ∧
+          result = ⟨physical.offsets, physical.sizes, physical.isFree,
+            physical.prevFree, physical.count, removed.second, removed.first,
+            removed.heads, removed.next, removed.previous,
+            physical.allocatedOffset, physical.allocatedBytes⟩)) := by
+  obtain ⟨startBin, foundBin, selectedOffset, block, selectedSize,
+      remainderBin, removed, physical, _, hfind, hhead, hscan, hsize, _,
+      htake, hphysical, hfinish⟩ := allocateArrays_result hsuccess
+  have htakeResult := takeCandidateClassArrays_result htake
+  have hbin : removed.bin = foundBin := by
+    rw [hfind] at htakeResult
+    exact Option.some.inj htakeResult.1.symm
+  have hblock : removed.block = selectedOffset := by
+    rw [htakeResult.2.2.2.1, hbin, hhead]
+    simp
+  have hoffset := (findOffsetIndex_sound hscan).2
+  obtain ⟨_, _, _, _, _, _, _, physicalOffset, physicalSize, hoffset',
+      hsize', _, _, hallocatedOffset, hphysicalCases⟩ :=
+    allocatePhysicalArrays_result hphysical
+  have hphysicalOffset : physicalOffset = selectedOffset :=
+    Option.some.inj (hoffset'.symm.trans hoffset)
+  have hallocatedOffset : physical.allocatedOffset = selectedOffset :=
+    hallocatedOffset.trans hphysicalOffset
+  have hphysicalSize : physicalSize = selectedSize :=
+    Option.some.inj (hsize'.symm.trans hsize)
+  subst physicalOffset
+  subst physicalSize
+  have hfinishCases := finishAllocateArrays_eq hfinish
+  refine ⟨startBin, foundBin, selectedOffset, block, selectedSize,
+    remainderBin, removed, physical, htake, hphysical, hbin, hblock, ?_⟩
+  rcases hfinishCases with ⟨hsplit, inserted, hinsert, hresult⟩ |
+      ⟨hwhole, hresult⟩
+  · rcases hphysicalCases with hphysicalSplit | hphysicalWhole
+    · rcases hphysicalSplit with ⟨_, _, _, _, _, _, _, hremainderOffset,
+        hremainderBytes, _, _, _, _⟩
+      rw [hallocatedOffset] at hremainderOffset
+      exact Or.inl ⟨hsplit, hremainderOffset, hremainderBytes, inserted,
+        hinsert, hresult⟩
+    · exact (Nat.not_lt_of_ge hsplit hphysicalWhole.1).elim
+  · rcases hphysicalCases with hphysicalSplit | hphysicalWhole
+    · exact (hwhole hphysicalSplit.1).elim
+    · rcases hphysicalWhole with ⟨hsmall, _, _, hremainderOffset,
+        hremainderBytes, _, _, _, _⟩
+      exact Or.inr ⟨hsmall, hremainderOffset, hremainderBytes, hresult⟩
 
 theorem allocateArrays_count_le_offsets
     {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}

@@ -752,7 +752,8 @@ fn tlsf_box_store_u8(pool: &mut [u8; 4096], offset: usize, value: u8) -> Option<
     Some(())
 }
 
-// refines Luffs.Runtime.Containers.boxDropU8Arrays
+// This body is type-erased and drops Boxes for every proved scalar codec.
+// refines Luffs.Runtime.Containers.boxDropArrays
 fn tlsf_box_drop_u8(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], returned_offset: usize) -> Option<()> {
     if block_count.len() == 0 { return None; }
     let count: usize = block_count[0];
@@ -776,7 +777,7 @@ fn tlsf_box_drop_u8(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_f
 
 // Public pointer-facing Box drop. TLSF itself receives only a validated
 // pool-relative offset.
-// refines Luffs.Runtime.Containers.boxDropPointerU8Arrays
+// refines Luffs.Runtime.Containers.boxDropPointerArrays
 fn tlsf_box_drop_ptr_u8(offsets: &mut [usize; 4096], sizes: &mut [usize; 4096], is_free: &mut [u8; 4096], prev_free: &mut [u8; 4096], second_nonempty: &mut [u32; 64], first_nonempty: &mut [u64; 1], heads: &mut [usize; 2048], next: &mut [usize; 4096], previous: &mut [usize; 4096], block_count: &mut [usize; 1], pool_base: usize, pool_bytes: usize, pointer: usize) -> Option<()> {
     let offset: usize = tlsf_pointer_to_offset(pool_base, pool_bytes, pointer)?;
     tlsf_box_drop_u8(offsets, sizes, is_free, prev_free, second_nonempty, first_nonempty, heads, next, previous, block_count, offset)

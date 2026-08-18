@@ -663,6 +663,16 @@ concurrency are later extensions and are not prerequisites for `Box` and
   64-bit path on the declared native target. Generated Lean models refine
   codec-specific generic constructor wrappers, and a mutation regression
   rejects changing the `i128` wrapper to the wrong unsigned width.
+  Allocator-backed drop is now codec-generic as well. The single concrete
+  Luffs body is explicitly refined against a type-erased drop transformer,
+  because deallocation never reads or rewrites the stored representation.
+  For every proved codec, its Iris theorem consumes exactly
+  `Box.Owns codec ... value`, deletes that codec's complete encoding from the
+  authoritative contents map, and returns the exact allocation capability to
+  TLSF. The pointer-facing theorem first validates and resolves the pool
+  pointer, then consumes the capability for precisely that selected block.
+  Thus every supported scalar constructor has the same proved exactly-once
+  deallocation path rather than inheriting a `u8`-only ownership theorem.
   Codec-generic executable load/store semantics now checks the whole encoded
   range; successful loads expose the exact decoded byte slice, and an exact
   codec encoding decodes to the original value. The existing `u8` store model

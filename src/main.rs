@@ -3976,7 +3976,7 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
         } else {
             out.push_str("  tlsf_box_drop_ptr_u8_model offsets sizes is_free prev_free count second first heads next previous pool_base pool_bytes pointer\n\n");
             out.push_str(&format!(
-                "theorem {}_refines : {}_model = {} := by\n  unfold {}_model\n  rw [tlsf_box_drop_ptr_u8_refines]\n\n",
+                "theorem {}_refines : {}_model = {} := by\n  unfold {}_model\n  rw [tlsf_box_drop_ptr_u8_refines]\n  rfl\n\n",
                 model.name,
                 model.name, model.refines, model.name
             ));
@@ -4029,7 +4029,7 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
             model.name
         ));
         out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by\n  unfold {}_model\n  rw [tlsf_box_drop_u8_refines]\n\n",
+            "theorem {}_refines : {}_model = {} := by\n  unfold {}_model\n  rw [tlsf_box_drop_u8_refines]\n  rfl\n\n",
             model.name, model.name, model.refines, model.name
         ));
     }
@@ -4429,10 +4429,10 @@ mod tests {
             "let allocated ← tlsf_allocate_model offsets sizes is_free prev_free count second first heads next previous 8"
         ));
         assert!(generated.contains(
-            "theorem tlsf_box_drop_u8_refines : tlsf_box_drop_u8_model = Luffs.Runtime.Containers.boxDropU8Arrays"
+            "theorem tlsf_box_drop_u8_refines : tlsf_box_drop_u8_model = Luffs.Runtime.Containers.boxDropArrays"
         ));
         assert!(generated.contains(
-            "theorem tlsf_box_drop_ptr_u8_refines : tlsf_box_drop_ptr_u8_model = Luffs.Runtime.Containers.boxDropPointerU8Arrays"
+            "theorem tlsf_box_drop_ptr_u8_refines : tlsf_box_drop_ptr_u8_model = Luffs.Runtime.Containers.boxDropPointerArrays"
         ));
         assert!(
             generated

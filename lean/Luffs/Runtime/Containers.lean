@@ -963,6 +963,13 @@ def boxDropPointerU8Arrays (offsets sizes : List Nat)
   boxDropU8Arrays offsets sizes isFree prevFree count second first heads next
     previous offset
 
+/-- Type-erased aliases used by every scalar Box instantiation. Dropping does
+not inspect or rewrite the encoded value; its codec matters only to the Iris
+capability consumed by `boxDropArrays_owns`. -/
+def boxDropArrays := boxDropU8Arrays
+
+def boxDropPointerArrays := boxDropPointerU8Arrays
+
 theorem boxDropPointerU8Arrays_result
     {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
     {count : Nat} {second : List (BitVec 32)} {first : BitVec 64}
@@ -1126,6 +1133,88 @@ theorem boxDropPointerU8Arrays_refines_box
   exact ⟨selected, abstractNext, by rw [hpointer, ← hselectedOffset], hmember,
     habstract, howns⟩
 
+/-- The concrete drop body is type-erased: once it has recovered the allocated
+block, the same deallocation transition consumes `Box.Owns` for any proved
+codec. In particular, no scalar-width-specific drop implementation or trusted
+destructor axiom is needed. -/
+theorem boxDropArrays_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {α : Type} (codec : Codec α)
+    {pool : Region} {blocks : List Block} {state : Bins.State}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {returnedOffset : Nat}
+    {result : Luffs.Runtime.TLSF.CoalesceClassResult}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hcountMax : count ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins { heads, next, previous } state)
+    (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
+    (hsuccess : boxDropArrays offsets sizes isFree prevFree count second first
+      heads next previous returnedOffset = some result) :
+    ∃ (selected : Block) (abstractNext : Alloc.State),
+      selected.offset = returnedOffset ∧
+      ∀ (value : α) (contents : ContentsMap),
+        contentsInterp (G := G) contents ∗
+            (Luffs.Containers.Box.Owns codec pool selected value ∗
+              Ownership.OwnsFree pool blocks) ==∗
+          contentsInterp
+              (deleteBytes contents (selected.region pool).base
+                (codec.encode value)) ∗
+            Ownership.OwnsFree pool abstractNext.physical := by
+  change boxDropU8Arrays offsets sizes isFree prevFree count second first heads
+    next previous returnedOffset = some result at hsuccess
+  obtain ⟨selected, abstractNext, hoffset, _, hdrop, _⟩ :=
+    boxDropU8Arrays_refines_box (PROP := Iris.IProp GF) hvalid hpoolMax
+      hcountMax hsecond hfirst hbins hdisjoint hphysical hsuccess
+  refine ⟨selected, abstractNext, hoffset, ?_⟩
+  intro value contents
+  exact Luffs.Containers.Box.drop_owns codec value contents hdrop
+
+/-- Pointer validation followed by the same type-erased concrete drop consumes
+exactly the typed Box capability identified by that pointer. -/
+theorem boxDropPointerArrays_owns {GF : Iris.BundledGFunctors}
+    [Luffs.Memory.ByteRegionGS GF] [G : Luffs.Memory.ByteContentsGS GF]
+    {α : Type} (codec : Codec α)
+    {pool : Region} {blocks : List Block} {state : Bins.State}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {pointer : Nat}
+    {result : Luffs.Runtime.TLSF.CoalesceClassResult}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hcountMax : count ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins { heads, next, previous } state)
+    (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
+    (hsuccess : boxDropPointerArrays offsets sizes isFree prevFree count second
+      first heads next previous pool.base pool.bytes pointer = some result) :
+    ∃ (selected : Block) (abstractNext : Alloc.State),
+      pointer = pool.base + selected.offset ∧
+      ∀ (value : α) (contents : ContentsMap),
+        contentsInterp (G := G) contents ∗
+            (Luffs.Containers.Box.Owns codec pool selected value ∗
+              Ownership.OwnsFree pool blocks) ==∗
+          contentsInterp
+              (deleteBytes contents (selected.region pool).base
+                (codec.encode value)) ∗
+            Ownership.OwnsFree pool abstractNext.physical := by
+  change boxDropPointerU8Arrays offsets sizes isFree prevFree count second first
+    heads next previous pool.base pool.bytes pointer = some result at hsuccess
+  obtain ⟨offset, hpointer, _, hdrop⟩ :=
+    boxDropPointerU8Arrays_result hsuccess
+  obtain ⟨selected, abstractNext, hoffset, howns⟩ :=
+    boxDropArrays_owns (GF := GF) (G := G) codec hvalid hpoolMax hcountMax
+      hsecond hfirst hbins hdisjoint hphysical hdrop
+  exact ⟨selected, abstractNext, by rw [hpointer, ← hoffset], howns⟩
+
 theorem boxDropU8Arrays_owns
     {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
     [G : Luffs.Memory.ByteContentsGS GF]
@@ -1157,12 +1246,8 @@ theorem boxDropU8Arrays_owns
               (deleteBytes contents (selected.region pool).base
                 (Scalar.u8.encode value)) ∗
             Ownership.OwnsFree pool abstractNext.physical := by
-  obtain ⟨selected, abstractNext, hoffset, _, hdrop, _⟩ :=
-    boxDropU8Arrays_refines_box (PROP := Iris.IProp GF) hvalid hpoolMax hcountMax hsecond
-      hfirst hbins hdisjoint hphysical hsuccess
-  refine ⟨selected, abstractNext, hoffset, ?_⟩
-  intro value contents
-  exact Luffs.Containers.Box.drop_owns Scalar.u8 value contents hdrop
+  exact boxDropArrays_owns (GF := GF) (G := G) Scalar.u8 hvalid hpoolMax
+    hcountMax hsecond hfirst hbins hdisjoint hphysical hsuccess
 
 /-- Codec-generic executable allocation boundary for Vec. The two guards are
 the source-level `checked_mul` and rounding-addition checks needed before the

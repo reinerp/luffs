@@ -3869,13 +3869,12 @@ exact Luffs.Runtime.TLSF.findNonemptyClassLowered_refines hrep start_fl start_sl
     }
     for model in &module.tlsf_mark_free_models {
         out.push_str(&format!(
-            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (block returned_offset returned_bytes : Nat) : Option (List (Fin 256) × List (Fin 256)) :=\n  \
-{} offsets sizes is_free prev_free block returned_offset returned_bytes\n\n",
-            model.name, model.refines
+            "def {}_model (offsets sizes : List Nat) (is_free prev_free : List (Fin 256)) (block returned_offset returned_bytes : Nat) : Option (List (Fin 256) × List (Fin 256)) :=\n  if block ≥ offsets.length then none\n  else if block ≥ sizes.length then none\n  else if block ≥ is_free.length then none\n  else if block ≥ prev_free.length then none\n  else if is_free[block]? != some 0 then none\n  else if offsets[block]? != some returned_offset then none\n  else if sizes[block]? != some returned_bytes then none\n  else\n    let next_is_free := is_free.set block 1\n    let successor := block + 1\n    let next_prev_free :=\n      if successor < prev_free.length then prev_free.set successor 1 else prev_free\n    some (next_is_free, next_prev_free)\n\n",
+            model.name
         ));
         out.push_str(&format!(
-            "theorem {}_refines : {}_model = {} := by rfl\n\n",
-            model.name, model.name, model.refines
+            "theorem {}_refines : {}_model = {} := by\n  unfold {}_model {}\n  rfl\n\n",
+            model.name, model.name, model.refines, model.name, model.refines
         ));
     }
     for model in &module.tlsf_classify_size_models {
@@ -4738,6 +4737,13 @@ mod tests {
         ));
         assert!(generated.contains(
             "theorem tlsf_deallocate_uncoalesced_refines : tlsf_deallocate_uncoalesced_model = Luffs.Runtime.TLSF.deallocateUncoalescedArrays"
+        ));
+        assert!(generated.contains("let next_is_free := is_free.set block 1"));
+        assert!(generated.contains(
+            "if successor < prev_free.length then prev_free.set successor 1 else prev_free"
+        ));
+        assert!(!generated.contains(
+            "Option (List (Fin 256) × List (Fin 256)) :=\n  Luffs.Runtime.TLSF.markFreeArrays"
         ));
         assert!(generated.contains(
             "theorem tlsf_coalesce_physical_refines : tlsf_coalesce_physical_model = Luffs.Runtime.TLSF.coalescePhysicalArrays"

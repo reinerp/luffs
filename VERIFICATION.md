@@ -810,8 +810,10 @@ concurrency are later extensions and are not prerequisites for `Box` and
   Lean proves that recursion equal to `List.take` and then proves the complete
   fixed-capacity result equal to `compactActive`, including preservation of the
   spare tail. Thus no generated deallocation model calls the handwritten
-  compaction primitive. Mark-free and class-list insertion/removal remain the
-  next direct runtime-model boundaries on this path.
+  compaction primitive. Mark-free now also emits every identity check and its
+  two ordered flag writes directly, including the conditional successor
+  boundary-tag update. Class-list insertion/removal remain the next direct
+  runtime-model boundaries on this path.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

@@ -182,6 +182,12 @@ transfers directly into the initial TLSF `OwnsFree` assertion.
   `clearMetadataMemory_encodes` proves all nine cleared representations at
   once, including preservation of every physical array across the subsequent
   bitmap/head loops.
+  The ordered nine-store seed transaction is now decoded for its first two
+  physical fields. The offset update remains zero and the size update becomes
+  `poolBytes`; every other physical, head, and bitmap write is proved to frame
+  the complete target array through the nine-region layout. These proofs use
+  the generic before/update/after transaction rule rather than reasoning from
+  an assumed final memory.
 - [x] Derive shared borrows from fractional ownership and mutable borrows from
   exclusive ownership, including reborrowing and lifetime restoration.
   Byte-region GhostMap fragments are fractional: shared borrows can recursively

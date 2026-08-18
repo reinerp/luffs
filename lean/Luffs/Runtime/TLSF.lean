@@ -8879,6 +8879,157 @@ def seedInitialWrites (offsetsBase sizesBase isFreeBase prevFreeBase secondBase
    ⟨secondBase, 4, bin / 32, u32Bytes (1 <<< (bin % 32))⟩,
    ⟨firstBase, 8, 0, usizeBytes (1 <<< (bin / 32))⟩]
 
+theorem seedInitialMemory_offsets_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase
+      nextBase previousBase physicalCount secondCount headsCount poolBytes
+      sentinel bin : Nat) (mem : Memory)
+    (hphysical : 0 < physicalCount) (hbin : bin < headsCount)
+    (hsecond : bin / 32 < secondCount)
+    (hlayout : InitializerMetadataDisjoint offsetsBase sizesBase isFreeBase
+      prevFreeBase nextBase previousBase headsBase secondBase firstBase
+      physicalCount headsCount secondCount)
+    (hencoded : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (List.replicate physicalCount (0 : BitVec 64))) :
+    Memory.EncodesArray Luffs.Memory.Scalar.u64 (ElementWrite.applyAll
+      (seedInitialWrites offsetsBase sizesBase isFreeBase prevFreeBase secondBase
+        firstBase headsBase nextBase previousBase poolBytes sentinel bin) mem)
+      offsetsBase
+        ((List.replicate physicalCount (0 : BitVec 64)).set 0 0) := by
+  have hregions := hlayout
+  unfold InitializerMetadataDisjoint at hregions
+  dsimp only [initializerMetadataRegions] at hregions
+  have hupdate := hencoded.applyAll_update (index := 0) (value := (0 : BitVec 64))
+    (before := [])
+    (after :=
+      ([⟨sizesBase, 8, 0, usizeBytes poolBytes⟩,
+       ⟨isFreeBase, 1, 0, u8Bytes 1⟩,
+       ⟨prevFreeBase, 1, 0, u8Bytes 0⟩,
+       ⟨nextBase, 8, 0, usizeBytes sentinel⟩,
+       ⟨previousBase, 8, 0, usizeBytes sentinel⟩,
+       ⟨headsBase, 8, bin, usizeBytes 0⟩,
+       ⟨secondBase, 4, bin / 32, u32Bytes (1 <<< (bin % 32))⟩,
+       ⟨firstBase, 8, 0, usizeBytes (1 <<< (bin / 32))⟩] : List ElementWrite))
+    (by simpa) (by simp) (by
+      intro write hwrite
+      simp only [List.mem_cons, List.not_mem_nil, _root_.or_false] at hwrite
+      rcases hwrite with hwrite | hwrite | hwrite | hwrite | hwrite | hwrite |
+        hwrite | hwrite <;> subst write
+      · simpa [ElementWrite.region, usizeBytes_length, ValueRegion,
+          Luffs.Memory.Scalar.u64, List.length_replicate] using
+          ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 (show 0 < physicalCount by omega)
+            (hregions 1 0 (by simp) (by simp) (by omega))
+      · simpa [ElementWrite.region, u8Bytes_length, ValueRegion,
+          Luffs.Memory.Scalar.u8, Luffs.Memory.Scalar.u64,
+          List.length_replicate] using
+          ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8 (show 0 < physicalCount by omega)
+            (hregions 2 0 (by simp) (by simp) (by omega))
+      · simpa [ElementWrite.region, u8Bytes_length, ValueRegion,
+          Luffs.Memory.Scalar.u8, Luffs.Memory.Scalar.u64,
+          List.length_replicate] using
+          ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8 (show 0 < physicalCount by omega)
+            (hregions 3 0 (by simp) (by simp) (by omega))
+      · simpa [ElementWrite.region, usizeBytes_length, ValueRegion,
+          Luffs.Memory.Scalar.u64, List.length_replicate] using
+          ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 (show 0 < physicalCount by omega)
+            (hregions 4 0 (by simp) (by simp) (by omega))
+      · simpa [ElementWrite.region, usizeBytes_length, ValueRegion,
+          Luffs.Memory.Scalar.u64, List.length_replicate] using
+          ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 (show 0 < physicalCount by omega)
+            (hregions 5 0 (by simp) (by simp) (by omega))
+      · simpa [ElementWrite.region, usizeBytes_length, ValueRegion,
+          Luffs.Memory.Scalar.u64, List.length_replicate] using
+          ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hbin
+            (hregions 6 0 (by simp) (by simp) (by omega))
+      · simpa [ElementWrite.region, u32Bytes_length, ValueRegion,
+          Luffs.Memory.Scalar.u32, Luffs.Memory.Scalar.u64,
+          List.length_replicate] using
+          ArrayRegion.element_disjoint Luffs.Memory.Scalar.u32 hsecond
+            (hregions 7 0 (by simp) (by simp) (by omega))
+      · simpa [ElementWrite.region, usizeBytes_length, ValueRegion,
+          Luffs.Memory.Scalar.u64, List.length_replicate] using
+          hregions 8 0 (by simp) (by simp) (by omega))
+  simpa [seedInitialWrites, usizeBytes, Luffs.Memory.Scalar.u64] using hupdate
+
+theorem seedInitialMemory_sizes_encodes
+    (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase
+      nextBase previousBase physicalCount secondCount headsCount poolBytes
+      sentinel bin : Nat) (mem : Memory)
+    (hphysical : 0 < physicalCount) (hbin : bin < headsCount)
+    (hsecond : bin / 32 < secondCount)
+    (hlayout : InitializerMetadataDisjoint offsetsBase sizesBase isFreeBase
+      prevFreeBase nextBase previousBase headsBase secondBase firstBase
+      physicalCount headsCount secondCount)
+    (hencoded : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (List.replicate physicalCount (0 : BitVec 64))) :
+    Memory.EncodesArray Luffs.Memory.Scalar.u64 (ElementWrite.applyAll
+      (seedInitialWrites offsetsBase sizesBase isFreeBase prevFreeBase secondBase
+        firstBase headsBase nextBase previousBase poolBytes sentinel bin) mem)
+      sizesBase
+        ((List.replicate physicalCount (0 : BitVec 64)).set 0
+          (BitVec.ofNat 64 poolBytes)) := by
+  have hregions := hlayout
+  unfold InitializerMetadataDisjoint at hregions
+  dsimp only [initializerMetadataRegions] at hregions
+  have hupdate := hencoded.applyAll_update (index := 0)
+    (value := BitVec.ofNat 64 poolBytes)
+    (before := ([⟨offsetsBase, 8, 0, usizeBytes 0⟩] : List ElementWrite))
+    (after :=
+      ([⟨isFreeBase, 1, 0, u8Bytes 1⟩,
+        ⟨prevFreeBase, 1, 0, u8Bytes 0⟩,
+        ⟨nextBase, 8, 0, usizeBytes sentinel⟩,
+        ⟨previousBase, 8, 0, usizeBytes sentinel⟩,
+        ⟨headsBase, 8, bin, usizeBytes 0⟩,
+        ⟨secondBase, 4, bin / 32, u32Bytes (1 <<< (bin % 32))⟩,
+        ⟨firstBase, 8, 0, usizeBytes (1 <<< (bin / 32))⟩] : List ElementWrite))
+    (by simpa) (by
+      intro write hwrite
+      simp only [List.mem_singleton] at hwrite
+      subst write
+      simpa [ElementWrite.region, usizeBytes_length, ValueRegion,
+        Luffs.Memory.Scalar.u64, List.length_replicate] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64
+          (show 0 < physicalCount by omega)
+          (hregions 0 1 (by simp) (by simp) (by omega))) (by
+      intro write hwrite
+      simp only [List.mem_cons, List.not_mem_nil, _root_.or_false] at hwrite
+      rcases hwrite with hwrite | hwrite | hwrite | hwrite | hwrite | hwrite |
+        hwrite <;> subst write
+      · simpa [ElementWrite.region, u8Bytes_length, ValueRegion,
+          Luffs.Memory.Scalar.u8, Luffs.Memory.Scalar.u64,
+          List.length_replicate] using
+          ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8
+            (show 0 < physicalCount by omega)
+            (hregions 2 1 (by simp) (by simp) (by omega))
+      · simpa [ElementWrite.region, u8Bytes_length, ValueRegion,
+          Luffs.Memory.Scalar.u8, Luffs.Memory.Scalar.u64,
+          List.length_replicate] using
+          ArrayRegion.element_disjoint Luffs.Memory.Scalar.u8
+            (show 0 < physicalCount by omega)
+            (hregions 3 1 (by simp) (by simp) (by omega))
+      · simpa [ElementWrite.region, usizeBytes_length, ValueRegion,
+          Luffs.Memory.Scalar.u64, List.length_replicate] using
+          ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64
+            (show 0 < physicalCount by omega)
+            (hregions 4 1 (by simp) (by simp) (by omega))
+      · simpa [ElementWrite.region, usizeBytes_length, ValueRegion,
+          Luffs.Memory.Scalar.u64, List.length_replicate] using
+          ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64
+            (show 0 < physicalCount by omega)
+            (hregions 5 1 (by simp) (by simp) (by omega))
+      · simpa [ElementWrite.region, usizeBytes_length, ValueRegion,
+          Luffs.Memory.Scalar.u64, List.length_replicate] using
+          ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hbin
+            (hregions 6 1 (by simp) (by simp) (by omega))
+      · simpa [ElementWrite.region, u32Bytes_length, ValueRegion,
+          Luffs.Memory.Scalar.u32, Luffs.Memory.Scalar.u64,
+          List.length_replicate] using
+          ArrayRegion.element_disjoint Luffs.Memory.Scalar.u32 hsecond
+            (hregions 7 1 (by simp) (by simp) (by omega))
+      · simpa [ElementWrite.region, usizeBytes_length, ValueRegion,
+          Luffs.Memory.Scalar.u64, List.length_replicate] using
+          hregions 8 1 (by simp) (by simp) (by omega))
+  simpa [seedInitialWrites, usizeBytes, Luffs.Memory.Scalar.u64] using hupdate
+
 def seedInitial (offsetsBase sizesBase isFreeBase prevFreeBase secondBase
     firstBase headsBase nextBase previousBase poolBytes sentinel bin : Nat) :
     Program :=

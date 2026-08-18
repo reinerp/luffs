@@ -1228,6 +1228,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   sizes and all capacity facts, selects the source-ordered program, and obtains
   a closed Iris WP encoding exactly the four returned arrays. It remains to
   compose the surrounding class-index removals and merged-block insertion.
+  The full class transaction now has a single source-ordered operational trace
+  and exact Iris WP: left removal, right removal, physical merge/compaction,
+  and merged-node insertion execute as one deterministic program. Successful
+  `coalesceClassArrays` selects that program without proof-only offsets; the
+  right-node address is derived from the physical adjacency check. Decoding
+  the combined final memory into all ten returned metadata fields is next.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

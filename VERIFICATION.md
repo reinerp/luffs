@@ -827,10 +827,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   absent.
   Physical allocation now emits its own aligned-request and selected-header
   checks, whole-block flag transition, split decision, four fixed-capacity
-  header expansions, boundary-tag updates, and result construction. The shared
-  `expandActive`, `allocateSplitPrevFree`, and `allocateWholePrevFree` helpers
-  remain explicit semantic summaries of the corresponding source loops and
-  conditional tag writes.
+  header expansions, boundary-tag updates, and result construction. Expansion
+  now uses the same generated recursive prefix model as compaction, with a
+  proof of exact equality to `expandActive`. Generated split and whole-block
+  boundary-tag definitions spell out insertion and the conditional
+  following-header write; physical allocation no longer calls any of the three
+  handwritten helpers.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

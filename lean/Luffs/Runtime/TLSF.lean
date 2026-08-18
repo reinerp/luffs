@@ -18351,6 +18351,133 @@ theorem allocateSplitFromCandidateFullyInterleavedProgram_wp_refines
     hoffsetsMiddle hsizesMiddle hfreeMiddle hprevMiddle hclass.1 hclass.2.1
     hclass.2.2.1 hclass.2.2.2.1 hclass.2.2.2.2
 
+/-- Exact successful trace of `tlsf_insert_class`: load the old head, perform
+the intrusive insertion stores, then load/store each bitmap level in source
+order. -/
+def insertClassInterleavedProgram
+    (secondBase firstBase headsBase nextBase previousBase nextLength
+      previousLength bin block fl sl oldHead : Nat)
+    (oldSecond : BitVec 32) (oldFirst : BitVec 64) : Program :=
+  (Program.readBytes (headsBase + bin * 8) 8).then
+  ((Program.writeElements
+    (InsertProgram.insertSecondBefore headsBase nextBase previousBase nextLength
+      previousLength bin block oldHead)).then
+  ((Program.readBytes (secondBase + fl * 4) 4).then
+  ((Program.writeElements [⟨secondBase, 4, fl,
+      InitializeProgram.u32Bytes (setSecondBit oldSecond sl).toNat⟩]).then
+  ((Program.readBytes firstBase 8).then
+    (Program.writeElements [⟨firstBase, 8, 0,
+      InitializeProgram.usizeBytes (setWordBit oldFirst fl).toNat⟩])))))
+
+theorem insertClassInterleavedProgram_wp_exact {GF : BundledGFunctors}
+    (secondBase firstBase headsBase nextBase previousBase nextLength
+      previousLength bin block fl sl oldHead : Nat)
+    (oldSecond : BitVec 32) (oldFirst : BitVec 64) (mem : Memory)
+    (hbin : ∀ i, i < 8 → mem.mapped (headsBase + bin * 8 + i))
+    (hblockNext : ∀ i, i < 8 → mem.mapped (nextBase + block * 8 + i))
+    (hblockPrevious : ∀ i, i < 8 →
+      mem.mapped (previousBase + block * 8 + i))
+    (holdPrevious : oldHead < previousLength → ∀ i, i < 8 →
+      mem.mapped (previousBase + oldHead * 8 + i))
+    (hsecond : ∀ i, i < 4 → mem.mapped (secondBase + fl * 4 + i))
+    (hfirst : ∀ i, i < 8 → mem.mapped (firstBase + i)) :
+    ⊢@{IProp GF} Program.wp
+      (insertClassInterleavedProgram secondBase firstBase headsBase nextBase
+        previousBase nextLength previousLength bin block fl sl oldHead oldSecond
+        oldFirst) mem
+      (fun final => final = ElementWrite.applyAll
+        (InsertProgram.insertClassWrites secondBase firstBase headsBase nextBase
+          previousBase nextLength previousLength bin block fl sl oldHead oldSecond
+          oldFirst) mem) := by
+  let before := InsertProgram.insertSecondBefore headsBase nextBase previousBase
+    nextLength previousLength bin block oldHead
+  let sw : ElementWrite := ⟨secondBase, 4, fl,
+    InitializeProgram.u32Bytes (setSecondBit oldSecond sl).toNat⟩
+  let fw : ElementWrite := ⟨firstBase, 8, 0,
+    InitializeProgram.usizeBytes (setWordBit oldFirst fl).toNat⟩
+  have memberBefore {write : ElementWrite} (hwrite : write ∈ before) :
+      write ∈ InsertProgram.insertClassWrites secondBase firstBase headsBase
+        nextBase previousBase nextLength previousLength bin block fl sl oldHead
+        oldSecond oldFirst := by
+    rw [InsertProgram.insertClassWrites_second_decompose]
+    exact List.mem_append_left _ (List.mem_append_left _ hwrite)
+  have memberSecond : sw ∈ InsertProgram.insertClassWrites secondBase firstBase
+      headsBase nextBase previousBase nextLength previousLength bin block fl sl
+      oldHead oldSecond oldFirst := by
+    rw [InsertProgram.insertClassWrites_second_decompose]
+    simp [sw]
+  have memberFirst : fw ∈ InsertProgram.insertClassWrites secondBase firstBase
+      headsBase nextBase previousBase nextLength previousLength bin block fl sl
+      oldHead oldSecond oldFirst := by
+    rw [InsertProgram.insertClassWrites_second_decompose]
+    simp [fw]
+  unfold insertClassInterleavedProgram
+  apply Program.wp_then
+    (Program.readBytes_wp (headsBase + bin * 8) 8 mem hbin)
+  intro m0 hm0
+  subst m0
+  apply Program.wp_then
+    (Program.writeElements_wp_exact before mem
+      (fun write hwrite => InsertProgram.insertClassWrites_width secondBase
+        firstBase headsBase nextBase previousBase nextLength previousLength bin
+        block fl sl oldHead oldSecond oldFirst write (memberBefore hwrite))
+      (fun write hwrite => InsertProgram.insertClassWrites_mapped secondBase
+        firstBase headsBase nextBase previousBase nextLength previousLength bin
+        block fl sl oldHead oldSecond oldFirst mem hbin hblockNext
+        hblockPrevious holdPrevious hsecond hfirst write (memberBefore hwrite)))
+  intro m1 hm1
+  subst m1
+  apply Program.wp_then
+    (Program.readBytes_wp (secondBase + fl * 4) 4 _ (fun i hi =>
+      ElementWrite.applyAll_mapped before mem (hsecond i hi)))
+  intro m1r hm1r
+  subst m1r
+  apply Program.wp_then
+    (Program.writeElements_wp_exact [sw] _ (by
+      intro write hwrite
+      simp only [List.mem_singleton] at hwrite
+      subst write
+      exact InsertProgram.insertClassWrites_width secondBase firstBase headsBase
+        nextBase previousBase nextLength previousLength bin block fl sl oldHead
+        oldSecond oldFirst sw memberSecond) (by
+      intro write hwrite i hi
+      simp only [List.mem_singleton] at hwrite
+      subst write
+      exact ElementWrite.applyAll_mapped before mem
+        (InsertProgram.insertClassWrites_mapped secondBase firstBase headsBase
+          nextBase previousBase nextLength previousLength bin block fl sl oldHead
+          oldSecond oldFirst mem hbin hblockNext hblockPrevious holdPrevious
+          hsecond hfirst sw memberSecond i hi)))
+  intro m2 hm2
+  subst m2
+  apply Program.wp_then
+    (Program.readBytes_wp firstBase 8 _ (fun i hi =>
+      ElementWrite.applyAll_mapped [sw] _
+        (ElementWrite.applyAll_mapped before mem (hfirst i hi))))
+  intro m2r hm2r
+  subst m2r
+  apply Program.wp_mono
+    (Program.writeElements_wp_exact [fw] _ (by
+      intro write hwrite
+      simp only [List.mem_singleton] at hwrite
+      subst write
+      exact InsertProgram.insertClassWrites_width secondBase firstBase headsBase
+        nextBase previousBase nextLength previousLength bin block fl sl oldHead
+        oldSecond oldFirst fw memberFirst) (by
+      intro write hwrite i hi
+      simp only [List.mem_singleton] at hwrite
+      subst write
+      exact ElementWrite.applyAll_mapped [sw] _
+        (ElementWrite.applyAll_mapped before mem
+          (InsertProgram.insertClassWrites_mapped secondBase firstBase headsBase
+            nextBase previousBase nextLength previousLength bin block fl sl
+            oldHead oldSecond oldFirst mem hbin hblockNext hblockPrevious
+            holdPrevious hsecond hfirst fw memberFirst i hi))))
+  intro final hfinal
+  subst final
+  rw [InsertProgram.insertClassWrites_second_decompose,
+    ElementWrite.applyAll_append, ElementWrite.applyAll_append]
+
 end AllocateComposition
 
 /-- Exact pure state transformer for `tlsf_initialize`. All fixed-capacity

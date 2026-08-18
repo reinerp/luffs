@@ -19426,6 +19426,36 @@ theorem allocateArrays_successfulFullyInterleavedTopLevelProgram_wp
   subst middle
   exact hwrites
 
+/-- Adequacy projection for a public allocation program selected by the
+source-interleaved theorem above. Besides non-stuckness, this retains the
+source-shape witness and proves the exact decoded ten-field postcondition for
+every possible execution. -/
+theorem IsSuccessfulAllocateFullyInterleavedTopLevelProgram.adequate
+    {GF : BundledGFunctors.{0,0,0}}
+    {secondBase firstBase headsBase countBase offsetsBase isFreeBase sizesBase
+      nextBase previousBase prevFreeBase : Nat}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {count request : Nat}
+    {result : AllocateArraysResult} {program : Program} {mem : Memory}
+    (hprogram : IsSuccessfulAllocateFullyInterleavedTopLevelProgram secondBase
+      firstBase headsBase countBase offsetsBase isFreeBase sizesBase nextBase
+      previousBase prevFreeBase offsets sizes isFree prevFree second first heads
+      next previous count request result program)
+    (hwp : ⊢@{IProp GF} Program.wp program mem
+      (EncodesAllocateArraysResult offsetsBase sizesBase isFreeBase prevFreeBase
+        countBase secondBase firstBase headsBase nextBase previousBase result)) :
+    IsSuccessfulAllocateFullyInterleavedTopLevelProgram secondBase firstBase
+        headsBase countBase offsetsBase isFreeBase sizesBase nextBase
+        previousBase prevFreeBase offsets sizes isFree prevFree second first
+        heads next previous count request result program ∧
+      Program.Safe program mem ∧
+      ∀ final, Program.Exec program mem final →
+        EncodesAllocateArraysResult offsetsBase sizesBase isFreeBase prevFreeBase
+          countBase secondBase firstBase headsBase nextBase previousBase result
+          final := by
+  exact ⟨hprogram, Program.wp_adequacy hwp⟩
+
 end AllocateComposition
 
 /-- Exact pure state transformer for `tlsf_initialize`. All fixed-capacity

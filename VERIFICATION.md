@@ -1199,7 +1199,10 @@ concurrency are later extensions and are not prerequisites for `Box` and
   an unrelated safe witness, and the exact successful top-level preflight read
   prefix composes in front of it. The resulting closed Iris WP covers the
   successful public allocation path through all helper-local reads and stores
-  and establishes the canonical ten-field result encoding.
+  and establishes the canonical ten-field result encoding. Its adequacy
+  projection retains the exact source-shaped program witness, proves that the
+  program cannot get stuck, and proves that every execution ends in memory
+  satisfying that ten-field encoding.
   Operational deallocation coverage now begins with `tlsf_mark_free`. Its
   source-ordered program reads the current allocation flag, returned offset,
   and returned size before either mutation, then stores the free flag and the

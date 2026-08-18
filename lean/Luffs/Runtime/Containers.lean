@@ -1704,6 +1704,144 @@ theorem vecSliceU16Bytes_eq_generic :
   funext storage offset len begin end_
   simp [vecSliceU16Bytes, vecSlice, Scalar.u16]
 
+theorem vecSliceU16Bytes_eq_i16 :
+    vecSliceU16Bytes = vecSlice Scalar.i16 := by
+  simpa [Scalar.i16] using vecSliceU16Bytes_eq_generic
+
+/-- Constant-width source targets for native scalar slice monomorphizations.
+They retain the checked-arithmetic shape of `vecSliceBytes`; the codec-specific
+native-representation theorem is applied at the Iris boundary. -/
+def vecSliceWidth1Bytes (storage : List Byte) (offset len begin end_ : Nat) :
+    Option (List Byte) :=
+  if begin > end_ then none
+  else if end_ > len then none
+  else if offset + begin > Luffs.Runtime.TLSF.usizeMax then none
+  else if offset + end_ > Luffs.Runtime.TLSF.usizeMax then none
+  else if offset + end_ > storage.length then none
+  else some ((storage.drop (offset + begin)).take
+    (offset + end_ - (offset + begin)))
+
+def vecSliceWidth4Bytes (storage : List Byte) (offset len begin end_ : Nat) :
+    Option (List Byte) :=
+  if begin > end_ then none
+  else if end_ > len then none
+  else if begin * 4 > Luffs.Runtime.TLSF.usizeMax then none
+  else if end_ * 4 > Luffs.Runtime.TLSF.usizeMax then none
+  else if offset + begin * 4 > Luffs.Runtime.TLSF.usizeMax then none
+  else if offset + end_ * 4 > Luffs.Runtime.TLSF.usizeMax then none
+  else if offset + end_ * 4 > storage.length then none
+  else some ((storage.drop (offset + begin * 4)).take
+    (offset + end_ * 4 - (offset + begin * 4)))
+
+def vecSliceWidth8Bytes (storage : List Byte) (offset len begin end_ : Nat) :
+    Option (List Byte) :=
+  if begin > end_ then none
+  else if end_ > len then none
+  else if begin * 8 > Luffs.Runtime.TLSF.usizeMax then none
+  else if end_ * 8 > Luffs.Runtime.TLSF.usizeMax then none
+  else if offset + begin * 8 > Luffs.Runtime.TLSF.usizeMax then none
+  else if offset + end_ * 8 > Luffs.Runtime.TLSF.usizeMax then none
+  else if offset + end_ * 8 > storage.length then none
+  else some ((storage.drop (offset + begin * 8)).take
+    (offset + end_ * 8 - (offset + begin * 8)))
+
+def vecSliceWidth16Bytes (storage : List Byte) (offset len begin end_ : Nat) :
+    Option (List Byte) :=
+  if begin > end_ then none
+  else if end_ > len then none
+  else if begin * 16 > Luffs.Runtime.TLSF.usizeMax then none
+  else if end_ * 16 > Luffs.Runtime.TLSF.usizeMax then none
+  else if offset + begin * 16 > Luffs.Runtime.TLSF.usizeMax then none
+  else if offset + end_ * 16 > Luffs.Runtime.TLSF.usizeMax then none
+  else if offset + end_ * 16 > storage.length then none
+  else some ((storage.drop (offset + begin * 16)).take
+    (offset + end_ * 16 - (offset + begin * 16)))
+
+theorem vecSliceWidth1Bytes_eq_generic (storage : List Byte)
+    (offset len begin end_ : Nat) :
+    vecSliceWidth1Bytes storage offset len begin end_ =
+      vecSliceBytes storage offset len begin end_ 1 := by
+  simp only [vecSliceWidth1Bytes, vecSliceBytes, Nat.mul_one]
+  split <;> rename_i hbegin
+  · simp [hbegin]
+  · have hbeginLe : begin ≤ end_ := Nat.le_of_not_gt hbegin
+    split <;> rename_i hend
+    · simp [hend]
+    · by_cases hendMax : end_ ≤ Luffs.Runtime.TLSF.usizeMax
+      · have hbeginMax : begin ≤ Luffs.Runtime.TLSF.usizeMax :=
+          Nat.le_trans hbeginLe hendMax
+        have hnotBeginMax : ¬Luffs.Runtime.TLSF.usizeMax < begin :=
+          Nat.not_lt_of_ge hbeginMax
+        have hnotEndMax : ¬Luffs.Runtime.TLSF.usizeMax < end_ :=
+          Nat.not_lt_of_ge hendMax
+        simp [hnotBeginMax, hnotEndMax]
+      · have hoff : offset + end_ > Luffs.Runtime.TLSF.usizeMax := by omega
+        have hendOver : Luffs.Runtime.TLSF.usizeMax < end_ := by omega
+        simp [hendOver, hoff]
+
+theorem vecSliceWidth4Bytes_eq_generic (storage : List Byte)
+    (offset len begin end_ : Nat) :
+    vecSliceWidth4Bytes storage offset len begin end_ =
+      vecSliceBytes storage offset len begin end_ 4 := by rfl
+
+theorem vecSliceWidth8Bytes_eq_generic (storage : List Byte)
+    (offset len begin end_ : Nat) :
+    vecSliceWidth8Bytes storage offset len begin end_ =
+      vecSliceBytes storage offset len begin end_ 8 := by rfl
+
+theorem vecSliceWidth16Bytes_eq_generic (storage : List Byte)
+    (offset len begin end_ : Nat) :
+    vecSliceWidth16Bytes storage offset len begin end_ =
+      vecSliceBytes storage offset len begin end_ 16 := by rfl
+
+theorem vecSliceWidth1Bytes_eq_i8 :
+    vecSliceWidth1Bytes = vecSlice Scalar.i8 := by
+  funext storage offset len begin end_
+  rw [vecSliceWidth1Bytes_eq_generic]
+  simpa [Scalar.i8, Scalar.u8] using
+    vecSliceBytes_eq_generic Scalar.i8 storage offset len begin end_
+
+theorem vecSliceWidth4Bytes_eq_u32 :
+    vecSliceWidth4Bytes = vecSlice Scalar.u32 := by
+  funext storage offset len begin end_
+  rw [vecSliceWidth4Bytes_eq_generic]
+  simpa [Scalar.u32] using
+    vecSliceBytes_eq_generic Scalar.u32 storage offset len begin end_
+
+theorem vecSliceWidth4Bytes_eq_i32 :
+    vecSliceWidth4Bytes = vecSlice Scalar.i32 := by
+  simpa [Scalar.i32] using vecSliceWidth4Bytes_eq_u32
+
+theorem vecSliceWidth8Bytes_eq_u64 :
+    vecSliceWidth8Bytes = vecSlice Scalar.u64 := by
+  funext storage offset len begin end_
+  rw [vecSliceWidth8Bytes_eq_generic]
+  simpa [Scalar.u64] using
+    vecSliceBytes_eq_generic Scalar.u64 storage offset len begin end_
+
+theorem vecSliceWidth8Bytes_eq_i64 :
+    vecSliceWidth8Bytes = vecSlice Scalar.i64 := by
+  simpa [Scalar.i64] using vecSliceWidth8Bytes_eq_u64
+
+theorem vecSliceWidth8Bytes_eq_usize :
+    vecSliceWidth8Bytes = vecSlice Scalar.usize := by
+  simpa [Scalar.usize] using vecSliceWidth8Bytes_eq_u64
+
+theorem vecSliceWidth8Bytes_eq_isize :
+    vecSliceWidth8Bytes = vecSlice Scalar.isize := by
+  simpa [Scalar.isize, Scalar.i64] using vecSliceWidth8Bytes_eq_u64
+
+theorem vecSliceWidth16Bytes_eq_u128 :
+    vecSliceWidth16Bytes = vecSlice Scalar.u128 := by
+  funext storage offset len begin end_
+  rw [vecSliceWidth16Bytes_eq_generic]
+  simpa [Scalar.u128] using
+    vecSliceBytes_eq_generic Scalar.u128 storage offset len begin end_
+
+theorem vecSliceWidth16Bytes_eq_i128 :
+    vecSliceWidth16Bytes = vecSlice Scalar.i128 := by
+  simpa [Scalar.i128] using vecSliceWidth16Bytes_eq_u128
+
 theorem vecSlice_result {α : Type} {codec : Codec α} {storage slice : List Byte}
     {offset len begin end_ : Nat}
     (hsuccess : vecSlice codec storage offset len begin end_ = some slice) :

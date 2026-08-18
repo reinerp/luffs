@@ -5666,6 +5666,52 @@ mod tests {
     }
 
     #[test]
+    fn container_runtime_lowers_every_scalar_vec_slice_to_a_typed_reference() {
+        let module = parse(include_str!("../stdlib/containers.luffs")).unwrap();
+        validate(&module).unwrap();
+        let generated = lean(&module);
+
+        for (ty, target) in [
+            ("u16", "vecSliceU16Bytes"),
+            ("u32", "vecSliceWidth4Bytes"),
+            ("u64", "vecSliceWidth8Bytes"),
+            ("u128", "vecSliceWidth16Bytes"),
+            ("i8", "vecSliceWidth1Bytes"),
+            ("i16", "vecSliceU16Bytes"),
+            ("i32", "vecSliceWidth4Bytes"),
+            ("i64", "vecSliceWidth8Bytes"),
+            ("i128", "vecSliceWidth16Bytes"),
+            ("usize", "vecSliceWidth8Bytes"),
+            ("isize", "vecSliceWidth8Bytes"),
+        ] {
+            assert!(module.rust.contains(&format!("Option<&'a [{ty}]>")));
+            assert!(module.rust.contains(&format!("Option<&'a mut [{ty}]>")));
+            assert!(
+                module
+                    .rust
+                    .contains(&format!("__luffs_native_slice::<{ty}>"))
+            );
+            assert!(
+                module
+                    .rust
+                    .contains(&format!("__luffs_native_slice_mut::<{ty}>"))
+            );
+            assert!(generated.contains(&format!(
+                "theorem vec_slice_{ty}_refines : vec_slice_{ty}_model = Luffs.Runtime.Containers.{target}"
+            )));
+            assert!(generated.contains(&format!(
+                "theorem vec_slice_mut_{ty}_refines : vec_slice_mut_{ty}_model = Luffs.Runtime.Containers.{target}"
+            )));
+        }
+
+        // u8 slicing is already a native byte reference and needs no cast.
+        assert!(module.rust.contains("Option<&'a [u8]>"));
+        assert!(module.rust.contains("Option<&'a mut [u8]>"));
+        assert!(generated.contains("theorem vec_slice_u8_refines"));
+        assert!(generated.contains("theorem vec_slice_mut_u8_refines"));
+    }
+
+    #[test]
     fn zch_stored_stream_has_only_proved_accesses() {
         let module = parse(include_str!("../examples/zch_stored.luffs")).unwrap();
         validate(&module).unwrap();

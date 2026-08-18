@@ -1134,14 +1134,16 @@ alias semantics. This removes the one-store restriction that blocked
   unsafe operation's complete precondition is now proved without treating the
   cast itself as an allocator axiom. The compiler now recognizes reserved,
   integer-only `native_slice::<T>` and `native_slice_mut::<T>` intrinsics and
-  rejects direct calls to their generated helper symbols. The first concrete
-  `u16` shared and mutable Vec slices compile to actual `&[u16]`/`&mut [u16]`;
-  their generated Lean models still refine the exact byte-range transformer.
+  rejects direct calls to their generated helper symbols. Concrete shared and
+  mutable Vec slices for all twelve scalar types compile to actual typed Rust
+  references. Their generated Lean models refine checked width-specific
+  byte-range transformers, which are proved equal to codec-generic slicing for
+  the corresponding signed, unsigned, and pointer-width scalar codecs.
   Generated Rust checks alignment and byte divisibility before the internal
   cast, while `NativeSliceReady` proves those checks redundant on the verified
-  TLSF path and Iris supplies mutable uniqueness. The other scalar
-  monomorphizations and the final public Vec API connection remain before the
-  overall Vec item is complete.
+  TLSF path and Iris supplies mutable uniqueness. The final public Vec API and
+  lifetime-recombination connection remain before the overall Vec item is
+  complete.
 - [ ] End-to-end examples compile to Rust with no redundant bounds checks and
   are accepted by Lean from a clean checkout.
   All four checked-in examples are currently accepted by Lean and compile to

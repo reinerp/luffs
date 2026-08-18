@@ -1109,6 +1109,14 @@ concurrency are later extensions and are not prerequisites for `Box` and
   first-level word plus the selected later second-level word. Its closed WP
   proves every byte mapped from the successful search result and leaves memory
   unchanged for composition with the mutation suffix.
+  The remaining top-level successful preflight loads are now modeled in source
+  order too: selected head, active count, every offset examined by the linear
+  scan, selected free flag, and selected size. A reusable native-usize prefix
+  reader proves the scan without flattening it into an assumed atomic lookup.
+  This exact unchanged-memory prefix is composed with the related whole/split
+  mutation witness, yielding a closed top-level successful allocation WP with
+  the canonical ten-field result encoding. Reads performed inside the called
+  mutating helpers remain the next operational splice point.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

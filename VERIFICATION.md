@@ -677,7 +677,12 @@ Compiler-generated multi-array semantics now cover `tlsf_remove` as well. Lean
 checks its ordered conditional bypass and detachment writes extensionally
 against `removeArrays`; this preserves sequential alias behavior even for
 malformed metadata, while the `RepresentsBin` theorems supply well-formedness
-for allocator calls.
+for allocator calls. The source-ordered writes now also have a concrete Iris
+weakest-precondition refinement: pairwise-separated encoded head, next, and
+previous arrays execute to encodings of exactly the successful `removeArrays`
+result. The proof frames every cross-array write, decodes both conditional link
+repairs, and preserves source order when a repaired slot aliases the detached
+block's final sentinel reset.
 The concrete Luffs runtime now composes bounded bitmap lookup with head loading,
 intrusive removal, and exhausted-bin bitmap clearing in
 `tlsf_take_candidate`. All potentially failing bounds checks precede the first

@@ -12200,6 +12200,684 @@ theorem allocatePhysicalSplitProgram_wp_refines {GF : BundledGFunctors}
 
 end AllocateProgram
 
+namespace RemoveProgram
+
+open Luffs.Memory
+
+/-- Exact source-ordered stores of `tlsf_remove` after its two link loads.
+The caller supplies those loaded values; the branch conditions and sentinel
+resets are the ones in the Luffs source. -/
+def removeWrites (headsBase nextBase previousBase headsLength nextLength
+    previousLength bin block successor predecessor : Nat) : List ElementWrite :=
+  (if predecessor ≥ nextLength then
+    [⟨headsBase, 8, bin, InitializeProgram.usizeBytes successor⟩]
+  else []) ++
+  (if predecessor < nextLength then
+    [⟨nextBase, 8, predecessor, InitializeProgram.usizeBytes successor⟩]
+  else []) ++
+  (if successor < previousLength then
+    [⟨previousBase, 8, successor, InitializeProgram.usizeBytes predecessor⟩]
+  else []) ++
+  [⟨nextBase, 8, block, InitializeProgram.usizeBytes nextLength⟩,
+   ⟨previousBase, 8, block, InitializeProgram.usizeBytes previousLength⟩]
+
+def removeProgram (headsBase nextBase previousBase headsLength nextLength
+    previousLength bin block successor predecessor : Nat) : Program :=
+  Program.writeElements
+    (removeWrites headsBase nextBase previousBase headsLength nextLength
+      previousLength bin block successor predecessor)
+
+def removeHeadsAfter (nextBase previousBase nextLength previousLength block
+    successor predecessor : Nat) : List ElementWrite :=
+  (if predecessor < nextLength then
+    [⟨nextBase, 8, predecessor, InitializeProgram.usizeBytes successor⟩]
+  else []) ++
+  (if successor < previousLength then
+    [⟨previousBase, 8, successor, InitializeProgram.usizeBytes predecessor⟩]
+  else []) ++
+  [⟨nextBase, 8, block, InitializeProgram.usizeBytes nextLength⟩,
+   ⟨previousBase, 8, block, InitializeProgram.usizeBytes previousLength⟩]
+
+theorem removeWrites_heads_decompose (headsBase nextBase previousBase headsLength
+    nextLength previousLength bin block successor predecessor : Nat) :
+    removeWrites headsBase nextBase previousBase headsLength nextLength
+      previousLength bin block successor predecessor =
+    (if predecessor ≥ nextLength then
+      [⟨headsBase, 8, bin, InitializeProgram.usizeBytes successor⟩]
+    else []) ++
+    removeHeadsAfter nextBase previousBase nextLength previousLength block
+      successor predecessor := by
+  simp [removeWrites, removeHeadsAfter]
+
+theorem removeWrites_heads_encodes
+    (headsBase nextBase previousBase headsLength nextLength previousLength bin
+      block successor predecessor : Nat) (heads : List Nat) (mem : Memory)
+    (hheadsLength : heads.length = headsLength) (hbin : bin < heads.length)
+    (hblockNext : block < nextLength) (hblockPrevious : block < previousLength)
+    (hheadsNext :
+      (ArrayRegion Luffs.Memory.Scalar.u64 headsBase heads.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 nextBase nextLength))
+    (hheadsPrevious :
+      (ArrayRegion Luffs.Memory.Scalar.u64 headsBase heads.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 previousBase previousLength))
+    (hencoded : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads)) :
+    (ElementWrite.applyAll
+      (removeWrites headsBase nextBase previousBase headsLength nextLength
+        previousLength bin block successor predecessor) mem).EncodesArray
+      Luffs.Memory.Scalar.u64 headsBase
+        (InitializeProgram.encodeNats
+          (if predecessor ≥ nextLength then heads.set bin successor else heads)) := by
+  rw [removeWrites_heads_decompose]
+  by_cases hpredecessor : predecessor ≥ nextLength
+  · have hwrite := hencoded.writeElement (index := bin)
+      (value := BitVec.ofNat 64 successor) (by simpa [InitializeProgram.encodeNats]
+        using hbin)
+    have hframe := hwrite.applyAll_of_disjoint (writes :=
+      removeHeadsAfter nextBase previousBase nextLength previousLength block
+        successor predecessor) (by
+        intro write hmember
+        by_cases hsuccessor : successor < previousLength
+        · simp [removeHeadsAfter, Nat.not_lt.mpr hpredecessor,
+            hsuccessor] at hmember
+          rcases hmember with rfl | rfl | rfl
+          simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+            List.length_set, InitializeProgram.encodeNats, ValueRegion,
+            Luffs.Memory.Scalar.u64] using
+            ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hsuccessor
+              (disjoint_symmetric.mp hheadsPrevious)
+          · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+            List.length_set, InitializeProgram.encodeNats, ValueRegion,
+            Luffs.Memory.Scalar.u64] using
+            ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64
+              hblockNext
+              (disjoint_symmetric.mp hheadsNext)
+          · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+            List.length_set, InitializeProgram.encodeNats, ValueRegion,
+            Luffs.Memory.Scalar.u64] using
+            ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64
+              hblockPrevious
+              (disjoint_symmetric.mp hheadsPrevious)
+        · simp [removeHeadsAfter, Nat.not_lt.mpr hpredecessor,
+            hsuccessor] at hmember
+          rcases hmember with rfl | rfl
+          · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+              List.length_set, InitializeProgram.encodeNats, ValueRegion,
+              Luffs.Memory.Scalar.u64] using
+              ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64
+                hblockNext (disjoint_symmetric.mp hheadsNext)
+          · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+              List.length_set, InitializeProgram.encodeNats, ValueRegion,
+              Luffs.Memory.Scalar.u64] using
+              ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64
+                hblockPrevious (disjoint_symmetric.mp hheadsPrevious))
+    simpa [ElementWrite.applyAll, ElementWrite.apply,
+      InitializeProgram.usizeBytes, Luffs.Memory.Scalar.u64,
+      InitializeProgram.encodeNats, hpredecessor] using hframe
+  · have hframe := hencoded.applyAll_of_disjoint (writes :=
+      removeHeadsAfter nextBase previousBase nextLength previousLength block
+        successor predecessor) (by
+        intro write hmember
+        have hbefore : predecessor < nextLength := by omega
+        by_cases hsuccessor : successor < previousLength
+        · simp [removeHeadsAfter, hbefore, hsuccessor] at hmember
+          rcases hmember with rfl | rfl | rfl | rfl
+          simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+            InitializeProgram.encodeNats, ValueRegion,
+            Luffs.Memory.Scalar.u64] using
+            ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hbefore
+              (disjoint_symmetric.mp hheadsNext)
+          · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+            InitializeProgram.encodeNats, ValueRegion,
+            Luffs.Memory.Scalar.u64] using
+            ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hsuccessor
+              (disjoint_symmetric.mp hheadsPrevious)
+          · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+            InitializeProgram.encodeNats, ValueRegion,
+            Luffs.Memory.Scalar.u64] using
+            ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64
+              hblockNext
+              (disjoint_symmetric.mp hheadsNext)
+          · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+            InitializeProgram.encodeNats, ValueRegion,
+            Luffs.Memory.Scalar.u64] using
+            ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64
+              hblockPrevious
+              (disjoint_symmetric.mp hheadsPrevious)
+        · simp [removeHeadsAfter, hbefore, hsuccessor] at hmember
+          rcases hmember with rfl | rfl | rfl
+          · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+              InitializeProgram.encodeNats, ValueRegion,
+              Luffs.Memory.Scalar.u64] using
+              ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hbefore
+                (disjoint_symmetric.mp hheadsNext)
+          · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+              InitializeProgram.encodeNats, ValueRegion,
+              Luffs.Memory.Scalar.u64] using
+              ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hblockNext
+                (disjoint_symmetric.mp hheadsNext)
+          · simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+              InitializeProgram.encodeNats, ValueRegion,
+              Luffs.Memory.Scalar.u64] using
+              ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hblockPrevious
+                (disjoint_symmetric.mp hheadsPrevious))
+    simpa [InitializeProgram.encodeNats, hpredecessor] using hframe
+
+def removeNextBefore (headsBase previousBase nextLength previousLength bin block
+    successor predecessor : Nat) : List ElementWrite :=
+  (if predecessor ≥ nextLength then
+    [⟨headsBase, 8, bin, InitializeProgram.usizeBytes successor⟩]
+  else [])
+
+def removeNextMiddle (previousBase previousLength successor predecessor : Nat) :
+    List ElementWrite :=
+  if successor < previousLength then
+    [⟨previousBase, 8, successor, InitializeProgram.usizeBytes predecessor⟩]
+  else []
+
+def removeNextAfter (previousBase previousLength block : Nat) :
+    List ElementWrite :=
+  [⟨previousBase, 8, block, InitializeProgram.usizeBytes previousLength⟩]
+
+theorem removeWrites_next_decompose_of_lt
+    (headsBase nextBase previousBase headsLength nextLength previousLength bin
+      block successor predecessor : Nat) (hpredecessor : predecessor < nextLength) :
+    removeWrites headsBase nextBase previousBase headsLength nextLength
+      previousLength bin block successor predecessor =
+    removeNextBefore headsBase previousBase nextLength previousLength bin block
+        successor predecessor ++
+      [⟨nextBase, 8, predecessor, InitializeProgram.usizeBytes successor⟩] ++
+      removeNextMiddle previousBase previousLength successor predecessor ++
+      [⟨nextBase, 8, block, InitializeProgram.usizeBytes nextLength⟩] ++
+      removeNextAfter previousBase previousLength block := by
+  simp [removeWrites, removeNextBefore, removeNextMiddle, removeNextAfter,
+    hpredecessor, Nat.not_le.mpr hpredecessor]
+
+theorem removeWrites_next_decompose_of_ge
+    (headsBase nextBase previousBase headsLength nextLength previousLength bin
+      block successor predecessor : Nat) (hpredecessor : predecessor ≥ nextLength) :
+    removeWrites headsBase nextBase previousBase headsLength nextLength
+      previousLength bin block successor predecessor =
+    removeNextBefore headsBase previousBase nextLength previousLength bin block
+        successor predecessor ++
+      removeNextMiddle previousBase previousLength successor predecessor ++
+      [⟨nextBase, 8, block, InitializeProgram.usizeBytes nextLength⟩] ++
+      removeNextAfter previousBase previousLength block := by
+  simp [removeWrites, removeNextBefore, removeNextMiddle, removeNextAfter,
+    hpredecessor, Nat.not_lt.mpr hpredecessor]
+
+theorem removeWrites_next_encodes
+    (headsBase nextBase previousBase headsLength nextLength previousLength bin
+      block successor predecessor : Nat) (next : List Nat) (mem : Memory)
+    (hnextLength : next.length = nextLength) (hbin : bin < headsLength)
+    (hblock : block < next.length) (hblockPrevious : block < previousLength)
+    (hnextHeads :
+      (ArrayRegion Luffs.Memory.Scalar.u64 nextBase next.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 headsBase headsLength))
+    (hnextPrevious :
+      (ArrayRegion Luffs.Memory.Scalar.u64 nextBase next.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 previousBase previousLength))
+    (hencoded : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next)) :
+    (ElementWrite.applyAll
+      (removeWrites headsBase nextBase previousBase headsLength nextLength
+        previousLength bin block successor predecessor) mem).EncodesArray
+      Luffs.Memory.Scalar.u64 nextBase
+        (InitializeProgram.encodeNats
+          ((if predecessor < nextLength then next.set predecessor successor
+            else next).set block nextLength)) := by
+  have hbefore : ∀ write, write ∈
+      removeNextBefore headsBase previousBase nextLength previousLength bin block
+        successor predecessor →
+      write.region.disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 nextBase next.length) := by
+    intro write hwrite
+    simp [removeNextBefore] at hwrite
+    rcases hwrite with ⟨_, rfl⟩
+    simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+      ValueRegion, Luffs.Memory.Scalar.u64] using
+      ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hbin
+        (disjoint_symmetric.mp hnextHeads)
+  have hmiddle : ∀ write, write ∈
+      removeNextMiddle previousBase previousLength successor predecessor →
+      write.region.disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 nextBase next.length) := by
+    intro write hwrite
+    simp [removeNextMiddle] at hwrite
+    rcases hwrite with ⟨hsuccessor, rfl⟩
+    simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+      ValueRegion, Luffs.Memory.Scalar.u64] using
+      ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hsuccessor
+        (disjoint_symmetric.mp hnextPrevious)
+  have hafter : ∀ write, write ∈
+      removeNextAfter previousBase previousLength block →
+      write.region.disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 nextBase next.length) := by
+    intro write hwrite
+    simp [removeNextAfter] at hwrite
+    subst write
+    simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+      ValueRegion, Luffs.Memory.Scalar.u64] using
+      ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64
+        hblockPrevious (disjoint_symmetric.mp hnextPrevious)
+  by_cases hpredecessor : predecessor < nextLength
+  · have hbeforeEncoded := hencoded.applyAll_of_disjoint (by
+      simpa [InitializeProgram.encodeNats] using hbefore)
+    have hfirst := hbeforeEncoded.writeElement
+      (index := predecessor) (value := BitVec.ofNat 64 successor) (by
+        simpa [InitializeProgram.encodeNats, hnextLength] using hpredecessor)
+    have hmiddleEncoded := hfirst.applyAll_of_disjoint (by
+      intro write hwrite
+      simpa [List.length_set, InitializeProgram.encodeNats] using
+        hmiddle write hwrite)
+    have hsecond := hmiddleEncoded.writeElement (index := block)
+      (value := BitVec.ofNat 64 nextLength) (by
+        simpa [List.length_set, InitializeProgram.encodeNats] using hblock)
+    have hfinal := hsecond.applyAll_of_disjoint (by
+      intro write hwrite
+      simpa [List.length_set, InitializeProgram.encodeNats] using
+        hafter write hwrite)
+    rw [removeWrites_next_decompose_of_lt _ _ _ _ _ _ _ _ _ _ hpredecessor,
+      ElementWrite.applyAll_append, ElementWrite.applyAll_append,
+      ElementWrite.applyAll_append, ElementWrite.applyAll_append, if_pos hpredecessor,
+      AllocateProgram.encodeNats_set, AllocateProgram.encodeNats_set]
+    simpa [ElementWrite.applyAll, ElementWrite.apply,
+      InitializeProgram.usizeBytes, Luffs.Memory.Scalar.u64] using hfinal
+  · have hbeforeEncoded := hencoded.applyAll_of_disjoint (by
+      simpa [InitializeProgram.encodeNats] using hbefore)
+    have hmiddleEncoded := hbeforeEncoded.applyAll_of_disjoint (by
+      simpa [InitializeProgram.encodeNats] using hmiddle)
+    have hwrite := hmiddleEncoded.writeElement (index := block)
+      (value := BitVec.ofNat 64 nextLength) (by
+        simpa [InitializeProgram.encodeNats] using hblock)
+    have hfinal := hwrite.applyAll_of_disjoint (by
+      intro write hwrite
+      simpa [List.length_set, InitializeProgram.encodeNats] using
+        hafter write hwrite)
+    have hge : predecessor ≥ nextLength := Nat.le_of_not_gt hpredecessor
+    rw [removeWrites_next_decompose_of_ge _ _ _ _ _ _ _ _ _ _ hge,
+      ElementWrite.applyAll_append, ElementWrite.applyAll_append,
+      ElementWrite.applyAll_append, if_neg hpredecessor,
+      AllocateProgram.encodeNats_set]
+    simpa [ElementWrite.applyAll, ElementWrite.apply,
+      InitializeProgram.usizeBytes, Luffs.Memory.Scalar.u64] using hfinal
+
+def removePreviousBefore (headsBase nextBase nextLength bin successor
+    predecessor : Nat) : List ElementWrite :=
+  (if predecessor ≥ nextLength then
+    [⟨headsBase, 8, bin, InitializeProgram.usizeBytes successor⟩]
+  else []) ++
+  (if predecessor < nextLength then
+    [⟨nextBase, 8, predecessor, InitializeProgram.usizeBytes successor⟩]
+  else [])
+
+def removePreviousMiddle (nextBase nextLength block : Nat) : List ElementWrite :=
+  [⟨nextBase, 8, block, InitializeProgram.usizeBytes nextLength⟩]
+
+theorem removeWrites_previous_decompose_of_lt
+    (headsBase nextBase previousBase headsLength nextLength previousLength bin
+      block successor predecessor : Nat) (hsuccessor : successor < previousLength) :
+    removeWrites headsBase nextBase previousBase headsLength nextLength
+      previousLength bin block successor predecessor =
+    removePreviousBefore headsBase nextBase nextLength bin successor predecessor ++
+      [⟨previousBase, 8, successor,
+        InitializeProgram.usizeBytes predecessor⟩] ++
+      removePreviousMiddle nextBase nextLength block ++
+      [⟨previousBase, 8, block,
+        InitializeProgram.usizeBytes previousLength⟩] := by
+  simp [removeWrites, removePreviousBefore, removePreviousMiddle, hsuccessor]
+
+theorem removeWrites_previous_decompose_of_ge
+    (headsBase nextBase previousBase headsLength nextLength previousLength bin
+      block successor predecessor : Nat) (hsuccessor : successor ≥ previousLength) :
+    removeWrites headsBase nextBase previousBase headsLength nextLength
+      previousLength bin block successor predecessor =
+    removePreviousBefore headsBase nextBase nextLength bin successor predecessor ++
+      removePreviousMiddle nextBase nextLength block ++
+      [⟨previousBase, 8, block,
+        InitializeProgram.usizeBytes previousLength⟩] := by
+  simp [removeWrites, removePreviousBefore, removePreviousMiddle, hsuccessor,
+    Nat.not_lt.mpr hsuccessor]
+
+theorem removeWrites_previous_encodes
+    (headsBase nextBase previousBase headsLength nextLength previousLength bin
+      block successor predecessor : Nat) (previous : List Nat) (mem : Memory)
+    (hpreviousLength : previous.length = previousLength)
+    (hbin : bin < headsLength) (hblockNext : block < nextLength)
+    (hblock : block < previous.length)
+    (hpreviousHeads :
+      (ArrayRegion Luffs.Memory.Scalar.u64 previousBase previous.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 headsBase headsLength))
+    (hpreviousNext :
+      (ArrayRegion Luffs.Memory.Scalar.u64 previousBase previous.length).disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 nextBase nextLength))
+    (hencoded : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous)) :
+    (ElementWrite.applyAll
+      (removeWrites headsBase nextBase previousBase headsLength nextLength
+        previousLength bin block successor predecessor) mem).EncodesArray
+      Luffs.Memory.Scalar.u64 previousBase
+        (InitializeProgram.encodeNats
+          ((if successor < previousLength then previous.set successor predecessor
+            else previous).set block previousLength)) := by
+  have hbefore : ∀ write, write ∈
+      removePreviousBefore headsBase nextBase nextLength bin successor predecessor →
+      write.region.disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 previousBase previous.length) := by
+    intro write hwrite
+    simp [removePreviousBefore] at hwrite
+    rcases hwrite with hwrite | hwrite
+    · rcases hwrite with ⟨_, rfl⟩
+      simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u64] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64
+          hbin (disjoint_symmetric.mp hpreviousHeads)
+    · rcases hwrite with ⟨hpredecessor, rfl⟩
+      simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+        ValueRegion, Luffs.Memory.Scalar.u64] using
+        ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64 hpredecessor
+          (disjoint_symmetric.mp hpreviousNext)
+  have hmiddle : ∀ write, write ∈
+      removePreviousMiddle nextBase nextLength block →
+      write.region.disjoint
+        (ArrayRegion Luffs.Memory.Scalar.u64 previousBase previous.length) := by
+    intro write hwrite
+    simp [removePreviousMiddle] at hwrite
+    subst write
+    simpa [ElementWrite.region, InitializeProgram.usizeBytes_length,
+      ValueRegion, Luffs.Memory.Scalar.u64] using
+      ArrayRegion.element_disjoint Luffs.Memory.Scalar.u64
+        hblockNext (disjoint_symmetric.mp hpreviousNext)
+  by_cases hsuccessor : successor < previousLength
+  · have hbeforeEncoded := hencoded.applyAll_of_disjoint (by
+      simpa [InitializeProgram.encodeNats] using hbefore)
+    have hfirst := hbeforeEncoded.writeElement (index := successor)
+      (value := BitVec.ofNat 64 predecessor) (by
+        simpa [InitializeProgram.encodeNats, hpreviousLength] using hsuccessor)
+    have hmiddleEncoded := hfirst.applyAll_of_disjoint (by
+      intro write hwrite
+      simpa [List.length_set, InitializeProgram.encodeNats] using
+        hmiddle write hwrite)
+    have hsecond := hmiddleEncoded.writeElement (index := block)
+      (value := BitVec.ofNat 64 previousLength) (by
+        simpa [List.length_set, InitializeProgram.encodeNats] using hblock)
+    rw [removeWrites_previous_decompose_of_lt _ _ _ _ _ _ _ _ _ _ hsuccessor,
+      ElementWrite.applyAll_append, ElementWrite.applyAll_append,
+      ElementWrite.applyAll_append, if_pos hsuccessor,
+      AllocateProgram.encodeNats_set, AllocateProgram.encodeNats_set]
+    simpa [ElementWrite.applyAll, ElementWrite.apply,
+      InitializeProgram.usizeBytes, Luffs.Memory.Scalar.u64] using hsecond
+  · have hbeforeEncoded := hencoded.applyAll_of_disjoint (by
+      simpa [InitializeProgram.encodeNats] using hbefore)
+    have hmiddleEncoded := hbeforeEncoded.applyAll_of_disjoint (by
+      simpa [InitializeProgram.encodeNats] using hmiddle)
+    have hwrite := hmiddleEncoded.writeElement (index := block)
+      (value := BitVec.ofNat 64 previousLength) (by
+        simpa [InitializeProgram.encodeNats] using hblock)
+    have hge : successor ≥ previousLength := Nat.le_of_not_gt hsuccessor
+    rw [removeWrites_previous_decompose_of_ge _ _ _ _ _ _ _ _ _ _ hge,
+      ElementWrite.applyAll_append, ElementWrite.applyAll_append,
+      if_neg hsuccessor, AllocateProgram.encodeNats_set]
+    simpa [ElementWrite.applyAll, ElementWrite.apply,
+      InitializeProgram.usizeBytes, Luffs.Memory.Scalar.u64] using hwrite
+
+structure RemoveMetadataDisjoint (headsBase nextBase previousBase headsLength
+    nextLength previousLength : Nat) : Prop where
+  heads_next :
+    (ArrayRegion Luffs.Memory.Scalar.u64 headsBase headsLength).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 nextBase nextLength)
+  heads_previous :
+    (ArrayRegion Luffs.Memory.Scalar.u64 headsBase headsLength).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 previousBase previousLength)
+  next_previous :
+    (ArrayRegion Luffs.Memory.Scalar.u64 nextBase nextLength).disjoint
+      (ArrayRegion Luffs.Memory.Scalar.u64 previousBase previousLength)
+
+theorem removeWrites_encodes
+    (headsBase nextBase previousBase headsLength nextLength previousLength bin
+      block successor predecessor : Nat) (heads next previous : List Nat)
+    (mem : Memory) (hheadsLength : heads.length = headsLength)
+    (hnextLength : next.length = nextLength)
+    (hpreviousLength : previous.length = previousLength)
+    (hbin : bin < heads.length) (hblockNext : block < next.length)
+    (hblockPrevious : block < previous.length)
+    (hlayout : RemoveMetadataDisjoint headsBase nextBase previousBase
+      heads.length next.length previous.length)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous)) :
+    let nextHeads :=
+      if predecessor ≥ nextLength then heads.set bin successor else heads
+    let nextLinks :=
+      (if predecessor < nextLength then next.set predecessor successor else next).set
+        block nextLength
+    let nextPrevious :=
+      (if successor < previousLength then previous.set successor predecessor
+        else previous).set block previousLength
+    let final := ElementWrite.applyAll
+      (removeWrites headsBase nextBase previousBase headsLength nextLength
+        previousLength bin block successor predecessor) mem
+    final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+        (InitializeProgram.encodeNats nextHeads) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+        (InitializeProgram.encodeNats nextLinks) ∧
+      final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+        (InitializeProgram.encodeNats nextPrevious) := by
+  subst headsLength
+  subst nextLength
+  subst previousLength
+  dsimp only
+  refine ⟨removeWrites_heads_encodes headsBase nextBase previousBase heads.length
+      next.length previous.length bin block successor predecessor heads mem
+      rfl hbin hblockNext hblockPrevious hlayout.heads_next
+      hlayout.heads_previous hheads, ?_, ?_⟩
+  · exact removeWrites_next_encodes headsBase nextBase previousBase heads.length
+      next.length previous.length bin block successor predecessor next mem
+      rfl hbin hblockNext hblockPrevious
+      (disjoint_symmetric.mp hlayout.heads_next)
+      hlayout.next_previous hnext
+  · exact removeWrites_previous_encodes headsBase nextBase previousBase
+      heads.length next.length previous.length bin block successor predecessor
+      previous mem rfl hbin hblockNext hblockPrevious
+      (disjoint_symmetric.mp hlayout.heads_previous)
+      (disjoint_symmetric.mp hlayout.next_previous) hprevious
+
+theorem removeArrays_eq_of_bounds (heads next previous : List Nat)
+    (bin block : Nat) (hbin : bin < heads.length)
+    (hnext : block < next.length) (hprevious : block < previous.length) :
+    removeArrays heads next previous bin block = some
+      ((if previous[block]?.getD next.length ≥ next.length then
+          heads.set bin (next[block]?.getD next.length) else heads),
+       (if previous[block]?.getD next.length < next.length then
+          next.set (previous[block]?.getD next.length)
+            (next[block]?.getD next.length) else next).set block next.length,
+       (if next[block]?.getD next.length < previous.length then
+          previous.set (next[block]?.getD next.length)
+            (previous[block]?.getD next.length) else previous).set block
+              previous.length) := by
+  simp [removeArrays, remove, Nat.not_le.mpr hbin, Nat.not_le.mpr hnext,
+    Nat.not_le.mpr hprevious]
+
+theorem removeWrites_width (headsBase nextBase previousBase headsLength
+    nextLength previousLength bin block successor predecessor : Nat) :
+    ∀ write, write ∈ removeWrites headsBase nextBase previousBase headsLength
+      nextLength previousLength bin block successor predecessor →
+      write.bytes.length = write.width := by
+  intro write hwrite
+  simp [removeWrites] at hwrite
+  rcases hwrite with hwrite | hwrite | hwrite | rfl | rfl
+  · rcases hwrite with ⟨_, rfl⟩
+    simp
+  · rcases hwrite with ⟨_, rfl⟩
+    simp
+  · rcases hwrite with ⟨_, rfl⟩
+    simp
+  · simp
+  · simp
+
+theorem removeWrites_mapped
+    (headsBase nextBase previousBase headsLength nextLength previousLength bin
+      block successor predecessor : Nat) (mem : Memory)
+    (hbin : bin < headsLength) (hblockNext : block < nextLength)
+    (hblockPrevious : block < previousLength)
+    (hheads : ∀ index, index < headsLength → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnext : ∀ index, index < nextLength → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hprevious : ∀ index, index < previousLength → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i)) :
+    ∀ write, write ∈ removeWrites headsBase nextBase previousBase headsLength
+      nextLength previousLength bin block successor predecessor →
+      ∀ i, i < write.width →
+        mem.mapped (write.base + write.index * write.width + i) := by
+  intro write hwrite i hi
+  simp [removeWrites] at hwrite
+  rcases hwrite with hwrite | hwrite | hwrite | rfl | rfl
+  · rcases hwrite with ⟨_, rfl⟩
+    simpa using hheads bin hbin i hi
+  · rcases hwrite with ⟨hpredecessor, rfl⟩
+    simpa using hnext predecessor hpredecessor i hi
+  · rcases hwrite with ⟨hsuccessor, rfl⟩
+    simpa using hprevious successor hsuccessor i hi
+  · simpa using hnext block hblockNext i hi
+  · simpa using hprevious block hblockPrevious i hi
+
+theorem removeProgram_wp_exact {GF : BundledGFunctors}
+    (headsBase nextBase previousBase headsLength nextLength previousLength bin
+      block successor predecessor : Nat) (mem : Memory)
+    (hbin : bin < headsLength) (hblockNext : block < nextLength)
+    (hblockPrevious : block < previousLength)
+    (hheads : ∀ index, index < headsLength → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnext : ∀ index, index < nextLength → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hprevious : ∀ index, index < previousLength → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i)) :
+    ⊢@{IProp GF} Program.wp
+      (removeProgram headsBase nextBase previousBase headsLength nextLength
+        previousLength bin block successor predecessor) mem
+      (fun final => final = ElementWrite.applyAll
+        (removeWrites headsBase nextBase previousBase headsLength nextLength
+          previousLength bin block successor predecessor) mem) := by
+  unfold removeProgram
+  apply Program.writeElements_wp_exact
+  · exact removeWrites_width _ _ _ _ _ _ _ _ _ _
+  · exact removeWrites_mapped headsBase nextBase previousBase headsLength
+      nextLength previousLength bin block successor predecessor mem hbin
+      hblockNext hblockPrevious hheads hnext hprevious
+
+theorem removeProgram_wp_encodes {GF : BundledGFunctors}
+    (headsBase nextBase previousBase headsLength nextLength previousLength bin
+      block successor predecessor : Nat) (heads next previous : List Nat)
+    (mem : Memory) (hheadsLength : heads.length = headsLength)
+    (hnextLength : next.length = nextLength)
+    (hpreviousLength : previous.length = previousLength)
+    (hbin : bin < heads.length) (hblockNext : block < next.length)
+    (hblockPrevious : block < previous.length)
+    (hlayout : RemoveMetadataDisjoint headsBase nextBase previousBase
+      heads.length next.length previous.length)
+    (hheadsMapped : ∀ index, index < heads.length → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < next.length → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previous.length → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous)) :
+    ⊢@{IProp GF} Program.wp
+      (removeProgram headsBase nextBase previousBase headsLength nextLength
+        previousLength bin block successor predecessor) mem
+      (fun final =>
+        final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+          (InitializeProgram.encodeNats
+            (if predecessor ≥ nextLength then heads.set bin successor else heads)) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+          (InitializeProgram.encodeNats
+            ((if predecessor < nextLength then next.set predecessor successor
+              else next).set block nextLength)) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+          (InitializeProgram.encodeNats
+            ((if successor < previousLength then previous.set successor predecessor
+              else previous).set block previousLength))) := by
+  apply Program.wp_mono
+    (removeProgram_wp_exact headsBase nextBase previousBase headsLength nextLength
+      previousLength bin block successor predecessor mem (by omega) (by omega)
+      (by omega) (by simpa [hheadsLength] using hheadsMapped)
+      (by simpa [hnextLength] using hnextMapped)
+      (by simpa [hpreviousLength] using hpreviousMapped))
+  intro final hfinal
+  subst final
+  exact removeWrites_encodes headsBase nextBase previousBase headsLength
+    nextLength previousLength bin block successor predecessor heads next previous
+    mem hheadsLength hnextLength hpreviousLength hbin hblockNext hblockPrevious
+    hlayout hheads hnext hprevious
+
+theorem removeArrays_bounds {heads next previous : List Nat} {bin block : Nat}
+    {nextHeads nextLinks nextPrevious : List Nat}
+    (hremove : removeArrays heads next previous bin block =
+      some (nextHeads, nextLinks, nextPrevious)) :
+    bin < heads.length ∧ block < next.length ∧ block < previous.length := by
+  have hstate := removeArrays_result hremove
+  unfold remove at hstate
+  split at hstate <;> try contradiction
+  next hbin =>
+    split at hstate <;> try contradiction
+    next hnext =>
+      split at hstate <;> try contradiction
+      next hprevious =>
+        simp only [Metadata.heads, Metadata.next, Metadata.previous] at hbin hnext hprevious
+        exact ⟨by omega, by omega, by omega⟩
+
+theorem removeProgram_wp_refines {GF : BundledGFunctors}
+    (headsBase nextBase previousBase : Nat) (heads next previous : List Nat)
+    (bin block : Nat) (nextHeads nextLinks nextPrevious : List Nat) (mem : Memory)
+    (hremove : removeArrays heads next previous bin block =
+      some (nextHeads, nextLinks, nextPrevious))
+    (hlayout : RemoveMetadataDisjoint headsBase nextBase previousBase
+      heads.length next.length previous.length)
+    (hheadsMapped : ∀ index, index < heads.length → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < next.length → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previous.length → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous)) :
+    ⊢@{IProp GF} Program.wp
+      (removeProgram headsBase nextBase previousBase heads.length next.length
+        previous.length bin block (next[block]?.getD next.length)
+          (previous[block]?.getD next.length)) mem
+      (fun final =>
+        final.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+            (InitializeProgram.encodeNats nextHeads) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+            (InitializeProgram.encodeNats nextLinks) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+            (InitializeProgram.encodeNats nextPrevious)) := by
+  obtain ⟨hbin, hblockNext, hblockPrevious⟩ := removeArrays_bounds hremove
+  have hformula := removeArrays_eq_of_bounds heads next previous bin block hbin
+    hblockNext hblockPrevious
+  have heq := Option.some.inj (hremove.symm.trans hformula)
+  obtain ⟨rfl, rfl, rfl⟩ := heq
+  exact removeProgram_wp_encodes headsBase nextBase previousBase heads.length
+    next.length previous.length bin block (next[block]?.getD next.length)
+    (previous[block]?.getD next.length) heads next previous mem rfl rfl rfl hbin
+    hblockNext hblockPrevious hlayout hheadsMapped hnextMapped hpreviousMapped
+    hheads hnext hprevious
+
+end RemoveProgram
+
 /-- Exact pure state transformer for `tlsf_initialize`. All fixed-capacity
 metadata is reset before the single mmap-backed free block is inserted. -/
 def initializeArrays (offsets sizes : List Nat)

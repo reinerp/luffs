@@ -1148,8 +1148,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   stores is proved byte-for-byte equal to `allocateSplitWrites`. That equality
   is now lifted to the typed `AllocatePhysicalResult`: the operational program
   encodes the resulting offsets, sizes, free flags, predecessor flags, and
-  active count. Framing the five class fields and substituting this program in
-  the public split composition is the next splice.
+  active count. The same operational WP now frames the second-level bitmap,
+  first-level bitmap, heads, next links, and predecessor links using the typed
+  ten-region layout. It therefore has the complete ten-field contract required
+  by the allocator transaction. Substituting it into the public split
+  composition, then interleaving remainder-insertion reads, are the next
+  splices.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

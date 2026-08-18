@@ -1152,8 +1152,11 @@ concurrency are later extensions and are not prerequisites for `Box` and
   first-level bitmap, heads, next links, and predecessor links using the typed
   ten-region layout. It therefore has the complete ten-field contract required
   by the allocator transaction. Substituting it into the public split
-  composition, then interleaving remainder-insertion reads, are the next
-  splices.
+  composition is now complete for its first two stages: exact candidate-helper
+  reads/stores flow directly into exact physical-header reads, descending
+  shift-loop traffic, and finishing stores. The composed WP retains the exact
+  byte-state equation and all ten typed metadata encodings. Extending the
+  final remainder-insertion stage with its helper reads is the next splice.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

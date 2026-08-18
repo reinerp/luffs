@@ -80,6 +80,7 @@ struct ArrayModel {
     assignments: Vec<(String, String)>,
     result: String,
     returns_unit: bool,
+    emit_model: bool,
     refines: Option<String>,
 }
 
@@ -867,6 +868,7 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
         assignments: Vec<(String, String)>,
         result: Option<String>,
         returns_unit: bool,
+        fixed_array: bool,
         refines: Option<String>,
         depth: usize,
         eligible: bool,
@@ -910,10 +912,7 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
                 };
                 let name = name.trim().to_owned();
                 match ty.trim() {
-                    ty if ty == "&mut [u8]"
-                        || (is_fixed_u8_array_reference(ty, true)
-                            && trimmed[3..open].trim().starts_with("tlsf_box_")) =>
-                    {
+                    ty if ty == "&mut [u8]" || is_fixed_u8_array_reference(ty, true) => {
                         if array.replace(name.clone()).is_some() {
                             eligible = false;
                         }
@@ -939,6 +938,10 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
                 params,
                 refines: next_refinement.take(),
                 returns_unit,
+                fixed_array: trimmed[open + 1..close]
+                    .split(',')
+                    .filter_map(|param| param.split_once(':'))
+                    .any(|(_, ty)| is_fixed_u8_array_reference(ty.trim(), true)),
                 depth: 1,
                 eligible,
                 ..Pending::default()
@@ -957,9 +960,17 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
         {
             model.guards.push(model_expr(condition, &model.array));
         } else if let Some((name, expression)) = usize_let(trimmed) {
-            model
-                .lets
-                .push((lean_ident(name), model_expr(expression, &model.array)));
+            if let Some(checked) = checked_arithmetic_expression(expression) {
+                let checked = model_expr(&checked, &model.array);
+                model
+                    .guards
+                    .push(format!("({checked}) > Luffs.Runtime.TLSF.usizeMax"));
+                model.lets.push((lean_ident(name), checked));
+            } else {
+                model
+                    .lets
+                    .push((lean_ident(name), model_expr(expression, &model.array)));
+            }
         } else if let Some(statement) = trimmed.strip_suffix(';')
             && let Some((left, right)) = statement.split_once(" = ")
             && left.starts_with(&format!("{}[", model.array))
@@ -988,15 +999,22 @@ fn parse_array_models(source: &str) -> Vec<ArrayModel> {
                 && !model.assignments.is_empty()
                 && let Some(result) = model.result
             {
+                let guards = model
+                    .guards
+                    .iter()
+                    .map(|guard| expand_read_expr(guard.clone(), &model.lets))
+                    .collect();
+                let result = expand_read_expr(result, &model.lets);
                 models.push(ArrayModel {
                     name: model.name,
                     array: model.array,
                     params: model.params,
-                    guards: model.guards,
+                    guards,
                     lets: model.lets,
                     assignments: model.assignments,
                     result,
                     returns_unit: model.returns_unit,
+                    emit_model: model.returns_unit || !model.fixed_array,
                     refines: model.refines,
                 });
             }
@@ -3549,82 +3567,94 @@ fn lean(module: &Module) -> String {
         out.push_str(") mem (fun final => final = mem) := by\n  exact Luffs.Memory.Program.wp_done mem _ rfl\n\n");
     }
     for model in &module.array_models {
-        out.push_str("def ");
-        out.push_str(&model.name);
-        out.push_str("_model");
-        for (name, ty) in &model.params {
-            out.push_str(" (");
-            out.push_str(name);
-            out.push_str(" : ");
-            out.push_str(ty);
-            out.push(')');
-        }
-        if model.returns_unit {
-            out.push_str(" : Option (List (Fin 256)) :=\n  ");
-        } else {
-            out.push_str(" : Option (List (Fin 256) × Nat) :=\n  ");
-        }
-        for guard in &model.guards {
-            out.push_str("if ");
-            out.push_str(guard);
-            out.push_str(" then none else\n  ");
-        }
-        for (name, expression) in &model.lets {
-            out.push_str("let ");
-            out.push_str(name);
-            out.push_str(" := ");
-            out.push_str(expression);
-            out.push_str("\n  ");
-        }
-        for (index, value) in &model.assignments {
-            out.push_str("let ");
-            out.push_str(&model.array);
-            out.push_str(" := ");
-            out.push_str(&model.array);
-            out.push_str(".set ");
-            if index
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-            {
-                out.push_str(index);
-            } else {
-                out.push('(');
-                out.push_str(index);
+        if model.emit_model {
+            out.push_str("def ");
+            out.push_str(&model.name);
+            out.push_str("_model");
+            for (name, ty) in &model.params {
+                out.push_str(" (");
+                out.push_str(name);
+                out.push_str(" : ");
+                out.push_str(ty);
                 out.push(')');
             }
-            out.push(' ');
-            out.push_str(value);
-            out.push_str("\n  ");
+            if model.returns_unit {
+                out.push_str(" : Option (List (Fin 256)) :=\n  ");
+            } else {
+                out.push_str(" : Option (List (Fin 256) × Nat) :=\n  ");
+            }
+            for guard in &model.guards {
+                out.push_str("if ");
+                out.push_str(guard);
+                out.push_str(" then none else\n  ");
+            }
+            for (name, expression) in &model.lets {
+                out.push_str("let ");
+                out.push_str(name);
+                out.push_str(" := ");
+                out.push_str(expression);
+                out.push_str("\n  ");
+            }
+            for (index, value) in &model.assignments {
+                out.push_str("let ");
+                out.push_str(&model.array);
+                out.push_str(" := ");
+                out.push_str(&model.array);
+                out.push_str(".set ");
+                if index
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                {
+                    out.push_str(index);
+                } else {
+                    out.push('(');
+                    out.push_str(index);
+                    out.push(')');
+                }
+                out.push(' ');
+                out.push_str(value);
+                out.push_str("\n  ");
+            }
+            out.push_str("some (");
+            out.push_str(&model.array);
+            if !model.returns_unit {
+                out.push_str(", ");
+                out.push_str(&model.result);
+            }
+            out.push_str(")\n\n");
+            if let Some(target) = &model.refines {
+                out.push_str("theorem ");
+                out.push_str(&model.name);
+                out.push_str("_refines : ");
+                out.push_str(&model.name);
+                out.push_str("_model = ");
+                out.push_str(target);
+                out.push_str(" := by\n  funext ");
+                out.push_str(
+                    &model
+                        .params
+                        .iter()
+                        .map(|(name, _)| name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                );
+                out.push_str("\n  simp [");
+                out.push_str(&model.name);
+                out.push_str("_model, ");
+                out.push_str(target);
+                out.push_str("]\n\n");
+            }
         }
-        out.push_str("some (");
-        out.push_str(&model.array);
-        if !model.returns_unit {
-            out.push_str(", ");
-            out.push_str(&model.result);
-        }
-        out.push_str(")\n\n");
-        if let Some(target) = &model.refines {
-            out.push_str("theorem ");
-            out.push_str(&model.name);
-            out.push_str("_refines : ");
-            out.push_str(&model.name);
-            out.push_str("_model = ");
-            out.push_str(target);
-            out.push_str(" := by\n  funext ");
-            out.push_str(
-                &model
-                    .params
-                    .iter()
-                    .map(|(name, _)| name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            );
-            out.push_str("\n  simp [");
-            out.push_str(&model.name);
-            out.push_str("_model, ");
-            out.push_str(target);
-            out.push_str("]\n\n");
-        }
+        let effect_assignments = model
+            .assignments
+            .iter()
+            .map(|(index, value)| {
+                (
+                    expand_read_expr(index.clone(), &model.lets),
+                    expand_read_expr(value.clone(), &model.lets),
+                )
+            })
+            .collect::<Vec<_>>();
         out.push_str(&format!(
             "def {}_program ({}Base : Nat)",
             model.name, model.array
@@ -3672,7 +3702,7 @@ fn lean(module: &Module) -> String {
             "    (hsteps : Luffs.Memory.WriteOffsetSteps {}Base [",
             model.array
         ));
-        for (index, (offset, value)) in model.assignments.iter().enumerate() {
+        for (index, (offset, value)) in effect_assignments.iter().enumerate() {
             if index != 0 {
                 out.push_str(", ");
             }
@@ -3705,7 +3735,7 @@ fn lean(module: &Module) -> String {
             out.push_str(&format!("    (hguard{index} : ¬({guard}))\n"));
         }
         out.push_str("    (hmapped : ∀ write ∈ [");
-        for (index, (offset, value)) in model.assignments.iter().enumerate() {
+        for (index, (offset, value)) in effect_assignments.iter().enumerate() {
             if index != 0 {
                 out.push_str(", ");
             }
@@ -3721,7 +3751,7 @@ fn lean(module: &Module) -> String {
         }
         out.push_str(") before (fun final => final = after) := by\n  obtain ⟨after, hsteps⟩ := Luffs.Memory.writeOffsetSteps_exists ");
         out.push_str(&format!("{}Base [", model.array));
-        for (index, (offset, value)) in model.assignments.iter().enumerate() {
+        for (index, (offset, value)) in effect_assignments.iter().enumerate() {
             if index != 0 {
                 out.push_str(", ");
             }
@@ -4378,6 +4408,13 @@ rfl\n\n",
             "theorem {}_refines : {}_model = {} := by\n  funext storage offset len capacity value\n  rfl\n\n",
             model.name, model.name, model.refines
         ));
+        if module
+            .array_models
+            .iter()
+            .any(|generic| generic.name == model.name)
+        {
+            continue;
+        }
         out.push_str(&format!(
             "def {}_program (storageBase : Nat) (storage : List (Fin 256)) (offset len capacity : Nat) (value : Fin 256) : Luffs.Memory.Program :=\n  Luffs.Memory.Program.branch (decide (len ≥ capacity)) .done (\n    Luffs.Memory.Program.branch (decide (offset + len ≥ 2 ^ 64)) .done (\n      let index := offset + len\n      Luffs.Memory.Program.branch (decide (index ≥ storage.length)) .done (\n        Luffs.Memory.Program.writeOffsets storageBase [(index, value)])))\n\n",
             model.name
@@ -4392,7 +4429,11 @@ rfl\n\n",
         ));
     }
     for model in &module.tlsf_vec_get_models {
-        if module.read_models.iter().any(|generic| generic.name == model.name) {
+        if module
+            .read_models
+            .iter()
+            .any(|generic| generic.name == model.name)
+        {
             continue;
         }
         out.push_str(&format!(
@@ -5861,12 +5902,20 @@ mod tests {
         assert!(generated.contains("def tlsf_vec_push_u8_program"));
         assert!(generated.contains("theorem tlsf_vec_push_u8_program_wp"));
         assert!(generated.contains("theorem tlsf_vec_push_u8_program_wp_of_mapped"));
+        assert!(
+            module
+                .array_models
+                .iter()
+                .any(|model| model.name == "tlsf_vec_push_u8")
+        );
         assert!(generated.contains("def tlsf_vec_get_u8_program"));
         assert!(generated.contains("theorem tlsf_vec_get_u8_program_wp"));
-        assert!(module
-            .read_models
-            .iter()
-            .any(|model| model.name == "tlsf_vec_get_u8"));
+        assert!(
+            module
+                .read_models
+                .iter()
+                .any(|model| model.name == "tlsf_vec_get_u8")
+        );
     }
 
     #[test]
@@ -5968,7 +6017,7 @@ mod tests {
             "Luffs.Memory.Program.writeOffsets storageBase [(begin, low), (second, high)]"
         ));
         assert!(generated.contains(
-            "hsteps : Luffs.Memory.WriteOffsetSteps storageBase [(begin, low), (second, high)]"
+            "hsteps : Luffs.Memory.WriteOffsetSteps storageBase [(begin, low), ((begin + 1), high)]"
         ));
     }
 

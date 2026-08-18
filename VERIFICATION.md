@@ -1145,8 +1145,11 @@ concurrency are later extensions and are not prerequisites for `Box` and
   load/store, free-flag load/store, and predecessor-flag load/store before
   recurring; the recursive Iris WP transports mappedness through all earlier
   writes. Composing the common header reads, that loop, and the finishing
-  stores is proved byte-for-byte equal to `allocateSplitWrites`. Lifting this
-  new program through the public split-result encoding is the next splice.
+  stores is proved byte-for-byte equal to `allocateSplitWrites`. That equality
+  is now lifted to the typed `AllocatePhysicalResult`: the operational program
+  encodes the resulting offsets, sizes, free flags, predecessor flags, and
+  active count. Framing the five class fields and substituting this program in
+  the public split composition is the next splice.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

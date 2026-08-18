@@ -17980,6 +17980,86 @@ theorem allocatePhysicalSplitInterleavedProgram_wp_exact
   subst final
   rw [AllocateProgram.allocateSplitWrites, ElementWrite.applyAll_append]
 
+theorem allocatePhysicalSplitInterleavedProgram_wp_refines
+    {GF : BundledGFunctors}
+    (countBase offsetsBase sizesBase isFreeBase prevFreeBase block count request
+      remainderOffset remainderSize : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (result : AllocatePhysicalResult) (mem : Memory)
+    (hsuccess : allocatePhysicalArrays offsets sizes isFree prevFree count block
+      request = some result)
+    (hremainderOffset : result.remainderOffset = some remainderOffset)
+    (hremainderSize : result.remainderBytes = some remainderSize)
+    (hlayout : AllocateProgram.SplitMetadataDisjoint offsetsBase sizesBase
+      isFreeBase prevFreeBase countBase offsets.length sizes.length isFree.length
+      prevFree.length)
+    (hoffsetsMapped : ∀ index, index < offsets.length → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizesMapped : ∀ index, index < sizes.length → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hfreeMapped : ∀ index, index < isFree.length →
+      mem.mapped (isFreeBase + index))
+    (hprevMapped : ∀ index, index < prevFree.length →
+      mem.mapped (prevFreeBase + index))
+    (hcountMapped : ∀ i, i < 8 → mem.mapped (countBase + i))
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree)) :
+    ⊢@{IProp GF} Program.wp
+      (allocatePhysicalSplitInterleavedProgram countBase offsetsBase sizesBase
+        isFreeBase prevFreeBase block count request remainderOffset remainderSize
+        offsets sizes isFree prevFree) mem
+      (fun final =>
+        final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+            (InitializeProgram.encodeNats result.offsets) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+            (InitializeProgram.encodeNats result.sizes) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+            (AllocateProgram.encodeFlags result.isFree) ∧
+        final.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+            (AllocateProgram.encodeFlags result.prevFree) ∧
+        final.EncodesAt Luffs.Memory.Scalar.u64 countBase
+            (BitVec.ofNat 64 result.count)) := by
+  obtain ⟨_, _, _, _, _, hblock, _, selectedOffset, selectedSize, _, _, _, _, _,
+      hcase⟩ := allocatePhysicalArrays_result hsuccess
+  rcases hcase with hsplit | hwhole
+  · rcases hsplit with ⟨_, hcountOffsets, hcountSizes, hcountFree, hcountPrev,
+      hresultCount, _, hresultRemainderOffset, hresultRemainderSize,
+      hresultOffsets, hresultSizes, hresultFree, hresultPrev⟩
+    have hoffsetValue : remainderOffset = selectedOffset + request := by
+      rw [hresultRemainderOffset] at hremainderOffset
+      exact (Option.some.inj hremainderOffset).symm
+    have hsizeValue : remainderSize = selectedSize - request := by
+      rw [hresultRemainderSize] at hremainderSize
+      exact (Option.some.inj hremainderSize).symm
+    subst remainderOffset
+    subst remainderSize
+    apply Program.wp_mono
+      (allocatePhysicalSplitInterleavedProgram_wp_exact (GF := GF) countBase
+        offsetsBase sizesBase isFreeBase prevFreeBase block count request
+        (selectedOffset + request) (selectedSize - request) offsets sizes isFree
+        prevFree mem hblock
+        hcountOffsets hcountSizes hcountFree hcountPrev hoffsetsMapped
+        hsizesMapped hfreeMapped hprevMapped hcountMapped)
+    intro final hfinal
+    subst final
+    have hencoded := AllocateProgram.allocateSplitWrites_encodes offsetsBase
+      sizesBase isFreeBase prevFreeBase countBase block count request
+      (selectedOffset + request) (selectedSize - request) offsets sizes isFree
+      prevFree mem hblock
+      hcountOffsets hcountSizes hcountFree hcountPrev hlayout hoffsets hsizes
+      hfree hprev
+    rw [hresultOffsets, hresultSizes, hresultFree, hresultPrev, hresultCount]
+    exact hencoded
+  · rcases hwhole with ⟨_, _, _, hnone, _, _, _, _, _⟩
+    rw [hnone] at hremainderOffset
+    contradiction
+
 end AllocateComposition
 
 /-- Exact pure state transformer for `tlsf_initialize`. All fixed-capacity

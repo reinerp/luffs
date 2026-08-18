@@ -1172,7 +1172,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   same exact memory. Using it, the physical header-read/whole-store trace gets
   the complete ten-field contract and composes after exact candidate removal.
   Thus both successful allocation branches now have source-ordered witnesses;
-  only public branch selection remains in this allocation slice.
+  public branch selection is now proved as well. A successful `allocateArrays`
+  result selects exactly one of those fully interleaved mutation programs, not
+  an unrelated safe witness, and the exact successful top-level preflight read
+  prefix composes in front of it. The resulting closed Iris WP covers the
+  successful public allocation path through all helper-local reads and stores
+  and establishes the canonical ten-field result encoding.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

@@ -19050,6 +19050,307 @@ theorem allocateWholeFullyInterleavedProgram_wp_refines
     hclass.2.2.1 hclass.2.2.2.1 hclass.2.2.2.2 hoffsetsMiddle
     hsizesMiddle hcountMiddle
 
+def IsSuccessfulAllocateFullyInterleavedMutation
+    (secondBase firstBase headsBase nextBase previousBase offsetsBase sizesBase
+      isFreeBase prevFreeBase countBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (count request : Nat)
+    (result : AllocateArraysResult) (program : Program) : Prop :=
+  ∃ startBin foundBin selectedOffset block selectedSize remainderBin
+      removed physical,
+    takeCandidateClassArrays second first heads next previous
+        (startBin / secondLevelCount) (startBin % secondLevelCount) =
+      some removed ∧
+    allocatePhysicalArrays offsets sizes isFree prevFree count block request =
+      some physical ∧
+    removed.bin = foundBin ∧ removed.block = selectedOffset ∧
+    ((minimumBlockBytes ≤ selectedSize - request ∧
+        ∃ inserted,
+          insertClassArrays removed.second removed.first removed.heads
+            removed.next removed.previous remainderBin
+              (selectedOffset + request) = some inserted ∧
+          result = ⟨physical.offsets, physical.sizes, physical.isFree,
+            physical.prevFree, physical.count, inserted.second, inserted.first,
+            inserted.heads, inserted.next, inserted.previous,
+            physical.allocatedOffset, physical.allocatedBytes⟩ ∧
+          program = allocateSplitFullyInterleavedProgram secondBase firstBase
+            headsBase nextBase previousBase offsetsBase sizesBase isFreeBase
+            prevFreeBase countBase heads.length next.length previous.length
+            (startBin / secondLevelCount) (startBin % secondLevelCount)
+            removed.bin removed.block block
+            (next[removed.block]?.getD next.length)
+            (previous[removed.block]?.getD next.length) (removed.bin / 32)
+            (removed.bin % 32) count request remainderBin
+            (selectedOffset + request) (selectedSize - request) second
+            (second[removed.bin / 32]?.getD 0) first offsets sizes isFree
+            prevFree removed.second removed.first removed.heads) ∨
+      (selectedSize - request < minimumBlockBytes ∧
+        result = ⟨physical.offsets, physical.sizes, physical.isFree,
+          physical.prevFree, physical.count, removed.second, removed.first,
+          removed.heads, removed.next, removed.previous,
+          physical.allocatedOffset, physical.allocatedBytes⟩ ∧
+        program = allocateWholeFullyInterleavedProgram secondBase firstBase
+          headsBase nextBase previousBase offsetsBase sizesBase isFreeBase
+          prevFreeBase countBase heads.length next.length previous.length
+          (startBin / secondLevelCount) (startBin % secondLevelCount) removed.bin
+          removed.block block (next[removed.block]?.getD next.length)
+          (previous[removed.block]?.getD next.length) (removed.bin / 32)
+          (removed.bin % 32) count second
+          (second[removed.bin / 32]?.getD 0) first))
+
+theorem allocateArrays_successfulFullyInterleavedMutation_wp
+    {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64) (state : Bins.State)
+    (heads next previous : List Nat) (count request : Nat)
+    (result : AllocateArraysResult) (mem : Memory)
+    (hsuccess : allocateArrays offsets sizes isFree prevFree count second first
+      heads next previous request = some result)
+    (hbitmapRep : RepresentsSecondBitmap second state)
+    (hbinsValid : Bins.Valid state)
+    (hbinsRep : RepresentsBins { heads, next, previous } state)
+    (layout : MetadataLayout offsetsBase sizesBase isFreeBase prevFreeBase
+      countBase secondBase firstBase headsBase nextBase previousBase offsets.length
+      sizes.length isFree.length prevFree.length second.length heads.length
+      next.length previous.length)
+    (hsecondMapped : ∀ index, index < second.length → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheadsMapped : ∀ index, index < heads.length → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < next.length → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previous.length → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hoffsetsMapped : ∀ index, index < offsets.length → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizesMapped : ∀ index, index < sizes.length → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hfreeMapped : ∀ index, index < isFree.length →
+      mem.mapped (isFreeBase + index))
+    (hprevMapped : ∀ index, index < prevFree.length →
+      mem.mapped (prevFreeBase + index))
+    (hcountMapped : ∀ i, i < 8 → mem.mapped (countBase + i))
+    (hsecond : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hfirst : mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase first)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous))
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree))
+    (hcount : mem.EncodesAt Luffs.Memory.Scalar.u64 countBase
+      (BitVec.ofNat 64 count)) :
+    ∃ program,
+      IsSuccessfulAllocateFullyInterleavedMutation secondBase firstBase
+        headsBase nextBase previousBase offsetsBase sizesBase isFreeBase
+        prevFreeBase countBase offsets sizes isFree prevFree second first heads
+        next previous count request result program ∧
+      (⊢@{IProp GF} Program.wp program mem
+        (EncodesAllocateArraysResult offsetsBase sizesBase isFreeBase
+          prevFreeBase countBase secondBase firstBase headsBase nextBase
+          previousBase result)) := by
+  obtain ⟨startBin, foundBin, selectedOffset, block, selectedSize,
+      remainderBin, removed, physical, htake, hphysical, hbin, hblock,
+      hbranch⟩ := allocateArrays_success_branches hsuccess
+  rcases hbranch with
+      ⟨hsplit, hremainderOffset, hremainderSize, inserted, hinsert, hresult⟩ |
+      ⟨hwhole, hremainderOffset, _, hresult⟩
+  · let program := allocateSplitFullyInterleavedProgram secondBase firstBase
+      headsBase nextBase previousBase offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase heads.length next.length previous.length
+      (startBin / secondLevelCount) (startBin % secondLevelCount) removed.bin
+      removed.block block (next[removed.block]?.getD next.length)
+      (previous[removed.block]?.getD next.length) (removed.bin / 32)
+      (removed.bin % 32) count request remainderBin (selectedOffset + request)
+      (selectedSize - request) second (second[removed.bin / 32]?.getD 0) first
+      offsets sizes isFree prevFree removed.second removed.first removed.heads
+    have hwp := allocateSplitFullyInterleavedProgram_wp_refines (GF := GF)
+      offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase offsets sizes isFree prevFree second first
+      state heads next previous (startBin / secondLevelCount)
+      (startBin % secondLevelCount) block count request remainderBin
+      (selectedOffset + request) (selectedSize - request) removed physical
+      inserted mem htake hbitmapRep hbinsValid hbinsRep hphysical
+      hremainderOffset hremainderSize hinsert layout hsecondMapped hfirstMapped
+      hheadsMapped hnextMapped hpreviousMapped hoffsetsMapped hsizesMapped
+      hfreeMapped hprevMapped hcountMapped hsecond hfirst hheads hnext hprevious
+      hoffsets hsizes hfree hprev hcount
+    refine ⟨program, ?_, ?_⟩
+    · refine ⟨startBin, foundBin, selectedOffset, block, selectedSize,
+        remainderBin, removed, physical, htake, hphysical, hbin, hblock,
+        Or.inl ⟨hsplit, inserted, hinsert, hresult, rfl⟩⟩
+    · apply Program.wp_mono hwp
+      intro final hpost
+      subst result
+      rcases hpost with
+        ⟨hclass, hoffsetsFinal, hsizesFinal, hfreeFinal, hprevFinal,
+          hcountFinal⟩
+      exact ⟨hoffsetsFinal, hsizesFinal, hfreeFinal, hprevFinal, hcountFinal,
+        hclass.1, hclass.2.1, hclass.2.2.1, hclass.2.2.2.1,
+        hclass.2.2.2.2⟩
+  · let program := allocateWholeFullyInterleavedProgram secondBase firstBase
+      headsBase nextBase previousBase offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase heads.length next.length previous.length
+      (startBin / secondLevelCount) (startBin % secondLevelCount) removed.bin
+      removed.block block (next[removed.block]?.getD next.length)
+      (previous[removed.block]?.getD next.length) (removed.bin / 32)
+      (removed.bin % 32) count second (second[removed.bin / 32]?.getD 0) first
+    obtain ⟨_, _, _, hcountFree, hcountPrev, hblockCount, _, _, _, _, _, _,
+        _, _, hphysicalCases⟩ := allocatePhysicalArrays_result hphysical
+    obtain ⟨hphysicalOffsets, hphysicalSizes, hphysicalCount⟩ :
+        physical.offsets = offsets ∧ physical.sizes = sizes ∧
+          physical.count = count := by
+      rcases hphysicalCases with hsplitPhysical | hwholePhysical
+      · rcases hsplitPhysical with
+          ⟨_, _, _, _, _, _, _, hsome, _, _, _, _, _⟩
+        rw [hremainderOffset] at hsome
+        contradiction
+      · rcases hwholePhysical with
+          ⟨_, hcountEq, _, _, _, hoffsetsEq, hsizesEq, _, _⟩
+        exact ⟨hoffsetsEq, hsizesEq, hcountEq⟩
+    have hwp := allocateWholeFullyInterleavedProgram_wp_refines (GF := GF)
+      offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase offsets sizes isFree prevFree second first
+      state heads next previous (startBin / secondLevelCount)
+      (startBin % secondLevelCount) block count request removed physical mem htake
+      hbitmapRep hbinsValid hbinsRep hphysical hremainderOffset layout
+      hsecondMapped hfirstMapped hheadsMapped hnextMapped hpreviousMapped
+      hoffsetsMapped hsizesMapped hcountMapped
+      (hfreeMapped block (Nat.lt_of_lt_of_le hblockCount hcountFree))
+      (fun hsuccessor => hprevMapped (block + 1)
+        (Nat.lt_of_lt_of_le hsuccessor hcountPrev)) hsecond hfirst hheads hnext
+      hprevious hoffsets hsizes hfree hprev hcount
+    refine ⟨program, ?_, ?_⟩
+    · refine ⟨startBin, foundBin, selectedOffset, block, selectedSize,
+        remainderBin, removed, physical, htake, hphysical, hbin, hblock,
+        Or.inr ⟨hwhole, hresult, rfl⟩⟩
+    · apply Program.wp_mono hwp
+      intro final hpost
+      subst result
+      rcases hpost with
+        ⟨⟨hflags, hclass⟩, hoffsetsFinal, hsizesFinal, hcountFinal⟩
+      rw [hphysicalOffsets, hphysicalSizes, hphysicalCount]
+      exact ⟨hoffsetsFinal, hsizesFinal, hflags.1, hflags.2, hcountFinal,
+        hclass.1, hclass.2.1, hclass.2.2.1, hclass.2.2.2.1,
+        hclass.2.2.2.2⟩
+
+def IsSuccessfulAllocateFullyInterleavedTopLevelProgram
+    (secondBase firstBase headsBase countBase offsetsBase isFreeBase sizesBase
+      nextBase previousBase prevFreeBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (count request : Nat)
+    (result : AllocateArraysResult) (program : Program) : Prop :=
+  ∃ startBin foundBin block mutation,
+    program =
+      (allocatePreflightReadProgram secondBase firstBase headsBase countBase
+        offsetsBase isFreeBase sizesBase startBin foundBin block second).then
+        mutation ∧
+    IsSuccessfulAllocateFullyInterleavedMutation secondBase firstBase headsBase
+      nextBase previousBase offsetsBase sizesBase isFreeBase prevFreeBase
+      countBase offsets sizes isFree prevFree second first heads next previous
+      count request result mutation
+
+/-- Closed successful public allocator trace: exact top-level preflight reads
+follow the fully source-interleaved helper trace selected by the public branch. -/
+theorem allocateArrays_successfulFullyInterleavedTopLevelProgram_wp
+    {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64) (state : Bins.State)
+    (heads next previous : List Nat) (count request : Nat)
+    (result : AllocateArraysResult) (mem : Memory)
+    (hsuccess : allocateArrays offsets sizes isFree prevFree count second first
+      heads next previous request = some result)
+    (hbitmapRep : RepresentsSecondBitmap second state)
+    (hbinsValid : Bins.Valid state)
+    (hbinsRep : RepresentsBins { heads, next, previous } state)
+    (layout : MetadataLayout offsetsBase sizesBase isFreeBase prevFreeBase
+      countBase secondBase firstBase headsBase nextBase previousBase offsets.length
+      sizes.length isFree.length prevFree.length second.length heads.length
+      next.length previous.length)
+    (hsecondMapped : ∀ index, index < second.length → ∀ i, i < 4 →
+      mem.mapped (secondBase + index * 4 + i))
+    (hfirstMapped : ∀ i, i < 8 → mem.mapped (firstBase + i))
+    (hheadsMapped : ∀ index, index < heads.length → ∀ i, i < 8 →
+      mem.mapped (headsBase + index * 8 + i))
+    (hnextMapped : ∀ index, index < next.length → ∀ i, i < 8 →
+      mem.mapped (nextBase + index * 8 + i))
+    (hpreviousMapped : ∀ index, index < previous.length → ∀ i, i < 8 →
+      mem.mapped (previousBase + index * 8 + i))
+    (hoffsetsMapped : ∀ index, index < offsets.length → ∀ i, i < 8 →
+      mem.mapped (offsetsBase + index * 8 + i))
+    (hsizesMapped : ∀ index, index < sizes.length → ∀ i, i < 8 →
+      mem.mapped (sizesBase + index * 8 + i))
+    (hfreeMapped : ∀ index, index < isFree.length →
+      mem.mapped (isFreeBase + index))
+    (hprevMapped : ∀ index, index < prevFree.length →
+      mem.mapped (prevFreeBase + index))
+    (hcountMapped : ∀ i, i < 8 → mem.mapped (countBase + i))
+    (hsecond : mem.EncodesArray Luffs.Memory.Scalar.u32 secondBase second)
+    (hfirst : mem.EncodesAt Luffs.Memory.Scalar.u64 firstBase first)
+    (hheads : mem.EncodesArray Luffs.Memory.Scalar.u64 headsBase
+      (InitializeProgram.encodeNats heads))
+    (hnext : mem.EncodesArray Luffs.Memory.Scalar.u64 nextBase
+      (InitializeProgram.encodeNats next))
+    (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
+      (InitializeProgram.encodeNats previous))
+    (hoffsets : mem.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
+      (InitializeProgram.encodeNats offsets))
+    (hsizes : mem.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
+      (InitializeProgram.encodeNats sizes))
+    (hfree : mem.EncodesArray Luffs.Memory.Scalar.u8 isFreeBase
+      (AllocateProgram.encodeFlags isFree))
+    (hprev : mem.EncodesArray Luffs.Memory.Scalar.u8 prevFreeBase
+      (AllocateProgram.encodeFlags prevFree))
+    (hcount : mem.EncodesAt Luffs.Memory.Scalar.u64 countBase
+      (BitVec.ofNat 64 count)) :
+    ∃ program,
+      IsSuccessfulAllocateFullyInterleavedTopLevelProgram secondBase firstBase
+        headsBase countBase offsetsBase isFreeBase sizesBase nextBase
+        previousBase prevFreeBase offsets sizes isFree prevFree second first
+        heads next previous count request result program ∧
+      (⊢@{IProp GF} Program.wp program mem
+        (EncodesAllocateArraysResult offsetsBase sizesBase isFreeBase
+          prevFreeBase countBase secondBase firstBase headsBase nextBase
+          previousBase result)) := by
+  obtain ⟨startBin, foundBin, block, hreads⟩ :=
+    allocatePreflightReadProgram_wp (GF := GF) secondBase firstBase headsBase
+      countBase offsetsBase isFreeBase sizesBase offsets sizes isFree prevFree
+      second first heads next previous count request result mem hsuccess
+      hsecondMapped hfirstMapped hheadsMapped hcountMapped hoffsetsMapped
+      hfreeMapped hsizesMapped
+  obtain ⟨mutation, hmutation, hwrites⟩ :=
+    allocateArrays_successfulFullyInterleavedMutation_wp (GF := GF) offsetsBase
+      sizesBase isFreeBase prevFreeBase countBase secondBase firstBase headsBase
+      nextBase previousBase offsets sizes isFree prevFree second first state heads
+      next previous count request result mem hsuccess hbitmapRep hbinsValid
+      hbinsRep layout hsecondMapped hfirstMapped hheadsMapped hnextMapped
+      hpreviousMapped hoffsetsMapped hsizesMapped hfreeMapped hprevMapped
+      hcountMapped hsecond hfirst hheads hnext hprevious hoffsets hsizes hfree
+      hprev hcount
+  let program :=
+    (allocatePreflightReadProgram secondBase firstBase headsBase countBase
+      offsetsBase isFreeBase sizesBase startBin foundBin block second).then mutation
+  refine ⟨program, ⟨startBin, foundBin, block, mutation, rfl, hmutation⟩, ?_⟩
+  apply Program.wp_then hreads
+  intro middle hmiddle
+  subst middle
+  exact hwrites
+
 end AllocateComposition
 
 /-- Exact pure state transformer for `tlsf_initialize`. All fixed-capacity

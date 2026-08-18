@@ -22444,6 +22444,65 @@ theorem markFreeInterleavedProgram_wp_refines {GF : BundledGFunctors}
   · simpa [hnextFree, hnextPrev, AllocateProgram.encodeFlags_set,
       AllocateProgram.encodeFlags, hsuccessor] using hencoded
 
+def deallocateUncoalescedInterleavedProgram
+    (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase
+      nextBase previousBase block prevFreeLength nextLength previousLength bin
+      returnedOffset fl sl oldHead : Nat) (oldSecond : BitVec 32)
+    (oldFirst : BitVec 64) : Program :=
+  (markFreeInterleavedProgram offsetsBase sizesBase isFreeBase prevFreeBase block
+    prevFreeLength).then
+  (AllocateComposition.insertClassInterleavedProgram secondBase firstBase
+    headsBase nextBase previousBase nextLength previousLength bin returnedOffset
+    fl sl oldHead oldSecond oldFirst)
+
+theorem deallocateUncoalescedInterleavedProgram_wp_exact
+    {GF : BundledGFunctors}
+    (offsetsBase sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase
+      nextBase previousBase block prevFreeLength nextLength previousLength bin
+      returnedOffset fl sl oldHead : Nat) (oldSecond : BitVec 32)
+    (oldFirst : BitVec 64) (mem : Memory)
+    (hfree : mem.mapped (isFreeBase + block))
+    (hoffsets : ∀ i, i < 8 → mem.mapped (offsetsBase + block * 8 + i))
+    (hsizes : ∀ i, i < 8 → mem.mapped (sizesBase + block * 8 + i))
+    (hprev : block + 1 < prevFreeLength →
+      mem.mapped (prevFreeBase + (block + 1)))
+    (hbin : ∀ i, i < 8 → mem.mapped (headsBase + bin * 8 + i))
+    (hblockNext : ∀ i, i < 8 →
+      mem.mapped (nextBase + returnedOffset * 8 + i))
+    (hblockPrevious : ∀ i, i < 8 →
+      mem.mapped (previousBase + returnedOffset * 8 + i))
+    (holdPrevious : oldHead < previousLength → ∀ i, i < 8 →
+      mem.mapped (previousBase + oldHead * 8 + i))
+    (hsecond : ∀ i, i < 4 → mem.mapped (secondBase + fl * 4 + i))
+    (hfirst : ∀ i, i < 8 → mem.mapped (firstBase + i)) :
+    ⊢@{IProp GF} Program.wp
+      (deallocateUncoalescedInterleavedProgram offsetsBase sizesBase isFreeBase
+        prevFreeBase secondBase firstBase headsBase nextBase previousBase block
+        prevFreeLength nextLength previousLength bin returnedOffset fl sl oldHead
+        oldSecond oldFirst) mem
+      (fun final => final = ElementWrite.applyAll
+        (InsertProgram.insertClassWrites secondBase firstBase headsBase nextBase
+          previousBase nextLength previousLength bin returnedOffset fl sl oldHead
+          oldSecond oldFirst)
+        (ElementWrite.applyAll
+          (markFreeWrites isFreeBase prevFreeBase block prevFreeLength) mem)) := by
+  unfold deallocateUncoalescedInterleavedProgram
+  apply Program.wp_then
+    (markFreeInterleavedProgram_wp_exact (GF := GF) offsetsBase sizesBase
+      isFreeBase prevFreeBase block prevFreeLength mem hfree hoffsets hsizes hprev)
+  intro middle hmiddle
+  subst middle
+  exact AllocateComposition.insertClassInterleavedProgram_wp_exact (GF := GF)
+    secondBase firstBase headsBase nextBase previousBase nextLength previousLength
+    bin returnedOffset fl sl oldHead oldSecond oldFirst _
+    (fun i hi => ElementWrite.applyAll_mapped _ _ (hbin i hi))
+    (fun i hi => ElementWrite.applyAll_mapped _ _ (hblockNext i hi))
+    (fun i hi => ElementWrite.applyAll_mapped _ _ (hblockPrevious i hi))
+    (fun hold i hi => ElementWrite.applyAll_mapped _ _
+      (holdPrevious hold i hi))
+    (fun i hi => ElementWrite.applyAll_mapped _ _ (hsecond i hi))
+    (fun i hi => ElementWrite.applyAll_mapped _ _ (hfirst i hi))
+
 end DeallocateProgram
 
 end Luffs.Runtime.TLSF

@@ -1184,6 +1184,12 @@ concurrency are later extensions and are not prerequisites for `Box` and
   conditional successor boundary tag. The exact Iris WP is lifted to the pure
   `markFreeArrays` result, proving the two final encoded flag arrays rather
   than merely asserting that the stores are mapped.
+  The complete successful uncoalesced mutation now has an exact operational
+  trace too. The mark-free reads/stores flow directly into the insertion
+  helper's old-head load, intrusive stores, and two bitmap load/store pairs.
+  Its closed Iris WP identifies the final memory as `insertClassWrites` applied
+  after `markFreeWrites`; decoding that nested state across all ten metadata
+  fields is the next deallocation step.
   A framed Iris growth rule now also retains authoritative agreement for the
   initialized prefix and produces an explicit `CopySteps` load/store witness
   for exactly that encoding, using allocator-derived non-overlap and mapped

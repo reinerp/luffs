@@ -1430,6 +1430,14 @@ concurrency are later extensions and are not prerequisites for `Box` and
   constructor model now passes this arithmetic result to the generated TLSF
   allocator rather than inserting the abstract request by hand; all scalar
   constructors and growth bodies use the same checked expression.
+  Operational growth is closed end to end: each successful concrete grow
+  selects one deterministic allocation/copy/deallocation `Program`; program
+  shape uniqueness permits the old allocation's deallocation proof to replay
+  over every reachable post-copy memory. Every execution is non-stuck and ends
+  in the exact returned allocator metadata. The resulting handle refines
+  abstract `Vec.grow`, preserves `Vec.Valid` and `Alloc.Valid`, and the concrete
+  output storage contains the complete codec encoding of the original logical
+  element list at the replacement offset.
 
 `stdlib/containers.luffs` now contains the first byte-monomorphized Box and Vec
 lowering: initialization/load/store, push/pop length transitions, indexed get,
@@ -1617,8 +1625,9 @@ alias semantics. This removes the one-store restriction that blocked
   native executables. Their generated Rust uses unchecked slice operations for
   every proved access. The zch reference now handles arbitrarily many 32 KiB
   stored blocks and its final raw tail, with a regression requiring every
-  access to have a generated proof. A hermetic clean-checkout gate and coded
-  zch blocks remain before this item is complete.
+  access to have a generated proof. The hermetic clean-checkout gate is
+  complete; coded zch blocks remain before this broader example item is
+  complete.
   The `build` driver now detects function-only Luffs modules and invokes
   `rustc --crate-type=lib`, so the complete generated TLSF/Box/Vec module is
   type-checked as Rust rather than failing merely because it has no `main`.

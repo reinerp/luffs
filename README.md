@@ -89,16 +89,23 @@ The checked-in foundation currently contains:
 - a two-level bin invariant tying cached bitmap bits to nonempty intrusive
   chains and proving every selected chain head is free and correctly classified.
 
-It does **not** yet constitute a fully verified generic TLSF-backed `Box` or
-`Vec`. The current Lean development instantiates `OwnsBytes` with Iris
-authoritative ghost-map resources and proves the allocator's main allocation/
-deallocation ownership paths plus allocator-backed byte Box and Vec clients.
-The Luffs Vec growth loop has checked addresses and an exact generated
-allocation/copy/deallocation model, now composed with abstract `Vec.grow`, its
-Iris ownership update, and an operational byte-copy trace. Remaining work
-includes generic lowering, weakest-precondition integration, borrowing syntax,
-and clean-checkout end-to-end gates. The allocator's public two-level O(1)
-candidate-removal path is already refined through its intrusive link and
+Within the declared fixed-pool, 64-bit little-endian, handle-based scalar
+surface, TLSF-backed `Box<T>` and `Vec<T>` are fully verified. The Lean
+development instantiates `OwnsBytes` with Iris authoritative ghost-map
+resources and proves the allocator API, exclusive live-allocation ownership,
+generic scalar Box construction/load/store/drop, and Vec construction,
+push/pop/get/slicing/growth/drop. Vec growth has one fixed operational program
+for allocation, relocation, and old-block deallocation; it is proved
+non-stuck, refines abstract `Vec.grow`, preserves Vec/TLSF validity and the
+logical element encoding, and produces the exact returned allocator metadata.
+The hermetic clean-checkout gate rebuilds these proofs and checks the generated
+Rust/Luffs modules.
+
+This is not a claim that Luffs is already a general Rust verifier or a complete
+Wuffs replacement. Remaining language work includes compositional lowering of
+arbitrary programs, a proved translator, general structs/enums, richer
+borrowing syntax, and the rest of the zch format. The allocator's public
+two-level O(1) candidate-removal path is refined through its intrusive link and
 bitmap updates; a separate legacy flat-bin fallback remains only as frontend
 coverage, not as the allocator path used by `Box` or `Vec`. See
 [`VERIFICATION.md`](VERIFICATION.md) for the precise proof boundary and

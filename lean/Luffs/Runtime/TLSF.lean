@@ -26973,6 +26973,85 @@ theorem storeDeallocatedCountProgram_wp_encodes {GF : BundledGFunctors}
       Memory.writeElement_encodesAt Luffs.Memory.Scalar.u64 mem countBase 0
         (BitVec.ofNat 64 nextCount)
 
+/-- Pure certificate tying a complete deallocation trace to the successful CFG
+branches which selected it.  Unlike the WP, this relation is independent of
+the starting memory, so container clients can reuse one fixed program after
+any verified prefix execution. -/
+def IsSuccessfulDeallocateProgram
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat)
+    (count block returnedOffset returnedBytes : Nat)
+    (result : CoalesceClassResult) (program : Program) : Prop :=
+  ∃ marked afterRight bin,
+    deallocateUncoalescedArraysOutcome offsets sizes isFree prevFree second first
+        heads next previous count block returnedOffset returnedBytes =
+      .success marked ∧
+    coalesceIfPossibleArraysOutcome offsets sizes marked.isFree marked.prevFree
+        marked.second marked.first marked.heads marked.next marked.previous count
+        block = .success afterRight ∧
+    classifySizeBin returnedBytes = some bin ∧
+    let uncoProgram := deallocateUncoalescedInterleavedProgram offsetsBase
+      sizesBase isFreeBase prevFreeBase secondBase firstBase headsBase nextBase
+      previousBase block prevFree.length next.length previous.length bin
+      returnedOffset (bin / 32) (bin % 32) (heads[bin]?.getD 0)
+      (second[bin / 32]?.getD 0) first
+    let rightProgram := coalesceIfPossibleSelectedProgram offsetsBase sizesBase
+      isFreeBase prevFreeBase secondBase firstBase headsBase nextBase previousBase
+      offsets sizes marked.isFree marked.prevFree marked.second marked.first
+      marked.heads marked.next marked.previous count block
+    (block = 0 ∧ result = afterRight ∧
+      program = uncoProgram.then (rightProgram.then
+        (storeDeallocatedCountProgram countBase afterRight.count))) ∨
+    (block ≠ 0 ∧
+      coalesceIfPossibleArraysOutcome afterRight.offsets afterRight.sizes
+        afterRight.isFree afterRight.prevFree afterRight.second afterRight.first
+        afterRight.heads afterRight.next afterRight.previous afterRight.count
+        (block - 1) = .success result ∧
+      let leftProgram := coalesceIfPossibleSelectedProgram offsetsBase sizesBase
+        isFreeBase prevFreeBase secondBase firstBase headsBase nextBase previousBase
+        afterRight.offsets afterRight.sizes afterRight.isFree afterRight.prevFree
+        afterRight.second afterRight.first afterRight.heads afterRight.next
+        afterRight.previous afterRight.count (block - 1)
+      program = uncoProgram.then (rightProgram.then
+        (leftProgram.then (storeDeallocatedCountProgram countBase result.count))))
+
+theorem IsSuccessfulDeallocateProgram.unique
+    {offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat}
+    {count block returnedOffset returnedBytes : Nat}
+    {result : CoalesceClassResult} {left right : Program}
+    (hleft : IsSuccessfulDeallocateProgram offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets sizes isFree prevFree second first heads next previous count block
+      returnedOffset returnedBytes result left)
+    (hright : IsSuccessfulDeallocateProgram offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets sizes isFree prevFree second first heads next previous count block
+      returnedOffset returnedBytes result right) : left = right := by
+  obtain ⟨marked₁, afterRight₁, bin₁, hunco₁, hcoalesce₁, hclass₁, hbranch₁⟩ := hleft
+  obtain ⟨marked₂, afterRight₂, bin₂, hunco₂, hcoalesce₂, hclass₂, hbranch₂⟩ := hright
+  rw [hunco₁] at hunco₂
+  injection hunco₂ with hmarked
+  subst marked₂
+  rw [hcoalesce₁] at hcoalesce₂
+  injection hcoalesce₂ with hafterRight
+  subst afterRight₂
+  rw [hclass₁] at hclass₂
+  cases Option.some.inj hclass₂
+  rcases hbranch₁ with hzero₁ | hnonzero₁
+  · rcases hbranch₂ with hzero₂ | hnonzero₂
+    · exact hzero₁.2.2.trans hzero₂.2.2.symm
+    · exact (hnonzero₂.1 hzero₁.1).elim
+  · rcases hbranch₂ with hzero₂ | hnonzero₂
+    · exact (hnonzero₁.1 hzero₂.1).elim
+    · exact hnonzero₁.2.2.trans hnonzero₂.2.2.symm
+
 /-- Complete successful public deallocation execution: validate/mark/insert,
 conditionally coalesce right, conditionally coalesce left, and finally store
 the returned active count. -/
@@ -27028,7 +27107,11 @@ theorem deallocateArraysOutcome_successfulProgram_wp {GF : BundledGFunctors}
     (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
       (InitializeProgram.encodeNats previous)) :
     ∃ program,
-      ⊢@{IProp GF} Program.wp program mem (fun final =>
+      IsSuccessfulDeallocateProgram offsetsBase sizesBase isFreeBase prevFreeBase
+        countBase secondBase firstBase headsBase nextBase previousBase offsets
+        sizes isFree prevFree second first heads next previous count block
+        returnedOffset returnedBytes result program ∧
+      (⊢@{IProp GF} Program.wp program mem (fun final =>
         final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
             (InitializeProgram.encodeNats result.offsets) ∧
         final.EncodesArray Luffs.Memory.Scalar.u64 sizesBase
@@ -27046,10 +27129,10 @@ theorem deallocateArraysOutcome_successfulProgram_wp {GF : BundledGFunctors}
         final.EncodesArray Luffs.Memory.Scalar.u64 previousBase
             (InitializeProgram.encodeNats result.previous) ∧
         final.EncodesAt Luffs.Memory.Scalar.u64 countBase
-            (BitVec.ofNat 64 result.count)) := by
+            (BitVec.ofNat 64 result.count))) := by
   obtain ⟨marked, afterRight, hunco, hright, hlast⟩ :=
     deallocateArraysOutcome_success_result hsuccess
-  obtain ⟨bin, uncoProgram, _, huncoProgram, huncoWp⟩ :=
+  obtain ⟨bin, uncoProgram, hclass, huncoProgram, huncoWp⟩ :=
     deallocateUncoalescedArraysOutcome_successfulInterleavedProgram_wp (GF := GF)
       offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
       headsBase nextBase previousBase offsets sizes isFree prevFree second first
@@ -27087,7 +27170,11 @@ theorem deallocateArraysOutcome_successfulProgram_wp {GF : BundledGFunctors}
     subst result
     let program := uncoProgram.then
       (rightProgram.then (storeDeallocatedCountProgram countBase afterRight.count))
-    refine ⟨program, ?_⟩
+    refine ⟨program, ?_, ?_⟩
+    · refine ⟨marked, afterRight, bin, hunco, hright, hclass, ?_⟩
+      left
+      exact ⟨hblock, rfl, by
+        simp [program, huncoProgram, rightProgram]⟩
     unfold program
     apply Program.wp_then huncoWp
     intro afterUnco hafterUnco
@@ -27154,7 +27241,11 @@ theorem deallocateArraysOutcome_successfulProgram_wp {GF : BundledGFunctors}
         hleftLens.2.2.2.2.2.2.2] using layoutRight
     let program := uncoProgram.then (rightProgram.then
       (leftProgram.then (storeDeallocatedCountProgram countBase result.count)))
-    refine ⟨program, ?_⟩
+    refine ⟨program, ?_, ?_⟩
+    · refine ⟨marked, afterRight, bin, hunco, hright, hclass, ?_⟩
+      right
+      exact ⟨hblock, hleft, by
+        simp [program, huncoProgram, rightProgram, leftProgram]⟩
     unfold program
     apply Program.wp_then huncoWp
     intro afterUnco hafterUnco
@@ -27298,6 +27389,10 @@ theorem deallocateArraysOutcome_successfulProgram_safe
     (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
       (InitializeProgram.encodeNats previous)) :
     ∃ program,
+      IsSuccessfulDeallocateProgram offsetsBase sizesBase isFreeBase prevFreeBase
+        countBase secondBase firstBase headsBase nextBase previousBase offsets
+        sizes isFree prevFree second first heads next previous count block
+        returnedOffset returnedBytes result program ∧
       Program.Safe program mem ∧
       ∀ final, Program.Exec program mem final →
         final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
@@ -27318,7 +27413,7 @@ theorem deallocateArraysOutcome_successfulProgram_safe
             (InitializeProgram.encodeNats result.previous) ∧
         final.EncodesAt Luffs.Memory.Scalar.u64 countBase
             (BitVec.ofNat 64 result.count) := by
-  obtain ⟨program, hwp⟩ :=
+  obtain ⟨program, hprogram, hwp⟩ :=
     deallocateArraysOutcome_successfulProgram_wp (GF := GF) offsetsBase
       sizesBase isFreeBase prevFreeBase countBase secondBase firstBase headsBase
       nextBase previousBase offsets sizes isFree prevFree second first heads next
@@ -27326,7 +27421,7 @@ theorem deallocateArraysOutcome_successfulProgram_safe
       hoffsetsMapped hsizesMapped hfreeMapped hprevMapped hcountMapped
       hsecondMapped hfirstMapped hheadsMapped hnextMapped hpreviousMapped
       hoffsets hsizes hfree hprev hcount hsecond hfirst hheads hnext hprevious
-  exact ⟨program, Program.wp_adequacy hwp⟩
+  exact ⟨program, hprogram, Program.wp_adequacy hwp⟩
 
 /-- Public-facing deallocation adequacy. A successful Luffs `Option` result on
 a represented valid allocator selects the state-retaining source program, so
@@ -27421,13 +27516,15 @@ theorem deallocateArrays_successfulProgram_safe
   have houtcome := deallocateArraysOutcome_success_of_valid_option hget
     hallocated hphysical hallocValid hpoolMax hcountMax hsecondRep hfirstRep
     hbins hdisjoint hfresh hsuccess
-  exact deallocateArraysOutcome_successfulProgram_safe (GF := GF) offsetsBase
-    sizesBase isFreeBase prevFreeBase countBase secondBase firstBase headsBase
-    nextBase previousBase offsets sizes isFree prevFree second first heads next
-    previous count block selected.offset selected.bytes result mem houtcome layout
-    hoffsetsMapped hsizesMapped hfreeMapped hprevMapped hcountMapped
-    hsecondMapped hfirstMapped hheadsMapped hnextMapped hpreviousMapped hoffsets
-    hsizes hfree hprev hcount hsecondEncoded hfirstEncoded hheads hnext hprevious
+  obtain ⟨program, _, hsafe, hpost⟩ :=
+    deallocateArraysOutcome_successfulProgram_safe (GF := GF) offsetsBase
+      sizesBase isFreeBase prevFreeBase countBase secondBase firstBase headsBase
+      nextBase previousBase offsets sizes isFree prevFree second first heads next
+      previous count block selected.offset selected.bytes result mem houtcome layout
+      hoffsetsMapped hsizesMapped hfreeMapped hprevMapped hcountMapped
+      hsecondMapped hfirstMapped hheadsMapped hnextMapped hpreviousMapped hoffsets
+      hsizes hfree hprev hcount hsecondEncoded hfirstEncoded hheads hnext hprevious
+  exact ⟨program, hsafe, hpost⟩
 
 /-- Bundled-memory form of public deallocation adequacy, intended for direct
 composition by verified containers. -/

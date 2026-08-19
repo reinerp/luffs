@@ -3190,6 +3190,218 @@ theorem vecGrowArrays_refines_vec {α : Type} {codec : Codec α}
     simpa [growResult] using hoffset, rfl, rfl⟩
 
 set_option maxHeartbeats 1600000 in
+/-- TLSF validity discharges the relocation non-overlap premise: the old live
+Vec block survives allocation as a distinct block, so every initialized byte
+of it is disjoint from every initialized byte of the replacement. -/
+theorem vecGrowArrays_copy_ranges_disjoint {α : Type} {codec : Codec α}
+    {PROP : Type} [Iris.BI PROP] [Luffs.Memory.ByteRegionLogic PROP]
+    {pool : Region} {blocks : List Block} {state : Bins.State}
+    {storage : List Byte} {second : List (BitVec 32)} {first : BitVec 64}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {heads next previous : List Nat} {handle : Luffs.Containers.Vec.Handle}
+    {newCapacity : Nat} {result : VecGrowU8ArraysResult}
+    (hhandle : Luffs.Containers.Vec.Valid codec handle)
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins { heads, next, previous } state)
+    (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
+    (hmember : handle.block ∈ blocks) (hallocated : handle.block.free = false)
+    (harrayMax : offsets.length ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hsuccess : vecGrowArrays codec storage offsets sizes isFree prevFree count
+      second first heads next previous handle.block.offset handle.len
+      handle.capacity newCapacity = some result) :
+    ∀ i, i < handle.len * codec.size → ∀ j, j < handle.len * codec.size →
+      handle.block.offset + i ≠ result.newOffset + j := by
+  obtain ⟨hcapacity, hkeyMax, growResult, hgrow, hnewOffset, _, hnewCapacity⟩ :=
+    vecGrowArrays_refines_vec (PROP := PROP) hvalid hpoolMax hsecond hfirst hbins
+      hdisjoint hphysical hmember hallocated harrayMax hsuccess
+  obtain ⟨allocated, next, halloc, hdrop, hresult⟩ :=
+    Luffs.Containers.Vec.grow_result hgrow
+  subst growResult
+  have hregions := Luffs.Containers.Vec.replacement_regions_disjoint hvalid
+    hmember hallocated halloc
+  have holdFit : handle.len * codec.size ≤ handle.block.bytes :=
+    Nat.le_trans (Nat.mul_le_mul_right codec.size hhandle.1) hhandle.2
+  have hnewSafe :=
+    (Luffs.Containers.Vec.allocate_safe (hcapacity := hcapacity) hvalid halloc).1
+  obtain ⟨raw, _, hnewHandle, _⟩ :=
+    Luffs.Containers.Vec.allocate_result (hcapacity := hcapacity) halloc
+  have hallocatedCapacity : allocated.handle.capacity = newCapacity := by
+    rw [hnewHandle]
+  have hlenNew : handle.len ≤ newCapacity := by
+    obtain ⟨_, _, _, hlenOld, hcapacityLt, _, _, _, _, _, _, _, _, _, _⟩ :=
+      vecGrowArrays_result hsuccess
+    omega
+  have hnewFit : handle.len * codec.size ≤ allocated.handle.block.bytes := by
+    have hcapacityFit := hnewSafe.2
+    rw [hallocatedCapacity] at hcapacityFit
+    exact Nat.le_trans (Nat.mul_le_mul_right codec.size hlenNew) hcapacityFit
+  intro i hi j hj heq
+  have hiContains : (handle.block.region pool).contains
+      ((handle.block.region pool).base + i) :=
+    contains_offset _ _ (Nat.lt_of_lt_of_le hi holdFit)
+  have hjContains : (allocated.handle.block.region pool).contains
+      ((allocated.handle.block.region pool).base + j) :=
+    contains_offset _ _ (Nat.lt_of_lt_of_le hj hnewFit)
+  have hnot := not_contains_of_disjoint hregions hiContains
+  apply hnot
+  have habsolute : (handle.block.region pool).base + i =
+      (allocated.handle.block.region pool).base + j := by
+    simpa [Block.region, hnewOffset, Nat.add_assoc] using
+      congrArg (fun offset => pool.base + offset) heq
+  rw [habsolute]
+  exact hjContains
+
+set_option maxHeartbeats 2400000 in
+/-- Operational allocation-plus-relocation adequacy for a successful Vec grow.
+The logical values determine the exact encoded prefix copied by the generated
+program; TLSF/Vec validity supplies both range bounds and non-overlap. -/
+theorem vecGrowArrays_successfulAllocateCopyProgram_safe
+    {GF : Iris.BundledGFunctors.{0,0,0}} [Luffs.Memory.ByteRegionGS GF]
+    {α : Type} {codec : Codec α}
+    {pool : Region} {blocks : List Block} {state : Bins.State}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    {storage : List Byte} {second : List (BitVec 32)} {first : BitVec 64}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {heads next previous : List Nat} {handle : Luffs.Containers.Vec.Handle}
+    {newCapacity : Nat} {result : VecGrowU8ArraysResult} {mem : Memory}
+    {values : List α}
+    (hhandle : Luffs.Containers.Vec.Valid codec handle)
+    (hlen : values.length = handle.len)
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins { heads, next, previous } state)
+    (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
+    (hmember : handle.block ∈ blocks) (hallocated : handle.block.free = false)
+    (harrayMax : offsets.length ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hmem : Luffs.Runtime.TLSF.AllocateComposition.EncodedMetadata offsetsBase
+      sizesBase isFreeBase prevFreeBase countBase secondBase firstBase headsBase
+      nextBase previousBase offsets sizes isFree prevFree second first heads next
+      previous count mem)
+    (hpoolLayout : Luffs.Runtime.TLSF.AllocateComposition.PoolMetadataDisjoint
+      pool offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase
+      firstBase headsBase nextBase previousBase offsets.length sizes.length
+      isFree.length prevFree.length second.length heads.length next.length
+      previous.length)
+    (hpoolMapped : mem.regionMapped pool)
+    (hsource : ∀ i value,
+      (Luffs.Containers.Vec.encodeValues codec values)[i]? = some value →
+      mem (pool.base + handle.block.offset + i) = some value)
+    (hsuccess : vecGrowArrays codec storage offsets sizes isFree prevFree count
+      second first heads next previous handle.block.offset handle.len
+      handle.capacity newCapacity = some result) :
+    ∃ allocated allocationProgram,
+      Luffs.Runtime.TLSF.allocateArrays offsets sizes isFree prevFree count
+        second first heads next previous
+          (Luffs.Containers.Vec.allocationBytes codec newCapacity) =
+        some allocated ∧
+      boxDropU8Arrays allocated.offsets allocated.sizes allocated.isFree
+        allocated.prevFree allocated.count allocated.second allocated.first
+        allocated.heads allocated.next allocated.previous handle.block.offset =
+          some result.allocator ∧
+      Luffs.Runtime.TLSF.AllocateComposition.IsSuccessfulAllocateTopLevelProgram
+        secondBase firstBase headsBase countBase offsetsBase isFreeBase sizesBase
+        nextBase previousBase prevFreeBase offsets sizes isFree prevFree second
+        first heads next previous count
+        (Luffs.Containers.Vec.allocationBytes codec newCapacity) allocated
+        allocationProgram ∧
+      let encoded := Luffs.Containers.Vec.encodeValues codec values
+      let program := allocationProgram.then
+        (Program.copyBytes (pool.base + handle.block.offset)
+          (pool.base + allocated.allocatedOffset) encoded)
+      Program.Safe program mem ∧
+      ∀ final, Program.Exec program mem final →
+        ∃ middle,
+          Program.Exec allocationProgram mem middle ∧
+          Luffs.Runtime.TLSF.AllocateComposition.EncodedMetadata offsetsBase
+            sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+            headsBase nextBase previousBase allocated.offsets allocated.sizes
+            allocated.isFree allocated.prevFree allocated.second allocated.first
+            allocated.heads allocated.next allocated.previous allocated.count
+            middle ∧
+          final = middle.writeBytes (pool.base + allocated.allocatedOffset)
+            encoded ∧
+          Luffs.Runtime.TLSF.AllocateComposition.EncodedMetadata offsetsBase
+            sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+            headsBase nextBase previousBase allocated.offsets allocated.sizes
+            allocated.isFree allocated.prevFree allocated.second allocated.first
+            allocated.heads allocated.next allocated.previous allocated.count final := by
+  obtain ⟨allocated, copied, released, _, _, _, _, _, holdBound, _, halloc,
+      hnewBound, _, hcopy, hdrop, hresult⟩ := vecGrowArrays_result hsuccess
+  have habstract := Luffs.Runtime.TLSF.allocateArrays_ownsFree
+    (PROP := Iris.IProp GF) hvalid hsecond hfirst hbins hdisjoint hphysical halloc
+  obtain ⟨_, _, abstractAllocated, habstractAlloc, hoffset, _, _, _, _, _, _, _,
+      _⟩ := habstract
+  have hpostValid : Alloc.Valid pool abstractAllocated.state :=
+    Alloc.allocate_preserves_valid hvalid
+      (Luffs.Containers.Box.requestBytes_aligned
+        (newCapacity * codec.size)) habstractAlloc
+  have hallocatedMem : abstractAllocated.allocated ∈
+      abstractAllocated.state.physical := Alloc.allocate_allocated_mem habstractAlloc
+  have hallocatedEnd :=
+    (hpostValid.1.2.2.2 abstractAllocated.allocated hallocatedMem).2.1
+  let encoded := Luffs.Containers.Vec.encodeValues codec values
+  have hencodedLength : encoded.length = handle.len * codec.size := by
+    simp [encoded, Luffs.Containers.Vec.encodeValues_length, hlen]
+  have holdEnd := (hvalid.1.2.2.2 handle.block hmember).2.1
+  have hsrcBound : handle.block.offset + encoded.length ≤ pool.bytes := by
+    rw [hencodedLength]
+    exact Nat.le_trans (Nat.add_le_add_left
+      (Nat.le_trans (Nat.mul_le_mul_right codec.size hhandle.1) hhandle.2) _)
+      holdEnd
+  have hdstBound : allocated.allocatedOffset + encoded.length ≤ pool.bytes := by
+    rw [hoffset, hencodedLength]
+    have hlenNew : handle.len ≤ newCapacity := by
+      obtain ⟨_, _, _, hlenOld, hcapacityLt, _, _, _, _, _, _, _, _, _, _⟩ :=
+        vecGrowArrays_result hsuccess
+      omega
+    have hrequestFit : handle.len * codec.size ≤
+        Luffs.Containers.Vec.allocationBytes codec newCapacity := by
+      exact Nat.le_trans (Nat.mul_le_mul_right codec.size hlenNew)
+        (Luffs.Containers.Vec.allocationBytes_fits codec (by omega))
+    have hallocatedBytes := (Alloc.allocate_safe hvalid habstractAlloc).2.2.1
+    exact Nat.le_trans (Nat.add_le_add_left
+      (Nat.le_trans hrequestFit hallocatedBytes) _) hallocatedEnd
+  have hdstMapped : ∀ i, i < encoded.length →
+      mem.mapped (pool.base + allocated.allocatedOffset + i) := by
+    intro i hi
+    apply hpoolMapped
+    simpa [Nat.add_assoc] using contains_offset pool
+      (allocated.allocatedOffset + i)
+      (Nat.lt_of_lt_of_le (Nat.add_lt_add_left hi _) hdstBound)
+  have hranges : ∀ i, i < encoded.length → ∀ j, j < encoded.length →
+      handle.block.offset + i ≠ allocated.allocatedOffset + j := by
+    have hraw := vecGrowArrays_copy_ranges_disjoint (PROP := Iris.IProp GF)
+      hhandle hvalid hpoolMax hsecond hfirst hbins hdisjoint hphysical hmember
+      hallocated harrayMax hsuccess
+    intro i hi j hj
+    have hi' : i < handle.len * codec.size := by simpa [hencodedLength] using hi
+    have hj' : j < handle.len * codec.size := by simpa [hencodedLength] using hj
+    have hne := hraw i hi' j hj'
+    rw [hresult] at hne
+    exact hne
+  obtain ⟨allocationProgram, hprogram, hsafe, hpost⟩ :=
+    Luffs.Runtime.TLSF.AllocateComposition.allocateArraysThenCopy_successfulProgram_safe
+      (GF := GF) offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase
+      firstBase headsBase nextBase previousBase offsets sizes isFree prevFree second
+      first state heads next previous count
+      (Luffs.Containers.Vec.allocationBytes codec newCapacity) allocated mem
+      handle.block.offset allocated.allocatedOffset encoded halloc hsecond
+      hvalid.2.1 hbins hmem hpoolLayout hsrcBound hdstBound
+      (by simpa [encoded] using hsource) hdstMapped hranges
+  subst result
+  exact ⟨allocated, allocationProgram, halloc, hdrop, hprogram, hsafe, hpost⟩
+
+set_option maxHeartbeats 1600000 in
 theorem vecGrowArrays_owns {α : Type} {codec : Codec α}
     {GF : Iris.BundledGFunctors} [Luffs.Memory.ByteRegionGS GF]
     [G : Luffs.Memory.ByteContentsGS GF]

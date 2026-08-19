@@ -27493,6 +27493,10 @@ theorem deallocateArrays_successfulProgram_safe
     (hprevious : mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
       (InitializeProgram.encodeNats previous)) :
     ∃ program,
+      IsSuccessfulDeallocateProgram offsetsBase sizesBase isFreeBase prevFreeBase
+        countBase secondBase firstBase headsBase nextBase previousBase offsets
+        sizes isFree prevFree second first heads next previous count block
+        selected.offset selected.bytes result program ∧
       Program.Safe program mem ∧
       ∀ final, Program.Exec program mem final →
         final.EncodesArray Luffs.Memory.Scalar.u64 offsetsBase
@@ -27516,7 +27520,7 @@ theorem deallocateArrays_successfulProgram_safe
   have houtcome := deallocateArraysOutcome_success_of_valid_option hget
     hallocated hphysical hallocValid hpoolMax hcountMax hsecondRep hfirstRep
     hbins hdisjoint hfresh hsuccess
-  obtain ⟨program, _, hsafe, hpost⟩ :=
+  obtain ⟨program, hprogram, hsafe, hpost⟩ :=
     deallocateArraysOutcome_successfulProgram_safe (GF := GF) offsetsBase
       sizesBase isFreeBase prevFreeBase countBase secondBase firstBase headsBase
       nextBase previousBase offsets sizes isFree prevFree second first heads next
@@ -27524,7 +27528,7 @@ theorem deallocateArrays_successfulProgram_safe
       hoffsetsMapped hsizesMapped hfreeMapped hprevMapped hcountMapped
       hsecondMapped hfirstMapped hheadsMapped hnextMapped hpreviousMapped hoffsets
       hsizes hfree hprev hcount hsecondEncoded hfirstEncoded hheads hnext hprevious
-  exact ⟨program, hsafe, hpost⟩
+  exact ⟨program, hprogram, hsafe, hpost⟩
 
 /-- Bundled-memory form of public deallocation adequacy, intended for direct
 composition by verified containers. -/
@@ -27553,7 +27557,12 @@ theorem deallocateArrays_successfulProgram_safe_of_encoded_metadata
     (hmem : AllocateComposition.EncodedMetadata offsetsBase sizesBase isFreeBase
       prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
       offsets sizes isFree prevFree second first heads next previous count mem) :
-    ∃ program, Program.Safe program mem ∧
+    ∃ program,
+      IsSuccessfulDeallocateProgram offsetsBase sizesBase isFreeBase prevFreeBase
+        countBase secondBase firstBase headsBase nextBase previousBase offsets
+        sizes isFree prevFree second first heads next previous count block
+        selected.offset selected.bytes result program ∧
+      Program.Safe program mem ∧
       ∀ final, Program.Exec program mem final →
         EncodesResult offsetsBase sizesBase isFreeBase prevFreeBase countBase
           secondBase firstBase headsBase nextBase previousBase result final := by
@@ -27570,6 +27579,53 @@ theorem deallocateArrays_successfulProgram_safe_of_encoded_metadata
     hmem.secondEncoded hmem.firstEncoded hmem.headsEncoded hmem.nextEncoded
     hmem.previousEncoded
   simpa [EncodesResult] using hsafety
+
+/-- A pure deallocation-program certificate can be replayed against any memory
+encoding the same allocator state.  Program uniqueness turns the existential
+adequacy theorem into the fixed-program rule needed by sequential clients. -/
+theorem IsSuccessfulDeallocateProgram.safe_of_encoded_metadata
+    {GF : BundledGFunctors.{0, 0, 0}}
+    {pool : Luffs.Memory.Region} {blocks : List Block} {state : Bins.State}
+    {selected : Block}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64)
+    (heads next previous : List Nat) (count block : Nat)
+    (result : CoalesceClassResult) (program : Program) (mem : Memory)
+    (hget : blocks[block]? = some selected)
+    (hallocated : selected.free = false)
+    (hphysical : RepresentsPhysicalArrays offsets sizes isFree prevFree count blocks)
+    (hallocValid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hcountMax : count ≤ usizeMax)
+    (hsecondRep : RepresentsSecondBitmap second state)
+    (hfirstRep : FirstBitmapRep first second)
+    (hbins : RepresentsBins { heads, next, previous } state)
+    (hdisjoint : BinsOffsetsDisjoint state)
+    (hsuccess : deallocateArrays offsets sizes isFree prevFree second first heads
+      next previous count block selected.offset selected.bytes = some result)
+    (hprogram : IsSuccessfulDeallocateProgram offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets sizes isFree prevFree second first heads next previous count block
+      selected.offset selected.bytes result program)
+    (hmem : AllocateComposition.EncodedMetadata offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets sizes isFree prevFree second first heads next previous count mem) :
+    Program.Safe program mem ∧
+      ∀ final, Program.Exec program mem final →
+        EncodesResult offsetsBase sizesBase isFreeBase prevFreeBase countBase
+          secondBase firstBase headsBase nextBase previousBase result final := by
+  obtain ⟨actual, hactual, hsafe, hpost⟩ :=
+    deallocateArrays_successfulProgram_safe_of_encoded_metadata (GF := GF)
+      offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase offsets sizes isFree prevFree second first
+      heads next previous count block result mem hget hallocated hphysical
+      hallocValid hpoolMax hcountMax hsecondRep hfirstRep hbins hdisjoint
+      hsuccess hmem
+  have heq : program = actual := hprogram.unique hactual
+  subst actual
+  exact ⟨hsafe, hpost⟩
 
 end DeallocateProgram
 

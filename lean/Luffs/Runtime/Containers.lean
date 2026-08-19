@@ -3098,6 +3098,34 @@ theorem vecGrowArrays_copies_prefix {α : Type} {codec : Codec α}
   subst result
   simpa using copyByteRange_result hcopy
 
+/-- Relocation preserves the complete logical element encoding at the new Vec
+base.  This lifts the byte-copy theorem from anonymous storage indices to the
+codec-level value sequence carried by the Vec. -/
+theorem vecGrowArrays_preserves_encoded_values {α : Type} {codec : Codec α}
+    {storage : List Byte} {offsets sizes : List Nat}
+    {isFree prevFree : List (Fin 256)} {count : Nat}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {handle : Luffs.Containers.Vec.Handle}
+    {newCapacity : Nat} {result : VecGrowU8ArraysResult} {values : List α}
+    (hlen : values.length = handle.len)
+    (hsource : ∀ i value,
+      (Luffs.Containers.Vec.encodeValues codec values)[i]? = some value →
+      storage[handle.block.offset + i]? = some value)
+    (hsuccess : vecGrowArrays codec storage offsets sizes isFree prevFree count
+      second first heads next previous handle.block.offset handle.len
+      handle.capacity newCapacity = some result) :
+    ∀ i value,
+      (Luffs.Containers.Vec.encodeValues codec values)[i]? = some value →
+      result.storage[result.newOffset + i]? = some value := by
+  have hcopy := (vecGrowArrays_copies_prefix hsuccess).2.1
+  intro i value hvalue
+  have hi : i < (Luffs.Containers.Vec.encodeValues codec values).length :=
+    (List.getElem?_eq_some_iff.mp hvalue).1
+  have hiBytes : i < handle.len * codec.size := by
+    simpa [Luffs.Containers.Vec.encodeValues_length, hlen] using hi
+  rw [hcopy i hiBytes]
+  exact hsource i value hvalue
+
 set_option maxHeartbeats 1600000 in
 theorem vecGrowArrays_refines_vec {α : Type} {codec : Codec α}
     {PROP : Type} [Iris.BI PROP] [Luffs.Memory.ByteRegionLogic PROP]
@@ -3190,6 +3218,51 @@ theorem vecGrowArrays_refines_vec {α : Type} {codec : Codec α}
       growResult]
   exact ⟨hcapacity, hkeyMax, growResult, hgrow, by
     simpa [growResult] using hoffset, rfl, rfl⟩
+
+/-- The concrete growth transaction refines a valid abstract Vec transition.
+In particular, the replacement handle has the original logical length and the
+requested capacity, and its post-deallocation TLSF state remains valid. -/
+theorem vecGrowArrays_abstract_result_valid {α : Type} {codec : Codec α}
+    {PROP : Type} [Iris.BI PROP] [Luffs.Memory.ByteRegionLogic PROP]
+    {pool : Region} {blocks : List Block} {state : Bins.State}
+    {storage : List Byte} {second : List (BitVec 32)} {first : BitVec 64}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)} {count : Nat}
+    {heads next previous : List Nat} {handle : Luffs.Containers.Vec.Handle}
+    {newCapacity : Nat} {result : VecGrowU8ArraysResult}
+    (hvalid : Alloc.Valid pool { physical := blocks, bins := state })
+    (hpoolMax : pool.bytes < 2 ^ firstLevelCount)
+    (hsecond : Luffs.Runtime.TLSF.RepresentsSecondBitmap second state)
+    (hfirst : Luffs.Runtime.TLSF.FirstBitmapRep first second)
+    (hbins : Luffs.Runtime.TLSF.RepresentsBins { heads, next, previous } state)
+    (hdisjoint : Luffs.Runtime.TLSF.BinsOffsetsDisjoint state)
+    (hphysical : Luffs.Runtime.TLSF.RepresentsPhysicalArrays offsets sizes
+      isFree prevFree count blocks)
+    (hmember : handle.block ∈ blocks) (hallocated : handle.block.free = false)
+    (harrayMax : offsets.length ≤ Luffs.Runtime.TLSF.usizeMax)
+    (hsuccess : vecGrowArrays codec storage offsets sizes isFree prevFree count
+      second first heads next previous handle.block.offset handle.len
+      handle.capacity newCapacity = some result) :
+    ∃ (hcapacity : 0 < newCapacity)
+        (hkeyMax : requestKey
+          (Luffs.Containers.Vec.allocationBytes codec newCapacity) <
+            2 ^ firstLevelCount)
+        (growResult : Luffs.Containers.Vec.GrowResult),
+      Luffs.Containers.Vec.grow codec pool handle newCapacity hcapacity
+          { physical := blocks, bins := state } hkeyMax = some growResult ∧
+      result.newOffset = growResult.handle.block.offset ∧
+      growResult.handle.len = handle.len ∧
+      growResult.handle.capacity = newCapacity ∧
+      Luffs.Containers.Vec.Valid codec growResult.handle ∧
+      Alloc.Valid pool growResult.state := by
+  obtain ⟨hcapacity, hkeyMax, growResult, hgrow, hoffset, hlen, hcapacityEq⟩ :=
+    vecGrowArrays_refines_vec (PROP := PROP) hvalid hpoolMax hsecond hfirst
+      hbins hdisjoint hphysical hmember hallocated harrayMax hsuccess
+  obtain ⟨_, _, _, hlenOld, hcapacityLt, _, _, _, _, _, _, _, _, _, _⟩ :=
+    vecGrowArrays_result hsuccess
+  have hlenNew : handle.len ≤ newCapacity := by omega
+  have hpreserved := Luffs.Containers.Vec.grow_preserves_valid hlenNew hvalid hgrow
+  exact ⟨hcapacity, hkeyMax, growResult, hgrow, hoffset, hlen, hcapacityEq,
+    hpreserved⟩
 
 set_option maxHeartbeats 1600000 in
 /-- TLSF validity discharges the relocation non-overlap premise: the old live

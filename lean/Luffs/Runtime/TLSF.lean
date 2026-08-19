@@ -16801,6 +16801,69 @@ def EncodesAllocateArraysResult (offsetsBase sizesBase isFreeBase prevFreeBase
   mem.EncodesArray Luffs.Memory.Scalar.u64 previousBase
       (InitializeProgram.encodeNats result.previous)
 
+theorem encodedAllocateResult_toMetadata
+    {offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat}
+    {offsets sizes : List Nat} {isFree prevFree : List (Fin 256)}
+    {second : List (BitVec 32)} {first : BitVec 64}
+    {heads next previous : List Nat} {count request : Nat}
+    {result : AllocateArraysResult} {program : Program} {before after : Memory}
+    (hinput : EncodedMetadata offsetsBase sizesBase isFreeBase prevFreeBase
+      countBase secondBase firstBase headsBase nextBase previousBase offsets
+      sizes isFree prevFree second first heads next previous count before)
+    (hsuccess : allocateArrays offsets sizes isFree prevFree count second first
+      heads next previous request = some result)
+    (hencoded : EncodesAllocateArraysResult offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      result after) (hnoUnmap : program.DoesNotUnmap)
+    (hexec : Program.Exec program before after) :
+    EncodedMetadata offsetsBase sizesBase isFreeBase prevFreeBase countBase
+      secondBase firstBase headsBase nextBase previousBase result.offsets
+      result.sizes result.isFree result.prevFree result.second result.first
+      result.heads result.next result.previous result.count after := by
+  have hlens := allocateArrays_preserves_metadata_lengths hsuccess
+  have hmapped := hnoUnmap.exec_mapped_preserved hexec
+  rcases hencoded with ⟨hoffsets, hsizes, hfree, hprev, hcount, hsecond,
+    hfirst, hheads, hnext, hprevious⟩
+  constructor
+  · simpa [hlens.1, hlens.2.1, hlens.2.2.1, hlens.2.2.2.1,
+      hlens.2.2.2.2.1, hlens.2.2.2.2.2.1, hlens.2.2.2.2.2.2.1,
+      hlens.2.2.2.2.2.2.2] using hinput.layout
+  · intro index hindex i hi
+    exact hmapped _ (hinput.offsetsMapped index (by simpa [hlens.1] using hindex) i hi)
+  · intro index hindex i hi
+    exact hmapped _ (hinput.sizesMapped index (by simpa [hlens.2.1] using hindex) i hi)
+  · intro index hindex
+    exact hmapped _ (hinput.freeMapped index (by simpa [hlens.2.2.1] using hindex))
+  · intro index hindex
+    exact hmapped _ (hinput.prevMapped index (by simpa [hlens.2.2.2.1] using hindex))
+  · intro i hi
+    exact hmapped _ (hinput.countMapped i hi)
+  · intro index hindex i hi
+    exact hmapped _ (hinput.secondMapped index
+      (by simpa [hlens.2.2.2.2.1] using hindex) i hi)
+  · intro i hi
+    exact hmapped _ (hinput.firstMapped i hi)
+  · intro index hindex i hi
+    exact hmapped _ (hinput.headsMapped index
+      (by simpa [hlens.2.2.2.2.2.1] using hindex) i hi)
+  · intro index hindex i hi
+    exact hmapped _ (hinput.nextMapped index
+      (by simpa [hlens.2.2.2.2.2.2.1] using hindex) i hi)
+  · intro index hindex i hi
+    exact hmapped _ (hinput.previousMapped index
+      (by simpa [hlens.2.2.2.2.2.2.2] using hindex) i hi)
+  · exact hoffsets
+  · exact hsizes
+  · exact hfree
+  · exact hprev
+  · exact hcount
+  · exact hsecond
+  · exact hfirst
+  · exact hheads
+  · exact hnext
+  · exact hprevious
+
 /-- A concrete effect program is the mutation suffix selected by a successful
 public `allocateArrays` call.  This relation retains the exact call witnesses
 and prevents an existential WP from being discharged by an unrelated program. -/
@@ -17493,6 +17556,121 @@ theorem allocateArrays_successfulProgram_safe_preserves_pool
       hmem.countEncoded
   exact ⟨program, hprogram, hprogram.doesNotUnmap,
     hprogram.preserves_pool hpool, Program.wp_adequacy hwp⟩
+
+/-- Compose verified allocation with a bytewise relocation wholly inside the
+payload pool. The allocator frames the source bytes; no-unmap preserves the
+destination mapping; disjoint ranges make the generated load/store trace
+valid. The final memory is exact and again packages all allocator metadata. -/
+theorem allocateArraysThenCopy_successfulProgram_safe
+    {GF : BundledGFunctors.{0,0,0}}
+    (offsetsBase sizesBase isFreeBase prevFreeBase countBase secondBase firstBase
+      headsBase nextBase previousBase : Nat)
+    (offsets sizes : List Nat) (isFree prevFree : List (Fin 256))
+    (second : List (BitVec 32)) (first : BitVec 64) (state : Bins.State)
+    (heads next previous : List Nat) (count request : Nat)
+    (result : AllocateArraysResult) (mem : Memory) {pool : Region}
+    (srcOffset dstOffset : Nat) (values : List Byte)
+    (hsuccess : allocateArrays offsets sizes isFree prevFree count second first
+      heads next previous request = some result)
+    (hbitmapRep : RepresentsSecondBitmap second state)
+    (hbinsValid : Bins.Valid state)
+    (hbinsRep : RepresentsBins { heads, next, previous } state)
+    (hmem : EncodedMetadata offsetsBase sizesBase isFreeBase prevFreeBase
+      countBase secondBase firstBase headsBase nextBase previousBase offsets sizes
+      isFree prevFree second first heads next previous count mem)
+    (hpool : PoolMetadataDisjoint pool offsetsBase sizesBase isFreeBase
+      prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+      offsets.length sizes.length isFree.length prevFree.length second.length
+      heads.length next.length previous.length)
+    (hsrcBound : srcOffset + values.length ≤ pool.bytes)
+    (hdstBound : dstOffset + values.length ≤ pool.bytes)
+    (hsource : ∀ i value, values[i]? = some value →
+      mem (pool.base + srcOffset + i) = some value)
+    (hdestination : ∀ i, i < values.length →
+      mem.mapped (pool.base + dstOffset + i))
+    (hranges : ∀ i, i < values.length → ∀ j, j < values.length →
+      srcOffset + i ≠ dstOffset + j) :
+    ∃ allocationProgram,
+      IsSuccessfulAllocateTopLevelProgram secondBase firstBase headsBase
+        countBase offsetsBase isFreeBase sizesBase nextBase previousBase
+        prevFreeBase offsets sizes isFree prevFree second first heads next
+        previous count request result allocationProgram ∧
+      let program := allocationProgram.then
+        (Program.copyBytes (pool.base + srcOffset) (pool.base + dstOffset) values)
+      Program.Safe program mem ∧
+      ∀ final, Program.Exec program mem final →
+        ∃ middle,
+          Program.Exec allocationProgram mem middle ∧
+          EncodedMetadata offsetsBase sizesBase isFreeBase prevFreeBase countBase
+            secondBase firstBase headsBase nextBase previousBase result.offsets
+            result.sizes result.isFree result.prevFree result.second result.first
+            result.heads result.next result.previous result.count middle ∧
+          final = middle.writeBytes (pool.base + dstOffset) values ∧
+          EncodedMetadata offsetsBase sizesBase isFreeBase prevFreeBase countBase
+            secondBase firstBase headsBase nextBase previousBase result.offsets
+            result.sizes result.isFree result.prevFree result.second result.first
+            result.heads result.next result.previous result.count final := by
+  obtain ⟨allocationProgram, hprogram, hnoUnmap, hframe, hsafe, hencoded⟩ :=
+    allocateArrays_successfulProgram_safe_preserves_pool (GF := GF) offsetsBase
+      sizesBase isFreeBase prevFreeBase countBase secondBase firstBase headsBase
+      nextBase previousBase offsets sizes isFree prevFree second first state heads
+      next previous count request result mem hsuccess hbitmapRep hbinsValid
+      hbinsRep hmem hpool
+  have copyStepsFor (middle : Memory)
+      (hexec : Program.Exec allocationProgram mem middle) :
+      ∃ copied, CopySteps (pool.base + srcOffset) (pool.base + dstOffset) values
+        middle copied := by
+    apply copySteps_exists
+    · intro i value hvalue
+      have hi : i < values.length := (getElem?_eq_some_iff.mp hvalue).1
+      have hp : pool.contains (pool.base + srcOffset + i) := by
+        simpa [Nat.add_assoc] using
+          contains_offset pool (srcOffset + i)
+            (Nat.lt_of_lt_of_le (Nat.add_lt_add_left hi srcOffset) hsrcBound)
+      rw [hframe hexec (pool.base + srcOffset + i) hp]
+      exact hsource i value hvalue
+    · intro i hi
+      exact hnoUnmap.exec_mapped_preserved hexec _ (hdestination i hi)
+    · intro i hi j hj heq
+      apply hranges i hi j hj
+      apply Nat.add_left_cancel (n := pool.base)
+      simpa [Nat.add_assoc] using heq
+  obtain ⟨middle, hmiddleExec⟩ := hsafe
+  obtain ⟨copied, hcopy⟩ := copyStepsFor middle hmiddleExec
+  let program := allocationProgram.then
+    (Program.copyBytes (pool.base + srcOffset) (pool.base + dstOffset) values)
+  refine ⟨allocationProgram, hprogram, ?_, ?_⟩
+  · exact ⟨copied, Program.exec_then hmiddleExec hcopy.program_exec⟩
+  · intro final hfinalExec
+    obtain ⟨actualMiddle, hactualAlloc, hactualCopy⟩ :=
+      (Program.exec_then_iff allocationProgram
+        (Program.copyBytes (pool.base + srcOffset) (pool.base + dstOffset) values)
+        mem final).1 hfinalExec
+    have hactualEncoded := hencoded actualMiddle hactualAlloc
+    have hactualMetadata := encodedAllocateResult_toMetadata hmem
+      hsuccess hactualEncoded hnoUnmap hactualAlloc
+    obtain ⟨actualCopied, hactualSteps⟩ := copyStepsFor actualMiddle hactualAlloc
+    have hfinal : final = actualCopied :=
+      hactualSteps.program_exec_unique hactualCopy
+    have hcopied : actualCopied = actualMiddle.writeBytes
+        (pool.base + dstOffset) values := hactualSteps.final_eq_writeBytes
+    have hfinalEq : final = actualMiddle.writeBytes
+        (pool.base + dstOffset) values := hfinal.trans hcopied
+    have hlens := allocateArrays_preserves_metadata_lengths hsuccess
+    have hresultPool : PoolMetadataDisjoint pool offsetsBase sizesBase isFreeBase
+        prevFreeBase countBase secondBase firstBase headsBase nextBase previousBase
+        result.offsets.length result.sizes.length result.isFree.length
+        result.prevFree.length result.second.length result.heads.length
+        result.next.length result.previous.length := by
+      simpa [hlens.1, hlens.2.1, hlens.2.2.1, hlens.2.2.2.1,
+        hlens.2.2.2.2.1, hlens.2.2.2.2.2.1, hlens.2.2.2.2.2.2.1,
+        hlens.2.2.2.2.2.2.2] using hpool
+    refine ⟨actualMiddle, hactualAlloc, hactualMetadata, hfinalEq, ?_⟩
+    rw [hfinalEq]
+    apply hactualMetadata.writeBytes_in_pool hresultPool
+    · exact Nat.le_add_right _ _
+    · simp only [Region.endAddr]
+      omega
 
 /-- Source-interleaved bitmap tail of `tlsf_take_candidate_class`: each cached
 word is loaded immediately before the assignment that uses it. -/

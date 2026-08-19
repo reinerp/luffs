@@ -1434,6 +1434,14 @@ theorem CopySteps.program_exec_unique {src dst : Addr} {values : List Byte}
               cases executedStore
               exact ih tailExec
 
+theorem CopySteps.final_eq_writeBytes {src dst : Addr} {values : List Byte}
+    {before after : Memory} (hsteps : CopySteps src dst values before after) :
+    after = before.writeBytes dst values := by
+  induction hsteps with
+  | nil => rfl
+  | cons hload hstore htail ih =>
+      simpa [Memory.writeBytes] using ih
+
 /-- The concrete byte-copy trace supplied by the allocator/Vec ownership proof
 is a closed no-stuck proof for the generated relocation program. -/
 theorem CopySteps.program_wp {GF : BundledGFunctors} {src dst : Addr}
